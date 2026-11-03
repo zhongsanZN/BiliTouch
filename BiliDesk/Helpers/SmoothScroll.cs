@@ -80,6 +80,14 @@ public static class SmoothScroll
         };
     }
 
+    /// <summary>Finger input takes over immediately from a running wheel animation.</summary>
+    public static void Stop(ScrollViewer viewer)
+    {
+        var offset = viewer.VerticalOffset;
+        viewer.BeginAnimation(ProxyOffsetProperty, null);
+        viewer.SetValue(ProxyOffsetProperty, offset);
+    }
+
     private static void OnPreviewWheel(object sender, MouseWheelEventArgs e)
     {
         var sv = (ScrollViewer)sender;

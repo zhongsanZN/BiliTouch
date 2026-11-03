@@ -483,6 +483,7 @@ public partial class PlayerWindow : FluentWindow
     public PlayerWindow(string bvid)
     {
         InitializeComponent();
+        InitializeTouch();
         Closed += OnClosed;
         Loaded += OnLoaded;
         PreviewKeyDown += OnPreviewKeyDown;
@@ -1179,6 +1180,12 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void ResetForNewMedia()
     {
+        CancelVideoTouch();
+        TouchHelp.Visibility = Visibility.Collapsed;
+        // A new video starts at the normal picture brightness; the old dim must not leak over.
+        _touchBrightness = 1;
+        _touchStartBrightness = 1;
+        TouchDimmer.Opacity = 0;
         _indexInLib = 0;
         // 换片: 音频链路诊断重新记一次(每个片源一条, 见 LogAudioStateOnce)
         _audioStateLogged = false;
@@ -3344,6 +3351,7 @@ public partial class PlayerWindow : FluentWindow
     private void OnProgressDragEnd(object sender, DragCompletedEventArgs e)
     {
         _isSeeking = false;
+        if (e.Canceled || _closing) { UpdateProgressUi(); return; }
         if (_mp.Length > 0)
         {
             var targetMs = (long)Math.Round(ProgressSlider.Value / 1000.0 * _mp.Length);
@@ -4034,6 +4042,8 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void OnVideoAreaMouseLeftDown(object sender, MouseButtonEventArgs e)
     {
+        if (TouchSupport.IsTouchMouse(e)) return;
+        _lastPlayerInputWasTouch = false;
         // 落在窗口边缘缩放带里的按下是"拖边缘改大小", 不算视频区手势(见 TryBeginEdgeResize)
         if (TryBeginEdgeResize()) { e.Handled = true; return; }
         if (_mp == null) return;
@@ -4089,6 +4099,7 @@ public partial class PlayerWindow : FluentWindow
     /// <summary>视频区左键松开: 若是长按 → 恢复 1x; 否则延迟触发播放/暂停(给双击留窗口)</summary>
     private void OnVideoAreaMouseLeftUp(object sender, MouseButtonEventArgs e)
     {
+        if (TouchSupport.IsTouchMouse(e)) return;
         // 与 Down 对称: 控制栏上的点击不触发单击暂停
         if (ControlBar != null && ControlBar.IsMouseOver) return;
         // ★ 与 Down 对称: 跳过提示条上的「撤回」点击也不触发单击暂停
@@ -4158,6 +4169,7 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void OnVideoAreaMouseRightDown(object sender, MouseButtonEventArgs e)
     {
+        if (TouchSupport.IsTouchMouse(e)) return;
         // ★ 落在窗口边缘缩放带里就**不要**当成视频区手势, 但**也不能**调 TryBeginEdgeResize():
         //   它内部发的是 `WM_NCLBUTTONDOWN`(**左键**消息), 用右键去调等于"假装用户按了左键拖边框",
         //   会让系统进入模态缩放循环 —— 而那个循环等的是左键松开, 右键根本不会给它。
@@ -4206,6 +4218,7 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void OnVideoAreaMouseRightUp(object sender, MouseButtonEventArgs e)
     {
+        if (TouchSupport.IsTouchMouse(e)) return;
         if (!_rightGestureActive) { e.Handled = true; return; }
         _rightGestureActive = false;
         if (_closing) return;
@@ -4226,6 +4239,7 @@ public partial class PlayerWindow : FluentWindow
     /// <summary>鼠标离开视频区: 兜底, 防止按住时鼠标移出导致状态卡住</summary>
     private void OnVideoAreaMouseLeave(object sender, MouseEventArgs e)
     {
+        if (TouchSupport.IsTouchMouse(e) || _videoTouches.Count > 0) return;
         _longPressTimer?.Stop();
         _singleClickTimer?.Stop();
         _suppressSingleClick = false;
@@ -4264,6 +4278,8 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void OnVideoAreaMouseMove(object sender, MouseEventArgs e)
     {
+        if (TouchSupport.IsTouchMouse(e)) return;
+        _lastPlayerInputWasTouch = false;
         if (_controlsHidden) ShowControls();
         if (ShouldHideControls()) StartControlsHideCountdown();
         else _controlsHideTimer?.Stop();
@@ -4274,11 +4290,12 @@ public partial class PlayerWindow : FluentWindow
     /// <summary>现在是否处于"应该隐藏控制栏"的状态: 只在**播放中**自动隐藏。</summary>
     private bool ShouldHideControls()
     {
+        if (_videoTouches.Count > 0 || TouchHelp.Visibility == Visibility.Visible) return false;
         if (_closing || _mp == null || !_mp.IsPlaying) return false;
         if (QualityPopup != null && QualityPopup.IsOpen) return false;
         if (DanmakuAreaPopup != null && DanmakuAreaPopup.IsOpen) return false;
         if (_isSeeking) return false;                       // 拖进度条时别藏
-        if (ControlBar.IsMouseOver) return false;           // 鼠标停在控制栏上(即使不动)也别藏
+        if (!_lastPlayerInputWasTouch && ControlBar.IsMouseOver) return false;
         if (LoadingOverlay != null && LoadingOverlay.Visibility == Visibility.Visible) return false;
         return true;
     }
@@ -8483,6 +8500,7 @@ public partial class PlayerWindow : FluentWindow
             _overlayKeyboardWindow = fw;
             fw.PreviewKeyDown += OnPreviewKeyDown;
             fw.PreviewMouseDown += OnPreviewMouseDown;
+            fw.Deactivated += OnTouchWindowDeactivated;
             // 滚轮也要挂上来: 鼠标压在视频画面上时事件属于这层浮动窗口(见 OnVideoAreaMouseWheel)
             fw.PreviewMouseWheel += OnVideoAreaMouseWheel;
             // 这个窗口不该出现在任务栏里(它是跟随主窗口的装饰层)
@@ -8680,6 +8698,7 @@ public partial class PlayerWindow : FluentWindow
             if (finalAid > 0 && finalCid > 0)
                 _ = Svc.HistorySync.ReportNowAsync(finalAid, finalCid, finalProgress);
 
+            CancelVideoTouch();
             _closing = true;
 
             // 拖动尺寸监听订阅的是 CompositionTarget.Rendering —— 它是**静态**事件、不随窗口销毁,

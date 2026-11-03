@@ -84,6 +84,7 @@
                                  Background="Transparent" BorderThickness="0"
                                  Margin="8,10,8,10"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 VirtualizingPanel.ScrollUnit="Pixel"
                                  SelectionChanged="OnSessionSelectionChanged">
                             <ListBox.ItemContainerStyle>
                                 <Style TargetType="ListBoxItem">

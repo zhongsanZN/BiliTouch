@@ -17,7 +17,7 @@ public partial class App : Application
     /// 同步点(漏一个就会出现"关于页写 1.2.3、安装包文件名还是 1.2.2"这种不一致):
     ///   BiliDesk.csproj 的 &lt;Version&gt;、Publish\installer.iss 的 MyAppVersion、发布.ps1 的默认 $Version。
     /// </summary>
-    public const string AppVersion = "1.5.3";
+    public const string AppVersion = "1.5.3-touch.1";
 
     public static MainViewModel MainVm { get; } = new();
 
@@ -69,6 +69,7 @@ public partial class App : Application
 
         // 全局中键自动滚动(浏览器同款): 注册 ScrollViewer 类处理器, 一次装好全应用生效
         MiddleClickAutoscroll.Install();
+        TouchSupport.Install();
 
         // 顺带清理短视频的本地合流缓存(vcache)。
         // 平时每次合流完都会清一次, 这里再补一道: 用户如果从此不再看短视频,

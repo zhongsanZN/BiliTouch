@@ -90,7 +90,7 @@ public static class UpdateChecker
         var root = doc.RootElement;
 
         var latest = ParseVersion(root.TryGetProperty("tag_name", out var tagEl) ? tagEl.GetString() : null);
-        if (latest == null || latest <= Version.Parse(App.AppVersion)) return null;
+        if (latest == null || latest <= ParseVersion(App.AppVersion)) return null;
 
         return new UpdateInfo
         {

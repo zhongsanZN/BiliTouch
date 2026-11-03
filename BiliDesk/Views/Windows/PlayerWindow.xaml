@@ -67,13 +67,13 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Slider">
-                        <Grid MinHeight="18" Background="Transparent">
+                        <Grid MinHeight="40" Background="Transparent">
                             <Track x:Name="PART_Track">
                                 <Track.DecreaseRepeatButton>
                                     <RepeatButton Command="{x:Static Slider.DecreaseLarge}" Focusable="False">
                                         <RepeatButton.Template>
                                             <ControlTemplate TargetType="RepeatButton">
-                                                <Grid Background="Transparent" Height="18">
+                                                <Grid Background="Transparent" Height="40">
                                                     <Border Height="3" CornerRadius="1.5"
                                                             Background="#F2FFFFFF" VerticalAlignment="Center" />
                                                 </Grid>
@@ -85,7 +85,7 @@
                                     <RepeatButton Command="{x:Static Slider.IncreaseLarge}" Focusable="False">
                                         <RepeatButton.Template>
                                             <ControlTemplate TargetType="RepeatButton">
-                                                <Grid Background="Transparent" Height="18">
+                                                <Grid Background="Transparent" Height="40">
                                                     <Border Height="3" CornerRadius="1.5"
                                                             Background="#4DFFFFFF" VerticalAlignment="Center" />
                                                 </Grid>
@@ -97,7 +97,7 @@
                                     <Thumb Focusable="False">
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
-                                                <Grid Background="Transparent">
+                                                <Grid Background="Transparent" Width="28">
                                                     <Ellipse Width="11" Height="11" Fill="White"
                                                             Margin="-2,0" />
                                                 </Grid>
@@ -131,6 +131,8 @@
 
         <!-- 播放器圆形图标按钮 -->
         <Style x:Key="PlayerRoundBtn" TargetType="Button">
+            <Setter Property="MinWidth" Value="40" />
+            <Setter Property="MinHeight" Value="40" />
             <Setter Property="Focusable" Value="False" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Foreground" Value="White" />
@@ -155,6 +157,8 @@
 
         <!-- 播放器文字按钮(清晰度/倍速等): 半透明底衬, 与任意视频画面区分开 -->
         <Style x:Key="PlayerTextBtn" TargetType="Button">
+            <Setter Property="MinWidth" Value="40" />
+            <Setter Property="MinHeight" Value="40" />
             <Setter Property="Focusable" Value="False" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Foreground" Value="#F2FFFFFF" />
@@ -899,6 +903,8 @@
                                    的说明)—— 右键在这里收得到。
                                  ★ 必须**成对判定**: 只有 Down/Up 配对的那次右键才算数。
                                    孤立的 Up 是弹层收起时漏过来的(实测, 见 OnVideoAreaMouseRightDown)。 -->
+                            <!-- Local picture dimming: below controls/OSD; never changes system brightness. -->
+                            <Border x:Name="TouchDimmer" Background="Black" Opacity="0" IsHitTestVisible="False" />
                             <!-- 弹幕层 -->
                             <Canvas x:Name="DanmakuCanvas" Background="Transparent" IsHitTestVisible="False"
                                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
@@ -1088,6 +1094,7 @@
                                            严丝合缝地对齐, 放同一个格子里最省事(几何换算见 RenderSponsorMarks)。 -->
                                     <Grid>
                                         <Slider x:Name="ProgressSlider" Style="{StaticResource PlayerSlider}"
+                                                ToolTip="手指横向拖动，松手跳转到预览进度"
                                                 Minimum="0" Maximum="1000" Value="0"
                                                 Thumb.DragStarted="OnProgressDragStart"
                                                 Thumb.DragCompleted="OnProgressDragEnd"
@@ -1126,6 +1133,12 @@
                                         </Button>
                                         <TextBlock x:Name="TimeText" Grid.Column="1" Foreground="#E6FFFFFF" FontSize="12"
                                                    VerticalAlignment="Center" Margin="10,0,0,0" Text="00:00 / 00:00" />
+                                        <Button Grid.Column="2" x:Name="TouchHelpButton" Style="{StaticResource PlayerTextBtn}"
+                                                Visibility="Collapsed"
+                                                HorizontalAlignment="Right" Margin="4,0" Click="OnTouchHelpClick"
+                                                ToolTip="查看触屏手势" AutomationProperties.Name="触屏手势说明">
+                                            <TextBlock Text="触控" Foreground="White" />
+                                        </Button>
 
                                         <!-- 音量 -->
                                         <TextBlock x:Name="VolumeIcon" Grid.Column="3" Text="&#xE767;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
@@ -1305,6 +1318,20 @@
                                                        FontSize="14" Foreground="White" />
                                         </Button>
                                     </Grid>
+                                </StackPanel>
+                            </Border>
+                            <Border x:Name="TouchHelp" Visibility="Collapsed" Panel.ZIndex="100"
+                                    HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="370"
+                                    Background="#F0202226" CornerRadius="12" Padding="20" Margin="12">
+                                <StackPanel>
+                                    <TextBlock Text="触屏手势" FontSize="18" Foreground="White" Margin="0,0,0,12" />
+                                    <TextBlock Foreground="White" FontSize="14" TextWrapping="Wrap" LineHeight="25"
+                                               Text="单击画面：显示 / 隐藏控制栏&#10;双击画面：进入 / 退出全屏&#10;横向滑动：预览进度，松手跳转&#10;左侧上下滑：画面亮度（不改系统亮度）&#10;右侧上下滑：音量&#10;长按画面（播放中）：临时倍速，松手恢复&#10;播放 / 暂停：点控制栏左侧按钮" />
+                                    <Button Style="{StaticResource PlayerTextBtn}"
+                                            Margin="0,14,0,0" HorizontalAlignment="Stretch"
+                                            Click="OnTouchHelpClose" AutomationProperties.Name="关闭手势说明">
+                                        <TextBlock Text="知道了" Foreground="White" />
+                                    </Button>
                                 </StackPanel>
                             </Border>
                         </Grid>
@@ -1686,6 +1713,7 @@
                                                      Background="Transparent" BorderThickness="0"
                                                      Padding="8,0,8,8"
                                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                     VirtualizingPanel.ScrollUnit="Pixel"
                                                      SelectionChanged="OnPageSelected">
                                                 <ListBox.ItemContainerStyle>
                                                     <Style TargetType="ListBoxItem">
@@ -2180,6 +2208,7 @@
                              Background="Transparent" BorderThickness="0"
                              Padding="10,4,10,10"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             VirtualizingPanel.ScrollUnit="Pixel"
                              SelectionChanged="OnSeasonEpisodeSelected"
                              behaviors:SmoothScroll.Enabled="True">
                         <ListBox.Resources>
