@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
@@ -20,6 +20,9 @@ public partial class PlayerWindow
     private double _touchBrightness = 1, _touchStartBrightness;
     private bool _touchDoubleTap, _touchOwnsSeek;
     private bool _lastPlayerInputWasTouch;
+    /// <summary>Next time the touch gesture may repaint the overlay (see TouchUiDue).</summary>
+    private long _touchUiNextAt;
+    private const int TouchUiIntervalMs = 45;
 
     private void InitializeTouch()
     {
@@ -95,6 +98,7 @@ public partial class PlayerWindow
         _touchLastTapAt = 0;
         _controlsHideTimer?.Stop();
         _touchHoldTimer?.Stop();
+        _touchUiNextAt = 0; // the first move of a new gesture paints immediately
         _touchHoldTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(LongPressThresholdMs) };
         _touchHoldTimer.Tick += (_, _) =>
         {
@@ -125,7 +129,12 @@ public partial class PlayerWindow
                 }
                 _touchOwnsSeek = true;
                 _isSeeking = true;
+                // The target is recomputed on every move (release needs the exact value), but the
+                // visible overlay is repainted at most ~20x/s: the video page's control layer is a
+                // layered (per-pixel-alpha) WPF window, which WPF rasterizes in software — touching
+                // it on every move is what made dragging feel like a GPU-less slideshow.
                 _touchTargetMs = _touchSession.SeekTarget(_touchStartMs, _mp.Length);
+                if (!TouchUiDue()) return;
                 _updatingSlider = true;
                 ProgressSlider.Value = _touchTargetMs * 1000.0 / _mp.Length;
                 _updatingSlider = false;
@@ -134,15 +143,29 @@ public partial class PlayerWindow
                 break;
             case PlayerTouchAction.Volume:
                 var volume = _touchSession.VolumeTarget(_touchStartVolume);
+                if (!TouchUiDue()) return;
                 SetVolume(volume);
                 ShowSpeedHint($"音量 {volume}%", true);
                 break;
             case PlayerTouchAction.Brightness:
                 _touchBrightness = _touchSession.BrightnessTarget(_touchStartBrightness);
+                if (!TouchUiDue()) return;
                 TouchDimmer.Opacity = 1 - _touchBrightness;
                 ShowSpeedHint($"画面亮度 {_touchBrightness * 100:0}%", true);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Rate limit for the per-move UI refresh of a touch gesture (slider/OSD/dimmer). The values
+    /// themselves are still computed on every move so the release commits the exact final state.
+    /// </summary>
+    private bool TouchUiDue()
+    {
+        var now = Environment.TickCount64;
+        if (now < _touchUiNextAt) return false;
+        _touchUiNextAt = now + TouchUiIntervalMs;
+        return true;
     }
 
     private static string TouchTime(long ms) => TimeSpan.FromMilliseconds(Math.Max(0, ms)).ToString(
@@ -161,6 +184,17 @@ public partial class PlayerWindow
             OnVideoTouchMove(sender, e);
             _videoTouches.Remove(e.TouchDevice);
             action = _touchSession.Action;
+        }
+        // The throttled preview may be a few moves behind: commit the exact final value here.
+        if (_touchSession != null)
+        {
+            if (action == PlayerTouchAction.Volume)
+                SetVolume(_touchSession.VolumeTarget(_touchStartVolume), showHint: false);
+            else if (action == PlayerTouchAction.Brightness)
+            {
+                _touchBrightness = _touchSession.BrightnessTarget(_touchStartBrightness);
+                TouchDimmer.Opacity = 1 - _touchBrightness;
+            }
         }
         if (_touchOwnsSeek)
         {
