@@ -6907,6 +6907,8 @@ public partial class PlayerWindow : FluentWindow
     {
         IntroPanel.Visibility = Visibility.Visible;
         CommentsPanel.Visibility = Visibility.Collapsed;
+        // 点 tab 也走滑动入场(横滑翻页时由翻页动画接管)
+        AnimatePageEntrance(IntroPanel, fromRight: false);
         CloseCommentDetail();
         // 切走评论 tab: FAB 与展开的输入面板一起收掉(它们只属于评论区)
         UpdateCommentComposer();
@@ -6918,6 +6920,7 @@ public partial class PlayerWindow : FluentWindow
     {
         IntroPanel.Visibility = Visibility.Collapsed;
         CommentsPanel.Visibility = Visibility.Visible;
+        AnimatePageEntrance(CommentsPanel, fromRight: true);
         // 切到评论页时顺手校准一次输入框状态(FAB 显隐跟着 tab 走):
         // 用户可能是先登录/换号再回来发的
         UpdateCommentComposer();

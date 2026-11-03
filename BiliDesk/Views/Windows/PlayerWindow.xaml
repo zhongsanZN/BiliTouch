@@ -1768,7 +1768,7 @@
                                     </Border>
                                 </Popup>
 
-                            <Grid Margin="0,12,0,0" MinHeight="120">
+                            <Grid x:Name="PageHost" Margin="0,12,0,0" MinHeight="120" ClipToBounds="True">
                                 <StackPanel x:Name="IntroPanel">
                                     <!-- ============ 简介(2026-10-12 加折叠) ============
                                          ★ 折叠是**给下面的「相关视频」让位置**: 很多 UP 主的简介
