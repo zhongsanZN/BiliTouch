@@ -10,7 +10,8 @@
      xmlns:sys="clr-namespace:System;assembly=mscorlib"
              Title="BiliDesk 播放器" Width="1280" Height="760"
              MinWidth="840" MinHeight="600" WindowStartupLocation="CenterScreen"
-             WindowStyle="None" ResizeMode="CanResize" UseLayoutRounding="True">
+             WindowStyle="None" ResizeMode="CanResize" UseLayoutRounding="True"
+             TextOptions.TextFormattingMode="Display">
     <!--
         顶栏(标题 + 全屏; 2026-09-26 左上角"返回主界面"按钮已按用户要求删除,
         Esc 键仍可关播放器), 系统标题栏去掉了, 所以最右边补上最小化/最大化/关闭三个自绘按钮。

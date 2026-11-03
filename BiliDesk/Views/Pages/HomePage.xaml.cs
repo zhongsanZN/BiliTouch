@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -486,6 +486,10 @@ public partial class HomePage : UserControl
     {
         if (_autoFillCount > 5) return; // 防止死循环
         if (vm.LoadingMore || vm.Loading) return;
+        // 手指还按在列表上时不往列表里加卡: 加卡会让整墙重新测量/重排, 拖动中掉帧。
+        // 松手后的惯性滚动会再触发 ScrollChanged, 那时再补加载。
+        // (Chromium 的原则: 滚动走合成线程, 滚动过程中绝不做会改内容的主线程布局。)
+        if (TouchSupport.IsTouchPanning(sv)) return;
         // 分帧填充进行中: 每补一批 ScrollableHeight 都在长, 这时判"内容不够一屏"是错的,
         // 会带着空列表去拉下一页; 等填充完(补帧引发的 ScrollChanged 会再来)再判。
         // ★ 四个 tab 各有各的 fill, 这里要判"当前 tab 那个"还在不在补帧(不是某个全局的)。

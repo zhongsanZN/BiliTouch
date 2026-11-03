@@ -9,7 +9,8 @@
              xmlns:helpers="clr-namespace:BiliDesk.Helpers"
              Title="BiliDesk" Width="1280" Height="800"
              MinWidth="840" MinHeight="660" WindowStartupLocation="CenterScreen"
-             WindowStyle="None" ResizeMode="CanResize" UseLayoutRounding="True">
+             WindowStyle="None" ResizeMode="CanResize" UseLayoutRounding="True"
+             TextOptions.TextFormattingMode="Display">
     <!--
         ★ MinWidth 1060 → 840(2026-11-03, issue #31): 1080×1920 竖屏副屏在 125% 缩放下
           可用宽度只有 864 DIP, 原来的下限比屏幕还宽 —— 窗口右侧(含自绘的关闭/最大化按钮)

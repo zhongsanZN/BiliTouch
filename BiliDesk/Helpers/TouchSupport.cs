@@ -19,6 +19,27 @@ public static class TouchSupport
     private static readonly ConditionalWeakTable<Slider, SliderDrag> Drags = new();
     private static bool _installed;
 
+    /// <summary>The ScrollViewer a finger is currently panning (null when idle).</summary>
+    private static ScrollViewer? _touchViewer;
+    private static long _touchViewerAt;
+
+    private static void MarkTouchPanning(ScrollViewer viewer)
+    {
+        _touchViewer = viewer;
+        _touchViewerAt = Environment.TickCount64;
+    }
+
+    private static void ClearTouchPanning() => _touchViewer = null;
+
+    /// <summary>
+    /// True while a finger is down on this ScrollViewer (1.5s safety timeout for a lost up event).
+    /// Pages use it to defer work that changes the scrollable content — the WPF equivalent of
+    /// Chromium's compositor-thread scrolling, which never appends content mid-scroll.
+    /// </summary>
+    public static bool IsTouchPanning(ScrollViewer viewer) =>
+        ReferenceEquals(_touchViewer, viewer) &&
+        Environment.TickCount64 - _touchViewerAt < 1500;
+
     [DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int index);
 
@@ -49,6 +70,23 @@ public static class TouchSupport
                 // Belt and braces for a viewer that was never resized before the first finger.
                 ConfigureScrollViewer(viewer);
                 SmoothScroll.Stop(viewer);
+                MarkTouchPanning(viewer);
+            }), true);
+        EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.PreviewTouchMoveEvent,
+            new EventHandler<TouchEventArgs>((sender, _) =>
+            {
+                if (sender is ScrollViewer viewer && ReferenceEquals(_touchViewer, viewer))
+                    _touchViewerAt = Environment.TickCount64;
+            }), true);
+        EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.PreviewTouchUpEvent,
+            new EventHandler<TouchEventArgs>((sender, _) =>
+            {
+                if (sender is ScrollViewer viewer && ReferenceEquals(_touchViewer, viewer)) ClearTouchPanning();
+            }), true);
+        EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.LostTouchCaptureEvent,
+            new EventHandler<TouchEventArgs>((sender, _) =>
+            {
+                if (sender is ScrollViewer viewer && ReferenceEquals(_touchViewer, viewer)) ClearTouchPanning();
             }), true);
         // Suppress window bounce at the end of a list, while retaining native pan inertia.
         EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.ManipulationBoundaryFeedbackEvent,
