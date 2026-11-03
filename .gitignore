@@ -10,6 +10,7 @@ obj/
 发布包/
 Publish/*
 !Publish/installer.iss
+!Publish/ChineseSimplified.isl
 
 # 内部开发笔记(项目约定: 不进仓库)
 memory/

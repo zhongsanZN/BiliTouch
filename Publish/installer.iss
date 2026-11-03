@@ -1,4 +1,4 @@
-; ============================================================
+﻿; ============================================================
 ; BiliDesk 安装器 (Inno Setup 6)
 ;
 ; 前提: 先跑 发布.ps1 生成 "BiliDesk-安装器-files" (框架依赖版, 不含 .NET)。
@@ -10,7 +10,10 @@
 ; 用 Inno Setup 打开本文件编译即可。
 ; ============================================================
 #define MyAppName "BiliDesk"
-#define MyAppVersion "1.5.3"
+; 触控修复版: 程序内 App.AppVersion 也是 1.5.3-touch.1(带预发布后缀, 更新检查按 1.5.3 比较)
+#define MyAppVersion "1.5.3-touch.1"
+; VersionInfoVersion 必须是纯数字四段 (a.b.c.d), 不能带 -touch
+#define MyFileVersion "1.5.3.1"
 #define MyAppPublisher "ABing"
 #define MyAppExeName "BiliDesk.exe"
 ; 指向发布脚本生成的框架依赖目录(相对本 .iss 所在目录)
@@ -21,7 +24,7 @@
 AppId={{B3C9A1E4-2E6B-4A11-8B11-9F0D1C2E3A4B}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-VersionInfoVersion={#MyAppVersion}.0
+VersionInfoVersion={#MyFileVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
@@ -32,22 +35,19 @@ OutputBaseFilename=BiliDesk-{#MyAppVersion}-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-; 写 x64os 而不是已弃用的 x64 —— Inno 6.3+ 对 x64 会打弃用警告并自动替换成 x64os,
-; 两者语义完全一致(都要求 OS 为 x64), 直接写 x64os 让编译输出干净。
-; 别改成 x64compatible: 那个会允许在 ARM64 上以模拟方式安装, 而本包内含 x64 原生
-; LibVLC 插件, 没在 ARM64 上验证过。
-ArchitecturesAllowed=x64os
-ArchitecturesInstallIn64BitMode=x64os
+; 本仓用 Inno Setup 6.1.2 编译, 该版本只认 x64(6.3+ 才把 x64 改名成 x64os)。
+; 语义一致: 要求 64 位 OS, 并以 64 位模式安装(包内含 x64 原生 LibVLC 插件)。
+; 别改成 x64compatible(6.3+): 那个会允许在 ARM64 上以模拟方式安装, 本包未验证。
+ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64
 ; 应用是 x64-only
 PrivilegesRequired=admin
 SetupIconFile=..\BiliDesk\Assets\app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
-; 安装向导语言。Inno 默认不带简体中文语言包 —— 想要中文向导的话：
-; 从 https://jrsoftware.org/files/istrans/ 下载 ChineseSimplified.isl 放到
-; "C:\Program Files (x86)\Inno Setup 6\Languages\" 后，把下面这行解开即可。
-; [Languages]
-; Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; 安装向导语言: 简体中文。语言文件随仓库放在本 .iss 同目录, 任何版本的 Inno 都能直接编译。
+[Languages]
+Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 
 [Files]
 ; 框架依赖发布目录(不含 .NET 运行时、含 libvlc/win-x64)
@@ -86,7 +86,8 @@ begin
       if DotPos > 1 then
       begin
         Major := StrToIntDef(Copy(Name, 1, DotPos - 1), 0);
-        if Major >= 8 then Result := True;
+        // net10.0 应用只能跑在 .NET 10 或更高(rollForward=Major 只往上滚), 所以门槛是 10。
+        if Major >= 10 then Result := True;
       end;
     until (not FindNext(Rec)) or Result;
     FindClose(Rec);
