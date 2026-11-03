@@ -26,6 +26,11 @@ public partial class VideoCard : UserControl
     private ScaleTransform _coverScale = null!;
     private bool _entered;
 
+    /// <summary>按下点与"这次按下有没有被拖走"。拖动/滑动列表时不能把抬手当成点击。</summary>
+    private Point _pressAt;
+    private bool _pressed, _dragCanceled;
+    private const double ClickSlop = 10;
+
     /// <summary>
     /// 已经"亮过相"的视频条目。
     ///
@@ -140,6 +145,21 @@ public partial class VideoCard : UserControl
     {
         InitializeComponent();
         Loaded += OnLoaded;
+        // 手指/笔在卡片上拖动是在滑列表, 不是点开视频。真实鼠标点击(移动 < 10px)不受影响。
+        PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            _pressAt = e.GetPosition(this);
+            _pressed = true;
+            _dragCanceled = false;
+        };
+        PreviewMouseMove += (_, e) =>
+        {
+            if (!_pressed || e.LeftButton != MouseButtonState.Pressed) return;
+            var p = e.GetPosition(this);
+            if (Math.Abs(p.X - _pressAt.X) > ClickSlop || Math.Abs(p.Y - _pressAt.Y) > ClickSlop)
+                _dragCanceled = true;
+        };
+        PreviewMouseLeftButtonUp += (_, _) => _pressed = false;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -217,6 +237,7 @@ public partial class VideoCard : UserControl
     private void OnClick(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton != MouseButton.Left) return;
+        if (_dragCanceled) { _dragCanceled = false; return; }   // 拖动/滑动的抬手, 不是点击
         OpenVideo();
     }
 
@@ -224,6 +245,7 @@ public partial class VideoCard : UserControl
     private void OnTitleClick(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton != MouseButton.Left) return;
+        if (_dragCanceled) { _dragCanceled = false; return; }
         OpenVideo();
     }
 
