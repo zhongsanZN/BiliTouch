@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
@@ -23,6 +23,9 @@ public partial class PlayerWindow
     /// <summary>Next time the touch gesture may repaint the overlay (see TouchUiDue).</summary>
     private long _touchUiNextAt;
     private const int TouchUiIntervalMs = 45;
+    /// <summary>Horizontal swipe on the right info panel: 简介 ↔ 评论.</summary>
+    private Point _infoSwipeStart;
+    private bool _infoSwipeArmed, _infoSwipeDone;
 
     private void InitializeTouch()
     {
@@ -34,6 +37,13 @@ public partial class PlayerWindow
         VideoAreaRoot.LostTouchCapture += OnVideoTouchLostCapture;
         VideoAreaRoot.Unloaded += (_, _) => CancelVideoTouch();
         Deactivated += OnTouchWindowDeactivated;
+        // Horizontal swipe over the right-side info panel switches 简介 / 评论 (mobile-style).
+        InfoPanel.PreviewTouchDown += OnInfoSwipeTouchDown;
+        InfoPanel.PreviewTouchMove += OnInfoSwipeTouchMove;
+        InfoPanel.PreviewTouchUp += OnInfoSwipeTouchUp;
+        InfoPanel.PreviewStylusDown += OnInfoSwipeStylusDown;
+        InfoPanel.PreviewStylusMove += OnInfoSwipeStylusMove;
+        InfoPanel.PreviewStylusUp += OnInfoSwipeStylusUp;
         // The gesture help is only advertised when the machine has a touch digitizer; the first
         // finger that lands on the video reveals it anyway, so it is discoverable on any device.
         TouchHelpButton.Visibility = TouchSupport.HasTouchDevice ? Visibility.Visible : Visibility.Collapsed;
@@ -56,6 +66,74 @@ public partial class PlayerWindow
                 ?? (content as FrameworkContentElement)?.Parent : VisualTreeHelper.GetParent(source);
         }
         return false;
+    }
+
+    // ------------------------------------------------------------ 右侧信息面板: 横滑切 tab
+
+    private bool InfoSwipeAllowed(DependencyObject? source)
+    {
+        var d = source;
+        while (d != null && d != InfoPanel)
+        {
+            if (d is ButtonBase or Slider or TextBoxBase or Selector or Hyperlink) return false;
+            d = d is ContentElement content
+                ? ContentOperations.GetParent(content) ?? (content as FrameworkContentElement)?.Parent
+                : VisualTreeHelper.GetParent(d);
+        }
+        return true;
+    }
+
+    private void StartInfoSwipe(Point p, DependencyObject? source)
+    {
+        _infoSwipeStart = p;
+        _infoSwipeArmed = InfoSwipeAllowed(source);
+        _infoSwipeDone = false;
+    }
+
+    /// <summary>True when the horizontal travel just switched tabs (the caller handles the event).</summary>
+    private bool MoveInfoSwipe(Point p)
+    {
+        if (!_infoSwipeArmed || _infoSwipeDone) return false;
+        var dx = p.X - _infoSwipeStart.X;
+        var dy = p.Y - _infoSwipeStart.Y;
+        if (Math.Abs(dx) < 60 || Math.Abs(dx) < Math.Abs(dy) * 1.5) return false;
+        _infoSwipeDone = true;
+        if (dx < 0)
+        {
+            if (TabComments != null && TabComments.IsChecked != true) TabComments.IsChecked = true;
+        }
+        else if (TabIntro != null && TabIntro.IsChecked != true) TabIntro.IsChecked = true;
+        return true;
+    }
+
+    private void OnInfoSwipeTouchDown(object? sender, TouchEventArgs e) =>
+        StartInfoSwipe(e.GetTouchPoint(InfoPanel).Position, e.OriginalSource as DependencyObject);
+
+    private void OnInfoSwipeTouchMove(object? sender, TouchEventArgs e)
+    {
+        if (MoveInfoSwipe(e.GetTouchPoint(InfoPanel).Position)) e.Handled = true;
+    }
+
+    private void OnInfoSwipeTouchUp(object? sender, TouchEventArgs e)
+    {
+        if (_infoSwipeDone) e.Handled = true;
+        _infoSwipeArmed = false;
+        _infoSwipeDone = false;
+    }
+
+    private void OnInfoSwipeStylusDown(object? sender, StylusEventArgs e) =>
+        StartInfoSwipe(e.GetPosition(InfoPanel), e.OriginalSource as DependencyObject);
+
+    private void OnInfoSwipeStylusMove(object? sender, StylusEventArgs e)
+    {
+        if (MoveInfoSwipe(e.GetPosition(InfoPanel))) e.Handled = true;
+    }
+
+    private void OnInfoSwipeStylusUp(object? sender, StylusEventArgs e)
+    {
+        if (_infoSwipeDone) e.Handled = true;
+        _infoSwipeArmed = false;
+        _infoSwipeDone = false;
     }
 
     private void OnVideoTouchDown(object? sender, TouchEventArgs e)

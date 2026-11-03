@@ -216,6 +216,21 @@ internal static class Program
             a.Down(x, y); a.Move(x + 150, y); b.Down(x + 40, y); b.Up(x + 40, y); a.Up(x + 150, y);
             Check(!Field<bool>(player, "_isSeeking"), "multi-touch cancels seek and unfreezes progress UI");
         }
+        // Horizontal swipe on the right info panel switches 简介 / 评论 (and must not select text).
+        var infoPanel = Element<Grid>(player, "InfoPanel");
+        var ix = infoPanel.ActualWidth / 2; var iy = 140;
+        var swipe = new Finger(infoPanel);
+        swipe.Down(ix, iy);
+        for (var i = 1; i <= 4; i++) swipe.Move(ix - i * 20, iy);
+        swipe.Up(ix - 80, iy); Pump(400);
+        Check(((RadioButton)player.FindName("TabComments")!).IsChecked == true,
+            "horizontal finger swipe switches to the comments tab");
+        swipe = new Finger(infoPanel);
+        swipe.Down(ix - 80, iy);
+        for (var i = 1; i <= 4; i++) swipe.Move(ix - 80 + i * 20, iy);
+        swipe.Up(ix, iy); Pump(400);
+        Check(((RadioButton)player.FindName("TabIntro")!).IsChecked == true,
+            "horizontal finger swipe switches back to the intro tab");
         player.Close(); Pump(1400);
     }
 

@@ -883,9 +883,8 @@ public partial class PlayerWindow : FluentWindow
     {
         _descExpanded = !_descExpanded;
         UpdateDescFold();
-        // 展开后要把焦点挪开: 按钮在浅色主题下有焦点框, 停在上挺难看;
-        // 而且按空格(播放/暂停)会打在按钮上而不是视频。
-        DescText.Focus();
+        // BtnDescFold 已设 Focusable=False: 点完焦点不会留在按钮上(浅色主题没有焦点框,
+        // 空格也不会打在按钮上)。
     }
 
     /// <summary>
@@ -6911,6 +6910,8 @@ public partial class PlayerWindow : FluentWindow
         CloseCommentDetail();
         // 切走评论 tab: FAB 与展开的输入面板一起收掉(它们只属于评论区)
         UpdateCommentComposer();
+        // 合集现在长在简介页里: 切回简介时把列表定位到"正在播的那一集"
+        if (_seasonOpen && _hasSeason) ScrollSeasonToCurrent();
     }
 
     private async void TabComments_Checked(object sender, RoutedEventArgs e)
@@ -7268,9 +7269,9 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void UpdateSeasonButtonState()
     {
-        if (BtnSeason == null) return;
-        BtnSeason.Visibility = _hasSeason ? Visibility.Visible : Visibility.Collapsed;
-        BtnSeason.Tag = _seasonOpen ? "on" : "off";
+        if (SeasonPanel == null) return;
+        // 合集面板现在长在简介页里(不再有 tab 行按钮): 有合集、或正在换集加载时显示。
+        SeasonPanel.Visibility = (_hasSeason || _seasonOpen) ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>详情加载完之后灌合集数据</summary>
@@ -7312,9 +7313,9 @@ public partial class PlayerWindow : FluentWindow
         // 定位不上当前集时给一句明确说明: 好过列表里一个高亮都没有, 用户会以为坏了
         SeasonHint.Text = _currentSeasonEpisode == null ? "没能在合集里定位到当前这一集" : "";
         SeasonLoadingRing.Visibility = Visibility.Collapsed;
+        // 合集区在简介页里常驻显示; 换集也保持(_seasonOpen 同时用来控制加载期的"正在获取合集")
+        _seasonOpen = true;
         UpdateSeasonButtonState();
-        // 面板本来开着(用户连看几集)就保持开着 —— 换片不该把面板收起来
-        if (_seasonOpen) SeasonPanel.Visibility = Visibility.Visible;
     }
 
     /// <summary>
