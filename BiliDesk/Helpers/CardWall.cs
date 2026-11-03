@@ -1,0 +1,341 @@
+using System;
+using System.Linq;
+using System.Windows;
+using System.Windows.Threading;
+
+namespace BiliDesk.Helpers;
+
+/// <summary>
+/// 卡片墙"铺满宽度"的规则：按容器实际宽度算出一行放几张、每张多宽，让卡片**随窗口大小一起变**，
+/// 而不是固定 236 宽、右边空一截（或塞不下就换行）。
+///
+/// ## 挂在哪儿
+/// 挂在卡片墙的 `<see cref="WrapPanel"/>` 上（`helpers:CardWall.Enable="True"`）。
+/// 挂 WrapPanel 而不是 ItemsControl，是因为 WrapPanel 的 `ActualWidth` 正好就是"能摆卡片的宽度"，
+/// 而它又是卡片的直接父级 —— 算出来的值写在**可继承的附加属性**上，卡片直接就能读到，不用逐级绑定。
+///
+/// ## 为什么要有迟滞
+/// 卡片墙在 ScrollViewer 里、滚动条是 Auto：一旦内容超过一屏，竖向滚动条出现，
+/// WrapPanel 的可用宽度会**突然少 17px**。按"算出来是几列就几列"的写法，这一下可能正好踩过列数阈值，
+/// 于是"刚开始滚动，整墙从 4 列跳成 3 列" —— 非常难看。
+/// 所以列数带死区（<see cref="Dead"/>）：已经在 N 列的，得真的窄出去 24px 才降到 N-1 列。
+///
+/// ## 与 VideoCard 的耦合（改一处要改两处）
+/// 卡片自己的外边距是 `Margin="8,10"`（左右各 8）。<see cref="Gap"/> 必须等于这个水平外边距之和，
+/// 否则"每行正好 N 张"就不成立。探针里有一条断言钉着这个关系。
+/// </summary>
+public static class CardWall
+{
+    /// <summary>每张卡片占的横向**额外**空档 = VideoCard 的左右外边距之和(8 + 8)</summary>
+    public const double Gap = 16;
+
+    /// <summary>一列至少这么宽。低于它就减一列 —— 这个值决定了"窗口多大时是几列"</summary>
+    public const double MinItemWidth = 220;
+
+    /// <summary>
+    /// 用户指定的**固定列数**(0 = 自动, 按宽度算)。设置页"首页显示列数"写这里。
+    ///
+    /// ★ 语义: 指定了就**不按宽度算**(也不再走迟滞) —— 用户要的是"就是这几列",
+    ///   而不是"尽量几列"。窗口太窄放不下时由 <see cref="ApplyTo"/> 的槽宽兜底(卡片会被压窄,
+    ///   但列数不变), 这比"悄悄变成别的列数"更符合用户预期。
+    /// ★ 它是**全局静态**的: 所有卡片页共用同一套列数(用户 2026-10-06 选定"所有卡片页统一")。
+    ///   改完必须让所有已存在的墙立刻重算, 见 <see cref="RefreshAll"/>。
+    /// </summary>
+    public static int FixedColumns { get; private set; }
+
+    /// <summary>固定列数的可选范围(设置页滑杆与夹取共用这一处)</summary>
+    public const int FixedColumnsMin = 2;
+    /// <inheritdoc cref="FixedColumnsMin"/>
+    public const int FixedColumnsMax = 8;
+
+    /// <summary>设置固定列数(0 = 恢复自动)。越界值会被夹到 <see cref="FixedColumnsMin"/>~<see cref="FixedColumnsMax"/>。</summary>
+    public static void SetFixedColumns(int columns)
+    {
+        var v = columns <= 0 ? 0 : Math.Clamp(columns, FixedColumnsMin, FixedColumnsMax);
+        if (FixedColumns == v) return;
+        FixedColumns = v;
+        RefreshAll();
+    }
+
+    /// <summary>把所有已挂 Enable 的墙立刻按新列数重算一遍(切列数时要立即看到效果)</summary>
+    public static void RefreshAll()
+    {
+        System.Collections.Generic.List<FrameworkElement> alive;
+        lock (_walls)
+        {
+            // 顺手清掉已经死掉的弱引用, 免得集合随页面切换无限增长
+            _walls.RemoveAll(w => !w.TryGetTarget(out _));
+            alive = _walls
+                .Select(w => w.TryGetTarget(out var t) ? t : null)
+                .Where(t => t != null)
+                .Select(t => t!)
+                .ToList();
+        }
+
+        foreach (var wall in alive)
+        {
+            if (!wall.IsLoaded) continue;
+            RefreshNow(wall);
+        }
+    }
+
+    /// <summary>已挂 Enable 的墙(弱引用集合: 页面会被销毁, 不能把它们钉住)</summary>
+    private static readonly System.Collections.Generic.List<WeakReference<FrameworkElement>> _walls = new();
+
+    /// <summary>列数的迟滞死区(折算成卡片宽度)。见类型注释里"滚动条"那段</summary>
+    private const double Dead = 24;
+
+    /// <summary>
+    /// 每列预留的取整余量(DIP)。见 <see cref="Update"/> 里的说明 —— 专门用来吸收
+    /// <c>UseLayoutRounding</c> 在非整数 DPI 下给每张卡带来的 &lt;0.5 DIP 放大。
+    /// </summary>
+    private const double RoundSlack = 1.0;
+
+    /// <summary>
+    /// 挂到卡片墙的 WrapPanel 上。**不挂就完全不参与**：卡片仍按设计宽度 236 排。
+    /// </summary>
+    public static readonly DependencyProperty EnableProperty =
+        DependencyProperty.RegisterAttached(
+            "Enable", typeof(bool), typeof(CardWall),
+            new PropertyMetadata(false, OnEnableChanged));
+
+    public static bool GetEnable(DependencyObject d) => (bool)d.GetValue(EnableProperty);
+    public static void SetEnable(DependencyObject d, bool value) => d.SetValue(EnableProperty, value);
+
+    /// <summary>
+    /// 每张卡片应有的宽度。**Inherits** —— 写在 WrapPanel 上，卡片直接继承到。
+    /// 默认值就是设计值，所以没挂 Enable 的列表行为与从前完全一致。
+    /// </summary>
+    public static readonly DependencyProperty ItemWidthProperty =
+        DependencyProperty.RegisterAttached(
+            "ItemWidth", typeof(double), typeof(CardWall),
+            new FrameworkPropertyMetadata(236.0, FrameworkPropertyMetadataOptions.Inherits));
+
+    public static double GetItemWidth(DependencyObject d) => (double)d.GetValue(ItemWidthProperty);
+
+    /// <summary>
+    /// 封面高度。跟着宽度按 16:9 走 —— 否则卡片变宽了封面还是 132 高，画面会被拉扁。
+    /// 同样 Inherits，同样默认设计值。
+    /// </summary>
+    public static readonly DependencyProperty CoverHeightProperty =
+        DependencyProperty.RegisterAttached(
+            "CoverHeight", typeof(double), typeof(CardWall),
+            new FrameworkPropertyMetadata(132.0, FrameworkPropertyMetadataOptions.Inherits));
+
+    public static double GetCoverHeight(DependencyObject d) => (double)d.GetValue(CoverHeightProperty);
+
+    /// <summary>
+    /// 墙的**内容宽高比**(宽 ÷ 高)。默认 16/9 —— 视频封面是横的。
+    ///
+    /// 番剧海报是竖的(3/4), 所以那面墙挂 <c>Aspect="0.75"</c>:
+    /// <see cref="ApplyTo"/> 里的封面高度是按这个比算出来的, 卡片只管读 CoverHeight。
+    ///
+    /// ★ 为什么把它做成墙上的附加属性, 而不是让海报卡自己按宽度算高度:
+    ///   海报卡在 XAML 里拿不到"我这一列有多宽"(那是 WrapPanel 算完才写下的继承属性),
+    ///   而 CoverHeight 正是为此存在的继承属性。多一个 Aspect 只是把同一个算式参数化,
+    ///   两类卡片共用同一套"按宽度铺满"的逻辑, 不用各写一份。
+    /// </summary>
+    public static readonly DependencyProperty AspectProperty =
+        DependencyProperty.RegisterAttached(
+            "Aspect", typeof(double), typeof(CardWall),
+            new PropertyMetadata(16.0 / 9.0));
+
+    public static double GetAspect(DependencyObject d) => (double)d.GetValue(AspectProperty);
+    public static void SetAspect(DependencyObject d, double value) => d.SetValue(AspectProperty, value);
+
+    /// <summary>上次算出来的列数(迟滞要用它当起点; 0 = 还没算过)</summary>
+    private static readonly DependencyProperty ColumnsProperty =
+        DependencyProperty.RegisterAttached("Columns", typeof(int), typeof(CardWall),
+            new PropertyMetadata(0));
+
+    /// <summary>
+    /// 当前列数(只读)。卡片墙面板用它判断"折行还成不成立"(见 CardWallPanel.WrapStillFits)。
+    ///
+    /// ★ 判据必须用**目标值 + 列数**这种"全墙唯一"的量, 不能用各孩子**实际**的宽度:
+    ///   渐进泵跑到一半时墙是"一半新一半旧"的, 那些宽度算出来的是中间态的折行,
+    ///   会把"折行已经坏了"误判成没坏(实测: 省下 1/3 CPU 却换来 15 次 ±237px 上下横跳)。
+    /// </summary>
+    public static int GetColumns(DependencyObject d) => (int)d.GetValue(ColumnsProperty);
+
+    private static void OnEnableChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not FrameworkElement el) return;
+        if ((bool)e.NewValue)
+        {
+            el.SizeChanged += OnWallSizeChanged;
+            lock (_walls) _walls.Add(new WeakReference<FrameworkElement>(el));
+        }
+        else
+        {
+            el.SizeChanged -= OnWallSizeChanged;
+            lock (_walls)
+            {
+                _walls.RemoveAll(w => !w.TryGetTarget(out var t) || ReferenceEquals(t, el));
+            }
+        }
+        Update(el);
+    }
+
+    private static void OnWallSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is FrameworkElement el) Update(el);
+    }
+
+    /// <summary>
+    /// 立刻按**当前**宽度重算一次目标尺寸。
+    ///
+    /// ★★ 为什么需要它(2026-10-01, 用户报的"卡片抽动很明显"的根): 正常重算挂在墙的 SizeChanged 上,
+    ///   而 WPF 的 SizeChanged 是**布局走完之后**才发的 —— `FluentWindow.OnStateChanged` 里那次
+    ///   UpdateLayout 之后, 本类的目标值还是**按旧窗口宽度**算出来的旧值。于是"按目标收敛可视区"
+    ///   一个孩子都没有可收敛的(探针实测 `收敛=0`), 随后渐进的 PumpStep 才把**整墙含视野上方**
+    ///   按 16 张一批收敛(150 张要 10 批、600ms), 而卡片高度随宽度变 ⇒ 可见区被一批批顶走。
+    ///   在这里强制重算一次, 过渡期的"一次性收敛"才真的收敛得动。
+    ///
+    /// ★★ 它**绕过拖动期间的合流节流**(2026-10-01): 节流会让目标值最多滞后 120ms, 而折行是按孩子
+    ///   当前宽度算的 —— 滞后期间窗口已经变了上百像素, 一行里最后那张就塞不下、掉到下一行,
+    ///   下一拍又跳回来(用户看到的"可见内容一行一行上下跳")。调用方(卡片墙面板)会在同一次布局
+    ///   更新里把可见带的孩子切过去, 中间态一帧都不会被渲染。
+    /// </summary>
+    public static void RefreshNow(FrameworkElement wall) => ApplyNow(wall);
+
+    /// <summary>按当前实际宽度算一次并写下去, 不看 <see cref="NotifyModalResize"/> 的节流开关。</summary>
+    private static void ApplyNow(FrameworkElement wall)
+    {
+        var avail = wall.ActualWidth;
+        if (double.IsNaN(avail) || avail <= 0) return;
+        ApplyTo(wall, avail);
+    }
+
+    private static void Update(FrameworkElement wall)
+    {
+        var avail = wall.ActualWidth;
+        // 首次布局前是 0：这时算出来的列数没有意义，等真布局跑完再算
+        if (double.IsNaN(avail) || avail <= 0) return;
+
+        // ★★ 拖动窗口边缘时的**合流**(见 NotifyModalResize)。这里必须直接 return:
+        //    一旦往下算, SetValue 打的是**可继承**属性 ⇒ 整棵子树失效 ⇒ 全墙卡片重新测量,
+        //    而拖动期间 WM_SIZE 每帧都来 —— 那就是"拖边缘一卡一卡"的来源。
+        if (_modalResizing)
+        {
+            _pendingWall = wall;
+            EnsureThrottleTimer();
+            return;
+        }
+
+        ApplyTo(wall, avail);
+    }
+
+    /// <summary>
+    /// 真正算一次并写下去。`avail` 由调用方给, 免得节流补算时又读一次可能已经变了的宽度。
+    /// </summary>
+    private static void ApplyTo(FrameworkElement wall, double avail)
+    {
+        var cols = ColumnsFor(avail, (int)wall.GetValue(ColumnsProperty));
+        wall.SetValue(ColumnsProperty, cols);
+
+        // ★ 槽位宽必须**向下取整**, 而且还要留出**取整余量**。
+        //
+        // 两个都是"每行少一张"的直接原因, 实测踩过(用户截图: 窗口缩到最小宽度后只排 3 张,
+        // 右边空一大块):
+        //   ① 向上取整: cols 个槽位加起来超过 avail, WrapPanel 就把最后一张挤到下一行;
+        //   ② **UseLayoutRounding**(主窗口开着) + 125% 缩放: 每一张卡的实际占位会被按**设备像素**
+        //      取整放大最多 0.4 DIP(230 DIP → 287.5 设备px → 288 → 230.4 DIP)。4 张就是 1.6 DIP,
+        //      而 `floor(avail/cols)` 只留了 `avail - cols*slot` 那点余量(实测只有 1 DIP) ⇒ 正好被吃掉。
+        // 所以按**每列 1 DIP** 预留: 最多损失 cols 个 DIP(肉眼不可辨), 换"算几列就真的排几列"。
+        var slot = Math.Floor((avail - cols * RoundSlack) / cols);
+        var item = Math.Max(80.0, slot - Gap);
+
+        // 封面高度 = 槽宽 ÷ 内容宽高比。默认 16/9 得到历史上的 132; 番剧海报墙传 0.75 得到 3:4。
+        // 比值非法(0 / 负数 / NaN)时退回 16/9 —— 封面高度 0 会让整排卡片塌成一条线。
+        var aspect = GetAspect(wall);
+        if (double.IsNaN(aspect) || aspect <= 0.01) aspect = 16.0 / 9.0;
+        var cover = Math.Round(item / aspect);
+
+        // 值真的变了才写。拖动窗口时 SizeChanged 每帧都进来，而宽度大部分时候没变到"跨过整数像素"，
+        // 无条件 SetValue 会让这个可继承属性每帧都广播一次子树。
+        if (Math.Abs(GetItemWidth(wall) - item) > 0.01) wall.SetValue(ItemWidthProperty, item);
+        if (Math.Abs(GetCoverHeight(wall) - cover) > 0.01) wall.SetValue(CoverHeightProperty, cover);
+    }
+
+    // ------------------------------------------------------------ 拖动缩放时的重算节流
+
+    /// <summary>拖动期间最多这么久重算一次。见 <see cref="NotifyModalResize"/></summary>
+    private const int ThrottleMs = 120;
+
+    /// <summary>用户是否正拖着窗口边缘(Win32 的模态缩放循环)</summary>
+    private static bool _modalResizing;
+
+    /// <summary>节流期间攒下的"最后那个要算的墙"</summary>
+    private static FrameworkElement? _pendingWall;
+
+    private static DispatcherTimer? _throttleTimer;
+
+    /// <summary>
+    /// 由 `FluentWindow` 在 `WM_ENTERSIZEMOVE` / `WM_EXITSIZEMOVE` 时调用。
+    ///
+    /// 拖动期间把重算**合流到 ~120ms 一次**, 松手时立刻补算收尾。这样拖动过程里列数仍然会变
+    /// (有反馈、不是冻住), 但不会每帧推翻整墙卡片的测量。
+    /// 非拖动场景(启动、切页、最大化)完全不受影响 —— 那些本来就是一次性的, 照样立刻算。
+    /// </summary>
+    public static void NotifyModalResize(bool entering)
+    {
+        _modalResizing = entering;
+        if (entering) return;
+
+        // 松手: 先收掉定时器, 再立刻把攒下的那次算掉(不靠定时器, 免得最后一下要等 120ms)
+        StopThrottleTimer();
+        FlushPending();
+    }
+
+    private static void EnsureThrottleTimer()
+    {
+        if (_throttleTimer != null) return;
+        _throttleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(ThrottleMs) };
+        _throttleTimer.Tick += (_, _) =>
+        {
+            StopThrottleTimer();
+            FlushPending();
+        };
+        _throttleTimer.Start();
+    }
+
+    private static void StopThrottleTimer()
+    {
+        _throttleTimer?.Stop();
+        _throttleTimer = null;
+    }
+
+    /// <summary>把攒下的最后一次算掉。攒着的墙可能已经不在可视树上了(切页), 那就读不到宽度、直接跳过。</summary>
+    private static void FlushPending()
+    {
+        var wall = _pendingWall;
+        _pendingWall = null;
+        if (wall == null) return;
+
+        var avail = wall.ActualWidth;
+        if (double.IsNaN(avail) || avail <= 0) return;
+        ApplyTo(wall, avail);
+    }
+
+    /// <summary>
+    /// 按可用宽度算列数。带迟滞：先按"当前列数"判，太挤才减、有富余才加，两边各留 <see cref="Dead"/>。
+    /// 纯逻辑、无副作用，探针可以直接拿它跑"窗口从最小拖到最大"的整条路径。
+    ///
+    /// ★ 用户指定了固定列数时**直接返回它**, 不参与迟滞 —— 见 <see cref="FixedColumns"/>。
+    /// </summary>
+    public static int ColumnsFor(double avail, int current)
+    {
+        if (FixedColumns > 0) return FixedColumns;
+
+        var n = current > 0
+            ? current
+            : (int)Math.Floor((avail + Gap) / (MinItemWidth + Gap));
+        if (n < 1) n = 1;
+
+        // 挤不下就逐列减
+        while (n > 1 && (avail + Gap) / n - Gap < MinItemWidth - Dead) n--;
+        // 还有富余就逐列加
+        while ((avail + Gap) / (n + 1) - Gap >= MinItemWidth + Dead) n++;
+        return n;
+    }
+}
