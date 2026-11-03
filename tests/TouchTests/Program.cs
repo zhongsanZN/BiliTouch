@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
@@ -169,6 +169,10 @@ internal static class Program
         var help = Element<Border>(player, "TouchHelp");
         var x = root.ActualWidth / 2; var y = root.ActualHeight / 2;
         Check(root.ActualWidth > 200 && root.ActualHeight > 150, "real VLC foreground overlay has a usable gesture area");
+        var info = Element<ScrollViewer>(player, "InfoScroll");
+        Check(info.PanningMode == PanningMode.VerticalFirst,
+            "right-side info/comments/season panel accepts finger panning");
+        Check(Math.Abs(info.PanningRatio - 0.75) < 0.01, "touch panning ratio is softened for touchpads");
         Check(VirtualizingPanel.GetScrollUnit(Element<ListBox>(player, "SeasonList")) == ScrollUnit.Pixel,
             "player episode list is configured for per-pixel touch panning");
         var finger = new Finger(root);

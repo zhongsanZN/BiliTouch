@@ -3,7 +3,9 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Media;
 
 namespace BiliDesk.Helpers;
 
@@ -16,7 +18,17 @@ public static class TouchSupport
         public double InitialValue;
     }
 
+    /// <summary>One pen drag-to-scroll gesture on a ScrollViewer.</summary>
+    private sealed class PenPan
+    {
+        public StylusDevice? Device;
+        public Point Start;
+        public double StartOffset;
+        public bool Started;
+    }
+
     private static readonly ConditionalWeakTable<Slider, SliderDrag> Drags = new();
+    private static readonly ConditionalWeakTable<ScrollViewer, PenPan> Pens = new();
     private static bool _installed;
 
     /// <summary>The ScrollViewer a finger is currently panning (null when idle).</summary>
@@ -91,6 +103,17 @@ public static class TouchSupport
         // Suppress window bounce at the end of a list, while retaining native pan inertia.
         EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.ManipulationBoundaryFeedbackEvent,
             new EventHandler<ManipulationBoundaryFeedbackEventArgs>((_, e) => e.Handled = true));
+        // WPF only provides *finger* panning. A stylus drag over the right-side info/comment panel
+        // did nothing, so pen users could not scroll it. This adds a 1:1 pen drag-to-scroll that
+        // still lets taps on buttons/links/sliders through (it only starts after a small slop).
+        EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.PreviewStylusDownEvent,
+            new StylusDownEventHandler(OnPenDown), true);
+        EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.PreviewStylusMoveEvent,
+            new StylusEventHandler(OnPenMove), true);
+        EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.PreviewStylusUpEvent,
+            new StylusEventHandler(OnPenUp), true);
+        EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.LostStylusCaptureEvent,
+            new StylusEventHandler(OnPenLostCapture), true);
         EventManager.RegisterClassHandler(typeof(Slider), UIElement.PreviewTouchDownEvent,
             new EventHandler<TouchEventArgs>(OnSliderDown));
         EventManager.RegisterClassHandler(typeof(Slider), UIElement.PreviewTouchMoveEvent,
@@ -112,6 +135,75 @@ public static class TouchSupport
         var vertical = viewer.VerticalScrollBarVisibility != ScrollBarVisibility.Disabled;
         viewer.SetCurrentValue(ScrollViewer.PanningModeProperty,
             horizontal && !vertical ? PanningMode.HorizontalOnly : PanningMode.VerticalFirst);
+        // 75% of the finger travel: full-strength WPF panning felt twitchy on precision touchpads
+        // that stream their gesture as touch input. Inertia is unaffected.
+        viewer.SetCurrentValue(ScrollViewer.PanningRatioProperty, 0.75);
+    }
+
+    private static bool IsPen(StylusEventArgs e) =>
+        e.StylusDevice?.TabletDevice.Type == TabletDeviceType.Stylus;
+
+    /// <summary>Buttons/sliders/text boxes/selectors/hyperlinks keep the pen click they deserve.</summary>
+    private static bool IsInteractiveSource(DependencyObject? source, ScrollViewer viewer)
+    {
+        while (source != null && source != viewer)
+        {
+            if (source is ButtonBase or Slider or TextBoxBase or Selector or Hyperlink) return true;
+            source = source is ContentElement content
+                ? ContentOperations.GetParent(content) ?? (content as FrameworkContentElement)?.Parent
+                : VisualTreeHelper.GetParent(source);
+        }
+        return false;
+    }
+
+    private static void OnPenDown(object? sender, StylusEventArgs e)
+    {
+        if (sender is not ScrollViewer viewer || !IsPen(e)) return;
+        // Item-scrolled viewers count offsets in rows: a pixel delta there would jump whole cards.
+        if (viewer.CanContentScroll) return;
+        if (IsInteractiveSource(e.OriginalSource as DependencyObject, viewer)) return;
+        var pan = Pens.GetOrCreateValue(viewer);
+        pan.Device = e.StylusDevice;
+        pan.Start = e.GetPosition(viewer);
+        pan.StartOffset = viewer.VerticalOffset;
+        pan.Started = false;
+        // Deliberately not handled: a pen tap that never moves must still click what is under it.
+    }
+
+    private static void OnPenMove(object? sender, StylusEventArgs e)
+    {
+        if (sender is not ScrollViewer viewer) return;
+        if (!Pens.TryGetValue(viewer, out var pan) || pan.Device == null || pan.Device != e.StylusDevice) return;
+        var dy = e.GetPosition(viewer).Y - pan.Start.Y;
+        if (!pan.Started)
+        {
+            if (Math.Abs(dy) < 10) return;
+            if (!pan.Device.Capture(viewer)) { pan.Device = null; return; }
+            pan.Started = true;
+        }
+        e.Handled = true;
+        viewer.ScrollToVerticalOffset(Math.Clamp(pan.StartOffset - dy, 0, Math.Max(0, viewer.ScrollableHeight)));
+    }
+
+    private static void OnPenUp(object? sender, StylusEventArgs e)
+    {
+        if (sender is not ScrollViewer viewer) return;
+        if (!Pens.TryGetValue(viewer, out var pan) || pan.Device == null || pan.Device != e.StylusDevice) return;
+        var started = pan.Started;
+        pan.Device = null;
+        pan.Started = false;
+        if (e.StylusDevice.Captured == viewer) e.StylusDevice.Capture(null);
+        if (started) e.Handled = true; // a drag must not turn into a click
+    }
+
+    private static void OnPenLostCapture(object? sender, StylusEventArgs e)
+    {
+        if (sender is not ScrollViewer viewer) return;
+        if (Pens.TryGetValue(viewer, out var pan) && pan.Device == e.StylusDevice)
+        {
+            pan.Device = null;
+            pan.Started = false;
+        }
     }
 
     private static void OnSliderDown(object? sender, TouchEventArgs e)
