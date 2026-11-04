@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using BiliDesk.ViewModels;
 
@@ -49,5 +49,5 @@ public partial class WatchLaterPage : UserControl
 
     /// <summary>返回「我的」页(入口在那里)</summary>
     private void OnBackToMineClick(object sender, RoutedEventArgs e)
-        => App.MainVm.Navigate(PageKey.Mine);
+        => BiliDesk.Services.SvcWindow.Main?.OpenMineOverview();
 }

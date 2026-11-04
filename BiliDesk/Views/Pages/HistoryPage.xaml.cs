@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -43,7 +43,7 @@ public partial class HistoryPage : UserControl
 
     /// <summary>右上角操作组里的返回按钮: 历史/收藏/缓存的入口都在「我的」页, 统一回那里</summary>
     private void OnBackToMineClick(object sender, RoutedEventArgs e)
-        => App.MainVm.Navigate(PageKey.Mine);
+        => BiliDesk.Services.SvcWindow.Main?.OpenMineOverview();
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {

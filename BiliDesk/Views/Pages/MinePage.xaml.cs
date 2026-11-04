@@ -1,55 +1,121 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Documents;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
 using BiliDesk.Models;
-using BiliDesk.Services;
 using BiliDesk.ViewModels;
 
 namespace BiliDesk.Views.Pages;
 
-/// <summary>
-/// 「我的」页: 资料 + 统计 + 快捷入口 + 收藏夹卡片。
-/// 页面实例被 MainWindow 缓存, 每次切进来 Loaded 都会重拉一次数据 ——
-/// 硬币/经验/粉丝这类数字过期了看着难受, 而且本页请求量小, 重拉没有成本压力。
-/// </summary>
 public partial class MinePage : UserControl
 {
-    private MineViewModel? Vm => DataContext as MineViewModel;
-
+    public Func<PageKey,FrameworkElement>? SectionFactory {get;set;}
+    private readonly Dictionary<int,FrameworkElement> _sections=new();
+    private readonly PageKey[] _keys={PageKey.Mine,PageKey.History,PageKey.Favorites,PageKey.WatchLater,PageKey.Cache};
+    internal int CurrentTabIndex {get;private set;}
+    private readonly TranslateTransform _slide=new();
+    private Point _start;
+    private long _started;
+    private bool _armed,_horizontal,_decided,_moving,_suppressClick;
+    private double _dx;
+    private ScrollViewer? _frozen;
+    private PanningMode _panning;
+    private double _frozenOffset;
     public MinePage()
     {
-        InitializeComponent();
-        Loaded += async (_, _) =>
+        InitializeComponent();SectionHost.RenderTransform=_slide;
+        OverviewTab.IsChecked=true;
+        SectionHost.PreviewTouchDown+=(_,e)=>SwipeDown(e.GetTouchPoint(null).Position,e.OriginalSource as DependencyObject);
+        SectionHost.PreviewTouchMove+=(_,e)=>{if(SwipeMove(e.GetTouchPoint(null).Position))e.Handled=true;};
+        SectionHost.PreviewTouchUp+=(_,e)=>{if(SwipeUp())e.Handled=true;};
+        SectionHost.PreviewMouseLeftButtonUp+=(_,e)=>{if(_suppressClick){e.Handled=true;_suppressClick=false;}};
+        Unloaded+=(_,_)=>{RestorePanning();_armed=false;};
+    }
+    private RadioButton[] Tabs=>new[]{OverviewTab,HistoryTab,FavoritesTab,LaterTab,CacheTab};
+    private FrameworkElement CreateSection(int index)
+    {
+        FrameworkElement page=index==0?new MineOverviewPage():SectionFactory?.Invoke(_keys[index]) ?? index switch
         {
-            if (Vm != null) await Vm.LoadAsync();
+            1=>new HistoryPage {DataContext=new HistoryViewModel()},
+            2=>new FavoritesPage {DataContext=new FavoritesViewModel()},
+            3=>new WatchLaterPage {DataContext=new WatchLaterViewModel()},
+            _=>new CachePage {DataContext=new CacheViewModel()}
         };
+        if(index==0 && page.FindName("PageHeader") is FrameworkElement header)header.Visibility=Visibility.Collapsed;
+        else if(page is ContentControl {Content:Grid layout})
+        {
+            var toolbar=layout.Children.OfType<Grid>().FirstOrDefault(g=>Grid.GetRow(g)==0);
+            if(toolbar!=null){toolbar.Margin=new Thickness(36,4,36,6);toolbar.MinHeight=Math.Max(40,toolbar.MinHeight);}
+        }
+        return page;
     }
-
-    // ---- 快捷入口(直接走主导航, 与首页右上浮层同一套) ----
-
-    private void OnOpenCacheClick(object sender, RoutedEventArgs e)
-        => App.MainVm.Navigate(PageKey.Cache);
-
-    private void OnOpenHistoryClick(object sender, RoutedEventArgs e)
-        => App.MainVm.Navigate(PageKey.History);
-
-    private void OnOpenFavoritesClick(object sender, RoutedEventArgs e)
-        => App.MainVm.Navigate(PageKey.Favorites);
-
-    private void OnOpenWatchLaterClick(object sender, RoutedEventArgs e)
-        => App.MainVm.Navigate(PageKey.WatchLater);
-
-    /// <summary>刷新收藏夹。★ 必须 force —— 收藏夹默认只在第一次进本页时拉一次
-    /// (见 MineViewModel._foldersLoaded 的说明), 不强制刷新的话这个按钮会"点了没反应"。</summary>
-    private void OnRefreshFoldersClick(object sender, RoutedEventArgs e)
+    private void OnTabChecked(object sender,RoutedEventArgs e)
     {
-        if (Vm != null) _ = Vm.LoadFoldersAsync(force: true);
+        if(SectionHost==null || sender is not RadioButton tab || !int.TryParse(tab.Tag?.ToString(),out var index))return;
+        _armed=false;RestorePanning();_slide.BeginAnimation(TranslateTransform.XProperty,null);_slide.X=0;_moving=false;
+        CurrentTabIndex=index;
+        if(!_sections.TryGetValue(index,out var page))
+        {
+            page=CreateSection(index);_sections[index]=page;SectionHost.Children.Add(page);
+        }
+        foreach(var item in _sections)item.Value.Visibility=item.Key==index?Visibility.Visible:Visibility.Collapsed;
     }
-
-    /// <summary>点收藏夹卡片 → 收藏页并选中那个夹(经 MainWindow.OpenFavFolder 落地)</summary>
-    private void OnFolderClick(object sender, MouseButtonEventArgs e)
+    public void SelectSection(PageKey key)
     {
-        if (sender is FrameworkElement { DataContext: FavFolder folder })
-            SvcWindow.Main?.OpenFavFolder(folder);
+        var index=Array.IndexOf(_keys,key);if(index>=0)Tabs[index].IsChecked=true;
+    }
+    internal void SwipeDown(Point point,DependencyObject? source)
+    {
+        _suppressClick=false;_start=point;_started=Environment.TickCount64;_dx=0;_decided=false;_horizontal=false;
+        _armed=!_moving;
+        for(var d=source;d!=null && d!=SectionHost;d=d is ContentElement c?ContentOperations.GetParent(c) ?? (c as FrameworkContentElement)?.Parent:VisualTreeHelper.GetParent(d))
+            if(d is ButtonBase or TextBoxBase or Slider or Hyperlink){_armed=false;break;}
+    }
+    internal bool SwipeMove(Point point)
+    {
+        if(!_armed)return false;
+        _dx=point.X-_start.X;var dy=point.Y-_start.Y;
+        if(!_decided)
+        {
+            if(Math.Max(Math.Abs(_dx),Math.Abs(dy))<12)return false;
+            _decided=true;_horizontal=Math.Abs(_dx)>Math.Abs(dy)*1.4;
+        }
+        if(!_horizontal)return false;
+        if(_frozen==null && _sections.TryGetValue(CurrentTabIndex,out var page))
+        {
+            _frozen=FindScroll(page);if(_frozen!=null){_panning=_frozen.PanningMode;_frozenOffset=_frozen.VerticalOffset;_frozen.PanningMode=PanningMode.None;BiliDesk.Helpers.SmoothScroll.Stop(_frozen);}
+        }
+        if(_frozen!=null && Math.Abs(_frozen.VerticalOffset-_frozenOffset)>0.5)_frozen.ScrollToVerticalOffset(_frozenOffset);
+        var edge=CurrentTabIndex==0 && _dx>0 || CurrentTabIndex==4 && _dx<0;
+        _slide.X=_dx*(edge?0.35:1);return true;
+    }
+    internal bool SwipeUp()
+    {
+        if(!_armed)return false;_armed=false;RestorePanning();
+        if(!_horizontal)return false;
+        _suppressClick=true;
+        var velocity=Math.Abs(_dx)/Math.Max(1,Environment.TickCount64-_started);
+        var change=Math.Abs(_dx)>Math.Max(1,SectionHost.ActualWidth)*0.18 || Math.Abs(_dx)>24 && velocity>0.35;
+        Snap(change?Math.Clamp(CurrentTabIndex+(_dx<0?1:-1),0,4):CurrentTabIndex);
+        return true;
+    }
+    private void RestorePanning(){if(_frozen!=null)_frozen.PanningMode=_panning;_frozen=null;}
+    internal void HandleHorizontalWheel(int direction){if(!_moving && direction!=0)Snap(Math.Clamp(CurrentTabIndex+direction,0,4));}
+    private void Snap(int target)
+    {
+        if(_moving)return;_moving=true;
+        var animation=new DoubleAnimation(target==CurrentTabIndex?0:(target>CurrentTabIndex?-1:1)*Math.Max(1,SectionHost.ActualWidth),TimeSpan.FromMilliseconds(160)){EasingFunction=new CubicEase {EasingMode=EasingMode.EaseOut}};
+        animation.Completed+=(_,_)=>{_slide.BeginAnimation(TranslateTransform.XProperty,null);_slide.X=0;Tabs[target].IsChecked=true;_moving=false;};
+        _slide.BeginAnimation(TranslateTransform.XProperty,animation);
+    }
+    private static ScrollViewer? FindScroll(DependencyObject root)
+    {
+        if(root is FrameworkElement fe && !fe.IsVisible)return null;
+        if(root is ScrollViewer sv)return sv;
+        for(int i=0;i<VisualTreeHelper.GetChildrenCount(root);i++){var found=FindScroll(VisualTreeHelper.GetChild(root,i));if(found!=null)return found;}
+        return null;
     }
 }

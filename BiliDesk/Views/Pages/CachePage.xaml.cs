@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using BiliDesk.Helpers;
@@ -30,7 +30,7 @@ public partial class CachePage : UserControl
 
     /// <summary>右上角返回按钮: 历史/收藏/缓存的入口都在「我的」页, 统一回那里(旧的"返回首页"按钮已删)</summary>
     private void OnBackToMineClick(object sender, RoutedEventArgs e)
-        => App.MainVm.Navigate(PageKey.Mine);
+        => BiliDesk.Services.SvcWindow.Main?.OpenMineOverview();
 
     /// <summary>点空白处也能播(整行可点), 但按到按钮上时不重复触发</summary>
     private void OnRowClick(object sender, MouseButtonEventArgs e)

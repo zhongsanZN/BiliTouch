@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Windows;
@@ -76,7 +76,7 @@ public partial class MainWindow : FluentWindow
     protected override void OnHorizontalWheel(int delta)
     {
         if (delta == 0) return;
-        if (_vm.Current != PageKey.Home) return;
+        if (_vm.Current is not (PageKey.Home or PageKey.Mine)) return;
 
         // ★★★ 2026-11-04 第四次修触控板横滑。这一版把"限位"的判据彻底换掉。
         //
@@ -113,7 +113,9 @@ public partial class MainWindow : FluentWindow
         _hWheelConsumed = true;
 
         // ★ 方向: delta > 0 ⇒ 手指向左滑 ⇒ 内容向左跟手 ⇒ 露出**右**边那页 ⇒ +1
-        if (PageOf(PageKey.Home) is HomePage home)
+        if(_vm.Current==PageKey.Mine && PageOf(PageKey.Mine) is MinePage mine)
+            mine.HandleHorizontalWheel(_hWheelInvert?-dir:dir);
+        else if (PageOf(PageKey.Home) is HomePage home)
             home.HandleHorizontalWheel(_hWheelInvert ? -dir : dir);
     }
 
@@ -177,7 +179,7 @@ public partial class MainWindow : FluentWindow
             PageKey.Favorites => new FavoritesPage { DataContext = new FavoritesViewModel() },
             PageKey.Settings => new SettingsPage { DataContext = new SettingsViewModel() },
             // 我的页(2026-09-26 新增): 个人资料 + 快捷入口 + 收藏夹卡片
-            PageKey.Mine => new MinePage { DataContext = new MineViewModel() },
+            PageKey.Mine => new MinePage { DataContext = new MineViewModel(), SectionFactory=PageOf },
             // 这两个页面不在左侧导航栏上: 消息入口在首页右上角工具列, 离线缓存入口在「我的」页
             PageKey.Cache => new CachePage { DataContext = new CacheViewModel() },
             PageKey.Messages => new MessagesPage { DataContext = new MessagesViewModel() },
@@ -213,7 +215,7 @@ public partial class MainWindow : FluentWindow
         }
         if (EmbeddedHost.Visibility != Visibility.Visible) return;
         e.Handled = true;
-        HideEmbedded();
+        GoBackEmbedded();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -277,9 +279,20 @@ public partial class MainWindow : FluentWindow
     /// 以前这里是 new 一个独立 Window —— 观感像换了另一个程序, 关掉时还容易连主界面一起关,
     /// 而且那个窗口不在导航体系里, 点哪都回不到刚才的位置。
     /// </summary>
+    private readonly Stack<(FrameworkElement page,string title)> _embeddedHistory = new();
+
     public void ShowEmbeddedPage(FrameworkElement page, string title)
     {
-        // 先放掉上一个内嵌页: 同一时刻只留一个, 免得旧的 UP 资料被接着显示
+        if(EmbeddedHost.Visibility==Visibility.Visible && EmbeddedContent.Content is FrameworkElement previous)
+        {
+            if(_embeddedHistory.Count>=16)
+            {
+                var retained=_embeddedHistory.Take(15).Reverse().ToArray();
+                _embeddedHistory.Clear();
+                foreach(var entry in retained)_embeddedHistory.Push(entry);
+            }
+            _embeddedHistory.Push((previous,EmbeddedTitle.Text));
+        }
         EmbeddedContent.Content = null;
 
         EmbeddedTitle.Text = title;
@@ -309,6 +322,7 @@ public partial class MainWindow : FluentWindow
     /// <summary>关掉内嵌页, 露出之前的导航页</summary>
     public void HideEmbedded()
     {
+        _embeddedHistory.Clear();
         if (EmbeddedHost.Visibility != Visibility.Visible) return;
         // 先清掉淡入动画: 不然下次显示时 Opacity 的动画值还挂着, 会跳过入场动画直接跳满
         EmbeddedHost.BeginAnimation(OpacityProperty, null);
@@ -319,7 +333,17 @@ public partial class MainWindow : FluentWindow
         PageHost.Visibility = Visibility.Visible;
     }
 
-    private void OnEmbeddedBackClick(object sender, RoutedEventArgs e) => HideEmbedded();
+    private void GoBackEmbedded()
+    {
+        if(_embeddedHistory.TryPop(out var previous))
+        {
+            EmbeddedContent.Content=null;
+            EmbeddedTitle.Text=previous.title;
+            EmbeddedContent.Content=previous.page;
+        }
+        else HideEmbedded();
+    }
+    private void OnEmbeddedBackClick(object sender, RoutedEventArgs e) => GoBackEmbedded();
 
     /// <summary>
     /// 切到「搜索」页并立刻用给定关键词搜一次(首页右上角搜索卡用)。
@@ -408,8 +432,20 @@ public partial class MainWindow : FluentWindow
     ///
     ///   ★ 别在过渡中间加 `PageHost.UpdateLayout()`(会把整墙测量同步堆在点击那一拍)。
     /// </summary>
+    public void OpenMineOverview()
+    {
+        ((MinePage)PageOf(PageKey.Mine)).SelectSection(PageKey.Mine);
+        _vm.Navigate(PageKey.Mine);
+    }
+
     private void ShowPage(PageKey key, bool animate)
     {
+        if(key is PageKey.History or PageKey.Favorites or PageKey.WatchLater or PageKey.Cache)
+        {
+            ((MinePage)PageOf(PageKey.Mine)).SelectSection(key);
+            _vm.Navigate(PageKey.Mine);
+            return;
+        }
         // 目标就是当前页: 直接返回, 免得"点当前导航项"白播一段动画。
         // ★ 但过渡**在途**时不能早退: 那一刻 PageHost 上还挂着旧页面, 而换页已经排上队,
         //   早退会让那次换页照常发生 —— 用户点了"首页"却停在别的页上。这种情况要走一次完整过渡。

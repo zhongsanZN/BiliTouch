@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -523,7 +523,7 @@ public partial class HomePage : UserControl
     private async Task TriggerAutoLoad(ScrollViewer sv, HomeViewModel vm)
     {
         if (_autoFillCount > 5) return; // 防止死循环
-        if (vm.LoadingMore || vm.Loading) return;
+        if (vm.LoadingMore || vm.Loading || !sv.IsVisible || vm.Error.Length>0) return;
         // 手指还按在列表上时不往列表里加卡: 加卡会让整墙重新测量/重排, 拖动中掉帧。
         // 松手后的惯性滚动会再触发 ScrollChanged, 那时再补加载。
         // (Chromium 的原则: 滚动走合成线程, 滚动过程中绝不做会改内容的主线程布局。)

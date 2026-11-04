@@ -1,0 +1,87 @@
+﻿<UserControl x:Class="BiliDesk.Views.Pages.DynamicDetailPage"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:controls="clr-namespace:BiliDesk.Views.Controls" xmlns:helpers="clr-namespace:BiliDesk.Helpers"
+ Background="{DynamicResource AppBackgroundBrush}">
+ <UserControl.Resources>
+  <Style x:Key="CommentReactionText" TargetType="TextBlock">
+   <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+   <Style.Triggers><DataTrigger Binding="{Binding IsLiked}" Value="True"><Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}" /></DataTrigger></Style.Triggers>
+  </Style>
+  <DataTemplate x:Key="ReplyTemplate">
+   <Border Margin="0,6,0,0" Padding="10" CornerRadius="6" Background="{DynamicResource ControlFillHoverBrush}">
+    <StackPanel>
+     <controls:CommentText Comment="{Binding}" Prefix="{Binding ReplyPrefix}" FontSize="13" Foreground="{DynamicResource TextPrimaryBrush}" />
+     <Button Content="回复" Click="OnReplyToReply" HorizontalAlignment="Left" Style="{StaticResource SubtleButtonStyle}" />
+    </StackPanel>
+   </Border>
+  </DataTemplate>
+ </UserControl.Resources>
+ <Grid Margin="16,8">
+  <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <Grid>
+   <Grid.ColumnDefinitions><ColumnDefinition Width="3*" MinWidth="280"/><ColumnDefinition Width="2*" MinWidth="300"/></Grid.ColumnDefinitions>
+   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,0,12,0">
+    <StackPanel>
+     <controls:DynamicFeedCard DataContext="{Binding Item}" IsDetail="True" MaxWidth="800" CommentRequested="OnFocusComment" RepostRequested="OnFocusRepost" />
+     <TextBlock Text="{Binding DetailError}" Visibility="{Binding DetailError, Converter={StaticResource StrToVis}}" TextWrapping="Wrap" Margin="12,6" Foreground="{DynamicResource DangerTextBrush}" />
+     <controls:LoadingRing Width="18" Height="18" Visibility="{Binding DetailLoading, Converter={StaticResource BoolToVis}}" />
+     <Button Content="重新加载完整内容" Visibility="{Binding DetailError, Converter={StaticResource StrToVis}}" HorizontalAlignment="Left" Margin="12,6" Click="OnReloadDetail" Style="{StaticResource SubtleButtonStyle}" />
+    </StackPanel>
+   </ScrollViewer>
+   <DockPanel Grid.Column="1" LastChildFill="True">
+    <Grid DockPanel.Dock="Top" Margin="8,6,8,10">
+     <TextBlock Text="评论" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
+     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+      <RadioButton Content="最热" GroupName="CommentSort" IsChecked="True" Checked="OnHot" Margin="8,0" />
+      <RadioButton Content="最新" GroupName="CommentSort" Checked="OnNewest" Margin="8,0" />
+     </StackPanel>
+    </Grid>
+    <StackPanel DockPanel.Dock="Bottom" Margin="8">
+     <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
+     <TextBlock Text="{Binding Error}" TextWrapping="Wrap" Margin="0,5" Foreground="{DynamicResource DangerTextBrush}" />
+     <controls:LoadingRing Width="18" Height="18" Visibility="{Binding Loading, Converter={StaticResource BoolToVis}}" />
+     <Button Content="加载更多评论" Click="OnMore" IsEnabled="{Binding CanLoadMore}" Visibility="{Binding HasMore, Converter={StaticResource BoolToVis}}" Style="{StaticResource SubtleButtonStyle}" />
+     <Button Content="重新加载评论" Click="OnRetry" Visibility="{Binding Error, Converter={StaticResource StrToVis}}" Style="{StaticResource SubtleButtonStyle}" />
+    </StackPanel>
+    <ListBox x:Name="CommentList" ItemsSource="{Binding Comments}" Background="Transparent" BorderThickness="0"
+     ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True"
+     VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel">
+     <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem"><ContentPresenter/></ControlTemplate></Setter.Value></Setter></Style></ListBox.ItemContainerStyle>
+     <ListBox.ItemTemplate>
+      <DataTemplate>
+       <Border Padding="12" Margin="0,0,0,8" CornerRadius="8" Background="{DynamicResource CardBackgroundBrush}">
+        <StackPanel>
+         <StackPanel Orientation="Horizontal">
+          <Border Width="30" Height="30" CornerRadius="15" Margin="0,0,8,0" Cursor="Hand" MouseLeftButtonUp="OnAuthor" helpers:Cover.Source="{Binding UserFace}" />
+          <TextBlock Text="{Binding UserName}" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="{DynamicResource AccentTextBrush}" />
+          <TextBlock Text="置顶" Margin="8,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource AccentTextBrush}" Visibility="{Binding IsPinned, Converter={StaticResource BoolToVis}}" />
+         </StackPanel>
+         <controls:CommentText Comment="{Binding}" Margin="0,8,0,0" FontSize="13" Foreground="{DynamicResource TextPrimaryBrush}" />
+         <ItemsControl ItemsSource="{Binding Pictures}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><Border Width="90" Height="80" Margin="3" helpers:Cover.Source="{Binding Url}" MouseLeftButtonUp="OnCommentPicture" Cursor="Hand"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+         <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+          <TextBlock Text="{Binding RcTime}" FontSize="11" VerticalAlignment="Center" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,8,0" />
+          <Button Click="OnLike" IsEnabled="{Binding CanLike}" ToolTip="点赞/取消点赞" Style="{StaticResource SubtleButtonStyle}"><StackPanel Orientation="Horizontal"><TextBlock Text="赞 " Style="{StaticResource CommentReactionText}"/><TextBlock Text="{Binding LikeText}" Style="{StaticResource CommentReactionText}"/></StackPanel></Button>
+          <Button Content="回复" Click="OnReply" Style="{StaticResource SubtleButtonStyle}" Margin="6,0" />
+         </StackPanel>
+         <ItemsControl ItemsSource="{Binding Replies}" ItemTemplate="{StaticResource ReplyTemplate}" />
+         <Button Content="{Binding ReplyMoreText}" Click="OnReplies" Visibility="{Binding HasMoreReplies, Converter={StaticResource BoolToVis}}" HorizontalAlignment="Left" Style="{StaticResource SubtleButtonStyle}" />
+        </StackPanel>
+       </Border>
+      </DataTemplate>
+     </ListBox.ItemTemplate>
+    </ListBox>
+   </DockPanel>
+  </Grid>
+  <Border Grid.Row="1" Margin="8,12,8,0" Padding="12" CornerRadius="8" Background="{DynamicResource CardBackgroundBrush}">
+   <Grid>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <StackPanel>
+     <StackPanel Orientation="Horizontal"><TextBlock Text="{Binding ComposerTitle}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center"/><Button Content="取消" Click="OnCancelReply" Visibility="{Binding HasReplyTarget, Converter={StaticResource BoolToVis}}" Style="{StaticResource SubtleButtonStyle}" Margin="8,0"/></StackPanel>
+     <TextBox x:Name="Composer" Style="{StaticResource FluentTextBoxStyle}" Text="{Binding Draft, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="60" MaxHeight="120" MaxLength="1000" VerticalScrollBarVisibility="Auto" IsEnabled="{Binding CanEdit}" PreviewKeyDown="OnComposerKey" Margin="0,6,12,0" />
+    </StackPanel>
+    <Button Grid.Column="1" Content="发送" Click="OnSend" IsEnabled="{Binding CanSend}" Style="{StaticResource AccentButtonStyle}" VerticalAlignment="Bottom" Padding="20,8" ToolTip="Ctrl+Enter 发送" />
+   </Grid>
+  </Border>
+ </Grid>
+</UserControl>

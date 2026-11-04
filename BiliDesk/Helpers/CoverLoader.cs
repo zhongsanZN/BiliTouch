@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
@@ -156,8 +156,8 @@ public static class CoverLoader
             {
                 if (!File.Exists(cacheFile))
                 {
-                    downloaded = await Http.GetByteArrayAsync(url);
-                    await File.WriteAllBytesAsync(cacheFile, downloaded);
+                    downloaded = await Http.GetByteArrayAsync(url).ConfigureAwait(false);
+                    await File.WriteAllBytesAsync(cacheFile, downloaded).ConfigureAwait(false);
                 }
             }
             catch
@@ -171,13 +171,13 @@ public static class CoverLoader
             if (File.Exists(cacheFile))
             {
                 var path = cacheFile;
-                img = await Task.Run(() => FromFile(path, decodeWidth));
+                img = await Task.Run(() => FromFile(path, decodeWidth)).ConfigureAwait(false);
             }
             else if (downloaded != null)
             {
                 // 磁盘上没有文件(写失败), 但字节在手上 ⇒ 直接从内存解码, 绝不让封面空着
                 var bytes = downloaded;
-                img = await Task.Run(() => FromBytes(bytes, decodeWidth));
+                img = await Task.Run(() => FromBytes(bytes, decodeWidth)).ConfigureAwait(false);
             }
             else
             {
@@ -428,7 +428,12 @@ public static class Cover
         // 尺寸变化监听: 变宽超过已解码宽度的一定比例就重解码。先 - 再 + 防同元素换源时重复订阅;
         // 处理器挂在静态类上、目标随卡片销毁, 无泄漏面。
         border.SizeChanged -= OnCoverSizeChanged;
-        if (string.IsNullOrWhiteSpace(url)) return;
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            border.Background=null;
+            border.Opacity=1;
+            return;
+        }
         border.SizeChanged += OnCoverSizeChanged;
 
         _ = LoadAsync(border, url);
@@ -495,11 +500,11 @@ public static class Cover
         // 缓存 miss: 真正要下载/解码。这里**也不清透明度** —— 封面 Border 默认 Opacity=1 但还没
         // 贴背景(透明), 于是外层 CoverCard 的 PlaceholderBrush 会透出来当占位符; 等图解好
         // ApplyDecoded(fade:true) 再播 0→1 淡入盖上去。全程没有"先整块变黑再变回来"的闪。
-        var img = await CoverLoader.LoadAsync(url, w);
+        var img = await CoverLoader.LoadAsync(url, w).ConfigureAwait(false);
         if (img == null) return;
 
         await Application.Current.Dispatcher.InvokeAsync(
-            () => ApplyDecoded(border, url, img, w, fade: true));
+            () => ApplyDecoded(border, url, img, w, fade: true),System.Windows.Threading.DispatcherPriority.Background);
     }
 
     /// <summary>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -39,6 +39,7 @@ public partial class FollowPage : UserControl
         if (DataContext is FollowViewModel vm)
         {
             await vm.InitAsync();
+            if (!IsLoaded) return;
             StartPolling();
             // 检查有没有新动态(有就浮一条「N 条新动态」, 不打断当前列表)
             _ = vm.CheckNewDynamicsAsync();
@@ -97,7 +98,11 @@ public partial class FollowPage : UserControl
     /// <summary>点「N 条新动态」: 把攒下的新动态插到列表最前面</summary>
     private void OnApplyNewDynamics(object sender, RoutedEventArgs e)
     {
-        if (DataContext is FollowViewModel vm) vm.ApplyNewDynamics();
+        if (DataContext is FollowViewModel vm)
+        {
+            vm.ApplyNewDynamics();
+            if (vm.Dynamics.Count > 0) DynamicList.ScrollIntoView(vm.Dynamics[0]);
+        }
     }
 
     // ------------------------------------------------------------ 选择
@@ -139,7 +144,9 @@ public partial class FollowPage : UserControl
     private void FeedScroll_OnScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (DataContext is not FollowViewModel vm) return;
-        var sv = (ScrollViewer)sender;
+        if (e.OriginalSource is not ScrollViewer sv) return;
+        if (e.VerticalChange <= 0 && e.ExtentHeightChange <= 0) return;
+        if (vm.Error.Length > 0) return;
         var distanceToBottom = sv.ScrollableHeight - sv.VerticalOffset;
         if (distanceToBottom > AutoLoadThreshold) return;
         _ = vm.LoadMoreFeedAsync();

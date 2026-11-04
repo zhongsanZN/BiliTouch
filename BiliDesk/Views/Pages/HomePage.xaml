@@ -1,4 +1,4 @@
-
+﻿
 <UserControl x:Class="BiliDesk.Views.Pages.HomePage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -354,7 +354,7 @@
                     <ItemsControl x:Name="PopularList" ItemsSource="{Binding PopularItems}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <helpers:CardWallPanel helpers:CardWall.Enable="True" />
+                                <helpers:VirtualizingCardWallPanel helpers:CardWall.Enable="True" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
@@ -404,7 +404,7 @@
                     <ItemsControl x:Name="RecommendList" ItemsSource="{Binding RecommendItems}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <helpers:CardWallPanel helpers:CardWall.Enable="True" />
+                                <helpers:VirtualizingCardWallPanel helpers:CardWall.Enable="True" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
@@ -453,7 +453,7 @@
                     <ItemsControl x:Name="RankingList" ItemsSource="{Binding RankingItems}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <helpers:CardWallPanel helpers:CardWall.Enable="True" />
+                                <helpers:VirtualizingCardWallPanel helpers:CardWall.Enable="True" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
@@ -492,7 +492,7 @@
                     <ItemsControl x:Name="LiveList" ItemsSource="{Binding LiveItems}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <helpers:CardWallPanel helpers:CardWall.Enable="True" />
+                                <helpers:VirtualizingCardWallPanel helpers:CardWall.Enable="True" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
@@ -566,7 +566,7 @@
                                   Visibility="{Binding HasMyBangumi, Converter={StaticResource BoolToVis}}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <helpers:CardWallPanel helpers:CardWall.Enable="True"
+                                <helpers:VirtualizingCardWallPanel helpers:CardWall.Enable="True"
                                                         helpers:CardWall.Aspect="0.75" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
@@ -589,7 +589,7 @@
                                   Visibility="{Binding HasBangumiRecommend, Converter={StaticResource BoolToVis}}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <helpers:CardWallPanel helpers:CardWall.Enable="True"
+                                <helpers:VirtualizingCardWallPanel helpers:CardWall.Enable="True"
                                                         helpers:CardWall.Aspect="0.75" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>

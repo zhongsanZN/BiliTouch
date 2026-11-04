@@ -1,4 +1,4 @@
-<UserControl x:Class="BiliDesk.Views.Pages.WatchLaterPage"
+﻿<UserControl x:Class="BiliDesk.Views.Pages.WatchLaterPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:helpers="clr-namespace:BiliDesk.Helpers"
@@ -113,7 +113,7 @@
                     <ItemsControl ItemsSource="{Binding Items}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <helpers:CardWallPanel helpers:CardWall.Enable="True" />
+                                <helpers:VirtualizingCardWallPanel helpers:CardWall.Enable="True" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>

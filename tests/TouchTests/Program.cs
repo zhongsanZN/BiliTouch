@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
@@ -45,11 +45,18 @@ internal static class Program
         var exit = 0;
         try
         {
+            if(args.Contains("--live-mine")) LiveDynamicProbe.Run(Artifacts,false,true);
+            else if(args.Contains("--live-feed")) LiveDynamicProbe.Run(Artifacts,true);
+            else if(args.Contains("--live-dynamic")) LiveDynamicProbe.Run(Artifacts);
+            else if (args.Contains("--dynamic")) DynamicTests.Run(Check, Artifacts);
+            else
+            {
             TestSessions();
             TestWpfControls();
             TestLiveDanmaku();
             TestHome();
             TestPlayer(args.FirstOrDefault());
+            }
             Console.WriteLine($"PASS: {_checks} checks");
             File.WriteAllText(Path.Combine(Artifacts, "result.txt"), $"PASS: {_checks} checks\n{DateTimeOffset.Now:O}\n");
         }

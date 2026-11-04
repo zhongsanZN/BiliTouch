@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
@@ -31,6 +31,26 @@ public partial class ImagePreviewWindow : FluentWindow
 {
     /// <summary>加载 URL(保存用)。空串 = 无图。</summary>
     private string _imageUrl = "";
+    private int _imageGeneration;
+    private IReadOnlyList<string> _gallery = Array.Empty<string>();
+    private int _galleryIndex;
+    public Task LoadGalleryAsync(IReadOnlyList<string> urls,int index=0)
+    {
+        _gallery=urls;
+        return ChangeGalleryAsync(Math.Clamp(index,0,Math.Max(0,urls.Count-1)),true);
+    }
+    private Task ChangeGalleryAsync(int step,bool absolute=false)
+    {
+        if(_gallery.Count==0)return Task.CompletedTask;
+        _galleryIndex=Math.Clamp(absolute?step:_galleryIndex+step,0,_gallery.Count-1);
+        GalleryControls.Visibility=_gallery.Count>1?Visibility.Visible:Visibility.Collapsed;
+        GalleryIndex.Text=$"{_galleryIndex+1} / {_gallery.Count}";
+        PreviousImage.IsEnabled=_galleryIndex>0;
+        NextImage.IsEnabled=_galleryIndex<_gallery.Count-1;
+        return LoadAsync(_gallery[_galleryIndex],$"动态图片 {_galleryIndex+1}/{_gallery.Count}");
+    }
+    private async void OnPreviousImage(object sender,RoutedEventArgs e)=>await ChangeGalleryAsync(-1);
+    private async void OnNextImage(object sender,RoutedEventArgs e)=>await ChangeGalleryAsync(1);
     private string _suggestedName = "image";
 
     /// <summary>
@@ -72,6 +92,10 @@ public partial class ImagePreviewWindow : FluentWindow
     /// <param name="title">窗口标题(通常传视频标题或 UP 名, 便于"另存为"时起个有意义的名字)</param>
     public async Task LoadAsync(string url, string? title = null)
     {
+        var generation=++_imageGeneration;
+        HintText.Text="正在加载图片…";
+        HintText.Visibility=Visibility.Visible;
+        PreviewImage.Source=null;
         _imageUrl = UrlUtil.Normalize(url);
         _suggestedName = FileNameUtil.Sanitize(
             string.IsNullOrWhiteSpace(title) ? "image" : title!, "image");
@@ -84,6 +108,7 @@ public partial class ImagePreviewWindow : FluentWindow
         }
 
         var img = await CoverLoader.LoadAsync(_imageUrl, 4096);
+        if(generation!=_imageGeneration)return;
         if (img == null)
         {
             HintText.Text = "图片加载失败";
@@ -227,6 +252,8 @@ public partial class ImagePreviewWindow : FluentWindow
     {
         switch (e.Key)
         {
+            case Key.Left: _ = ChangeGalleryAsync(-1);e.Handled=true;break;
+            case Key.Right: _ = ChangeGalleryAsync(1);e.Handled=true;break;
             case Key.Escape: Close(); break;
             case Key.OemPlus or Key.Add: ApplyScale(_scale.ScaleX * 1.15); break;
             case Key.OemMinus or Key.Subtract: ApplyScale(_scale.ScaleX / 1.15); break;

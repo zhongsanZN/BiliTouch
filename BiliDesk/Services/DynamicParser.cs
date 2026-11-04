@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using BiliDesk.Models;
@@ -22,19 +22,27 @@ namespace BiliDesk.Services;
 public static class DynamicParser
 {
     /// <summary>把一条动态 JSON 解析成 <see cref="DynamicItem"/>。结构异常返回 null(只丢这一条)。</summary>
-    public static DynamicItem? Parse(JsonElement e)
+    public static DynamicItem? Parse(JsonElement e) => Parse(e, 0);
+
+    private static DynamicItem? Parse(JsonElement e, int depth)
     {
         try
         {
-            if (e.ValueKind != JsonValueKind.Object) return null;
+            if (e.ValueKind != JsonValueKind.Object || depth > 2 || Str(e, "type") == "DYNAMIC_TYPE_NONE") return null;
 
             var item = new DynamicItem
             {
-                Id = Str(e, "id_str"),
+                Id = Scalar(e, "id_str"),
                 Kind = KindOf(e),
                 RawType = RawTypeOf(e),   // 评论接口要用它决定 type 参数
             };
-            if (item.Id.Length == 0) item.Id = Str(e, "id");
+            if (item.Id.Length == 0) item.Id = Scalar(e, "id");
+            if (e.TryGetProperty("basic", out var basic))
+            {
+                item.CommentOid = Scalar(basic, "comment_id_str");
+                item.CommentType = (int)Long(basic, "comment_type");
+            }
+            if (item.Id.Length > 0) item.DetailUrl = $"https://t.bilibili.com/{item.Id}";
 
             // ---------- 作者 / 时间 ----------
             if (e.TryGetProperty("modules", out var mods) && mods.ValueKind == JsonValueKind.Object &&
@@ -77,7 +85,7 @@ public static class DynamicParser
                     break;
 
                 case DynamicKind.Forward:
-                    ReadForward(e, item);
+                    ReadForward(e, item, depth);
                     break;
             }
 
@@ -85,11 +93,23 @@ public static class DynamicParser
             if (e.TryGetProperty("modules", out var m2) && m2.ValueKind == JsonValueKind.Object &&
                 m2.TryGetProperty("module_stat", out var st) && st.ValueKind == JsonValueKind.Object)
             {
-                if (st.TryGetProperty("like", out var lk)) item.LikeCount = Long(lk, "count");
+                if (st.TryGetProperty("like", out var lk))
+                {
+                    item.LikeCount = Long(lk, "count");
+                    item.IsLiked = lk.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.True;
+                    item.LikeForbidden = lk.TryGetProperty("forbidden", out var forbidden) && forbidden.ValueKind == JsonValueKind.True;
+                }
                 if (st.TryGetProperty("comment", out var cm)) item.CommentCount = Long(cm, "count");
                 if (st.TryGetProperty("forward", out var fw)) item.ForwardCount = Long(fw, "count");
             }
 
+            if (item.Video is { } video)
+            {
+                video.OwnerMid = item.AuthorMid;
+                video.Author = item.AuthorName;
+                video.AuthorFace = item.AuthorFace;
+                video.Pubdate = item.PubTs;
+            }
             // 一条动态至少要有"某种内容"才有意义。
             // ★ 2026-11-04 放宽: 原来只认 正文/图/视频/专栏标题/直播/转发, 于是
             //   **投票、分享、op(B 站的小内容单元)、UP 主自己的动态**全被判成空而丢弃 ——
@@ -115,6 +135,14 @@ public static class DynamicParser
     private static int RawTypeOf(JsonElement e)
     {
         var t = Str(e, "type");
+        var mapped = t switch
+        {
+            "DYNAMIC_TYPE_FORWARD" => 1, "DYNAMIC_TYPE_DRAW" => 2,
+            "DYNAMIC_TYPE_WORD" => 4, "DYNAMIC_TYPE_AV" => 8,
+            "DYNAMIC_TYPE_ARTICLE" => 64, "DYNAMIC_TYPE_LIVE_RCMD" => 4308,
+            "DYNAMIC_TYPE_LIVE" => 4200, _ => 0,
+        };
+        if (mapped != 0) return mapped;
         if (int.TryParse(t, out var n)) return n;
         if (e.TryGetProperty("type", out var tv) && tv.ValueKind == JsonValueKind.Number)
             return tv.GetInt32();
@@ -123,11 +151,7 @@ public static class DynamicParser
 
     private static DynamicKind KindOf(JsonElement e)
     {
-        var t = Str(e, "type");
-        var n = 0;
-        if (int.TryParse(t, out var parsed)) n = parsed;
-        else if (e.TryGetProperty("type", out var tv) && tv.ValueKind == JsonValueKind.Number)
-            n = tv.GetInt32();
+        var n = RawTypeOf(e);
 
         return n switch
         {
@@ -136,7 +160,7 @@ public static class DynamicParser
             4 => DynamicKind.Text,
             8 => DynamicKind.Video,
             64 => DynamicKind.Article,
-            4308 => DynamicKind.Live,
+            4200 or 4308 => DynamicKind.Live,
             _ => DynamicKind.Other,
         };
     }
@@ -167,9 +191,10 @@ public static class DynamicParser
             if (md.TryGetProperty("major", out var major) && major.ValueKind == JsonValueKind.Object)
             {
                 // ① opus(新)—— 优先
-                if (major.TryGetProperty("opus", out var opus) && opus.ValueKind == JsonValueKind.Object &&
-                    opus.TryGetProperty("pics", out var opics) && opics.ValueKind == JsonValueKind.Array)
+                if (major.TryGetProperty("opus", out var opus) && opus.ValueKind == JsonValueKind.Object)
                 {
+                    item.ContentTitle = Str(opus, "title");
+                    if (opus.TryGetProperty("pics", out var opics) && opics.ValueKind == JsonValueKind.Array)
                     foreach (var p in opics.EnumerateArray())
                     {
                         var url = Str(p, "url");
@@ -257,6 +282,7 @@ public static class DynamicParser
                 view = Long(st, "play");
                 if (view <= 0) view = ParseCount(Str(st, "play"));
                 danmaku = Long(st, "danmaku");
+                if (danmaku <= 0) danmaku = ParseCount(Str(st, "danmaku"));
             }
         }
 
@@ -302,24 +328,40 @@ public static class DynamicParser
             item.ArticleCover = UrlUtil.Normalize(
                 art.TryGetProperty("covers", out var cvs) && cvs.ValueKind == JsonValueKind.Array &&
                 cvs.GetArrayLength() > 0 ? cvs[0].GetString() ?? "" : Str(art, "cover"));
-            item.ArticleId = Str(art, "id");
+            item.ArticleId = Scalar(art, "id");
         }
         if (item.ArticleTitle.Length == 0) item.ArticleTitle = Str(e, "title");
-        if (item.ArticleId.Length == 0) item.ArticleId = Str(e, "rid");
+        if (item.ArticleId.Length == 0) item.ArticleId = Scalar(e, "rid");
     }
 
     // ------------------------------------------------------------ 直播
 
     private static void ReadLive(JsonElement e, DynamicItem item)
     {
-        if (e.TryGetProperty("modules", out var mods) && mods.ValueKind == JsonValueKind.Object &&
-            mods.TryGetProperty("module_dynamic", out var md) && md.ValueKind == JsonValueKind.Object &&
-            md.TryGetProperty("major", out var major) && major.ValueKind == JsonValueKind.Object &&
-            major.TryGetProperty("live", out var live) && live.ValueKind == JsonValueKind.Object)
+        if (e.TryGetProperty("modules", out var mods) && mods.TryGetProperty("module_dynamic", out var md) &&
+            md.TryGetProperty("major", out var major) && major.ValueKind == JsonValueKind.Object)
         {
-            item.LiveRoomId = Long(live, "id");
-            if (item.LiveRoomId <= 0) item.LiveRoomId = Long(live, "roomid");
-            if (item.Text.Length == 0) item.Text = Str(live, "title");
+            if (major.TryGetProperty("live_rcmd", out var recommendation))
+            {
+                var content = Str(recommendation, "content");
+                if (content.Length > 0)
+                {
+                    using var doc = JsonDocument.Parse(content);
+                    if (doc.RootElement.TryGetProperty("live_play_info", out var info))
+                    {
+                        item.LiveRoomId = Long(info, "room_id");
+                        item.ArticleCover = UrlUtil.Normalize(Str(info, "cover"));
+                        if (!item.HasText) item.Text = Str(info, "title");
+                    }
+                }
+            }
+            else if (major.TryGetProperty("live", out var live))
+            {
+                item.LiveRoomId = Long(live, "id");
+                if (item.LiveRoomId <= 0) item.LiveRoomId = Long(live, "roomid");
+                item.ArticleCover = UrlUtil.Normalize(Str(live, "cover"));
+                if (!item.HasText) item.Text = Str(live, "title");
+            }
         }
         if (item.LiveRoomId <= 0) item.LiveRoomId = Long(e, "rid");
     }
@@ -330,11 +372,11 @@ public static class DynamicParser
     /// 转发: 原动态在 orig 里。★ 递归解析 —— 原动态自己也可能是转发(套娃),
     /// 官方最多显示两层, 这里也限制两层, 免得一条链无限展开。
     /// </summary>
-    private static void ReadForward(JsonElement e, DynamicItem item)
+    private static void ReadForward(JsonElement e, DynamicItem item, int depth)
     {
         if (e.TryGetProperty("orig", out var orig) && orig.ValueKind == JsonValueKind.Object)
         {
-            var inner = Parse(orig);
+            var inner = Parse(orig, depth + 1);
             if (inner != null)
             {
                 // 只保留两层: 原动态若还是转发, 丢掉它的 orig 引用
@@ -347,6 +389,10 @@ public static class DynamicParser
     }
 
     // ------------------------------------------------------------ 小工具
+
+    private static string Scalar(JsonElement e, string name) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) &&
+        v.ValueKind is JsonValueKind.String or JsonValueKind.Number ? v.ToString() : "";
 
     private static string Str(JsonElement e, string name) =>
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) &&

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -36,7 +36,14 @@ public static class MemoryTrim
     /// 只应在"刚释放了一批视觉内容(列表容器/位图)"之后调用, 别在热路径上随手调。
     /// 用于**高频**触发点(切 tab / 切页面): 只做托管回收, 不动工作集。
     /// </summary>
-    public static void RequestTrim() => Request(releaseWorkingSet: false, heavy: false);
+    public static void RequestTrim()
+    {
+        // Cached page navigation does not release its visuals. Let the runtime schedule GC
+        // unless the system is actually under memory pressure.
+        var memory=GC.GetGCMemoryInfo();
+        if(memory.HighMemoryLoadThresholdBytes>0 && memory.MemoryLoadBytes>memory.HighMemoryLoadThresholdBytes*0.9)
+            Request(releaseWorkingSet:false,heavy:false);
+    }
 
     /// <summary>
     /// **重载之后**请求回收: 除了托管回收, 还压缩大对象堆, 并把已经空出来的物理页交还系统。
@@ -125,25 +132,7 @@ public static class MemoryTrim
     /// </summary>
     private static void CollectBackground()
     {
-        // 别让上一次重载路径设下的"下次压缩 LOH"泄漏到这条路径上
-        // (那会把后台回收变成阻塞式的, 正好是我们想避免的)
-        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.Default;
-
-        GC.Collect(2, GCCollectionMode.Forced, blocking: false, compacting: false);
-
-        _ = System.Threading.Tasks.Task.Run(() =>
-        {
-            try
-            {
-                // 位图像素靠终结器释放。但"等终结器"这件事不能放在 UI 线程上做。
-                GC.WaitForPendingFinalizers();
-                GC.Collect(2, GCCollectionMode.Forced, blocking: false, compacting: false);
-            }
-            catch
-            {
-                // 忽略
-            }
-        });
+        GC.Collect(2,GCCollectionMode.Optimized,blocking:false,compacting:false);
     }
 
     /// <summary>把当前进程"已经用不到的物理页"交还系统(任务管理器里的"内存"列才会掉下来)</summary>

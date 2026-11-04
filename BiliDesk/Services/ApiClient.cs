@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -15,7 +15,7 @@ namespace BiliDesk.Services;
 /// <summary>
 /// 哔哩哔哩 API 客户端: 带浏览器 UA、Cookie、WBI 签名与风控降级逻辑
 /// </summary>
-public class ApiClient
+public partial class ApiClient
 {
     /// <summary>
     /// 请求头里的 UA。
@@ -1373,26 +1373,25 @@ public class ApiClient
     ///   1(转发)/ 11(视频) → 11;  2(图文)/ 4(文字)/ 17 → 17;  其它默认 11。
     /// ★ oid 用 `dynamic_id`(不是 id_str 的字符串形式), 接口要的是数字。
     /// </summary>
-    public async Task<List<Models.DynamicComment>?> GetDynamicCommentsAsync(string dynamicId, int rawType, int count = 2)
+    public Task<(bool ok, string? err)> LikeDynamicAsync(string id, bool liked) =>
+        PostFormAsync("https://api.bilibili.com/x/dynamic/feed/dyn/thumb",
+            new Dictionary<string, string> { ["dyn_id_str"] = id, ["up"] = liked ? "1" : "0" },
+            "https://t.bilibili.com/");
+
+    public async Task<List<Models.DynamicComment>?> GetDynamicCommentsAsync(string commentOid, int replyType, int count = 2)
     {
         try
         {
-            if (string.IsNullOrEmpty(dynamicId)) return null;
+            if (!long.TryParse(commentOid, out var oid) || oid <= 0 || replyType <= 0) return null;
+            count = Math.Clamp(count, 1, 20);
             await EnsureBuvidAsync();
-
-            // 动态类型 → 评论接口的 type
-            var replyType = rawType switch
-            {
-                2 or 4 or 17 => 17,   // 图文/纯文字/相簿
-                _ => 11,              // 转发/视频/其它
-            };
 
             var (code, _, data) = await GetJsonAsync(
                 "https://api.bilibili.com/x/v2/reply",
                 new Dictionary<string, string>
                 {
                     ["type"] = replyType.ToString(),
-                    ["oid"] = dynamicId,
+                    ["oid"] = commentOid,
                     ["sort"] = "2",            // 2 = 按热度
                     ["ps"] = count.ToString(),
                     ["pn"] = "1",
@@ -1425,7 +1424,7 @@ public class ApiClient
                         ? UrlUtil.Normalize(GetStr(user, "avatar")) : "",
                     UserMid = user.ValueKind == JsonValueKind.Object ? GetLongLoose(user, "mid") : 0,
                     Text = text,
-                    LikeCount = r.TryGetProperty("like", out var lk) ? GetLong(lk, "count") : 0,
+                    LikeCount = GetLongLoose(r, "like"),
                 });
             }
             return result;
@@ -1455,8 +1454,8 @@ public class ApiClient
             if (!string.IsNullOrEmpty(offset)) ps["offset"] = offset;
 
             var (code, msg, data) = await GetJsonAsync(
-                "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/nav", ps,
-                sign: true, referer: "https://t.bilibili.com/");
+                "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all", ps,
+                sign: false, referer: "https://t.bilibili.com/");
             if (code != 0 || data == null)
                 return (false, code == -101 ? "请先登录后查看动态" : (msg ?? "动态加载失败"), null, null, false);
 
@@ -3376,8 +3375,8 @@ public class ApiClient
     ///   2026-09-27 修: 之前把踩也当成 action=2 发给这个接口, 服务端直接回
     ///   `12011 不合法的赞或踩`, 表现就是"点踩点了报错"。
     /// </summary>
-    public Task<(bool ok, string? err)> CommentLikeAsync(long aid, long rpid, bool like)
-        => CommentReactionAsync("https://api.bilibili.com/x/v2/reply/action", aid, rpid, like);
+    public Task<(bool ok, string? err)> CommentLikeAsync(long aid, long rpid, bool like, int replyType = 1)
+        => CommentReactionAsync("https://api.bilibili.com/x/v2/reply/action", aid, rpid, like, replyType);
 
     /// <summary>
     /// 对**评论**点踩 / 取消点踩。
@@ -3390,12 +3389,12 @@ public class ApiClient
     /// 也必须互斥, 否则会出现"两个都高亮但服务端只认后一个"的假象。
     /// 另外踩**没有计数**: 接口不下发 dislike 总数, 所以踩只有状态、没有数字。
     /// </summary>
-    public Task<(bool ok, string? err)> CommentDislikeAsync(long aid, long rpid, bool dislike)
-        => CommentReactionAsync("https://api.bilibili.com/x/v2/reply/hate", aid, rpid, dislike);
+    public Task<(bool ok, string? err)> CommentDislikeAsync(long aid, long rpid, bool dislike, int replyType = 1)
+        => CommentReactionAsync("https://api.bilibili.com/x/v2/reply/hate", aid, rpid, dislike, replyType);
 
     /// <summary>赞与踩的公共实现(两个接口的参数、返回值、错误码完全一致, 只有地址不同)</summary>
     private async Task<(bool ok, string? err)> CommentReactionAsync(
-        string url, long aid, long rpid, bool on)
+        string url, long aid, long rpid, bool on, int replyType)
     {
         if (aid <= 0 || rpid <= 0) return (false, "参数不完整");
         var (code, msg) = await PostFormCodeAsync(
@@ -3403,7 +3402,7 @@ public class ApiClient
             new Dictionary<string, string>
             {
                 ["oid"] = aid.ToString(),
-                ["type"] = "1",
+                ["type"] = replyType.ToString(),
                 ["rpid"] = rpid.ToString(),
                 ["action"] = on ? "1" : "0"
             },
@@ -3443,7 +3442,7 @@ public class ApiClient
     /// <param name="rootRpid">要回复的**顶层评论** id; 0 = 发普通评论(挂在新楼层上)</param>
     /// <param name="parentRpid">被回复的那条 id; 传 0 表示"回复楼主"(自动用 rootRpid)</param>
     public async Task<(bool ok, string? err)> PostCommentAsync(
-        long aid, string message, long rootRpid = 0, long parentRpid = 0)
+        long aid, string message, long rootRpid = 0, long parentRpid = 0, int replyType = 1)
     {
         if (aid <= 0) return (false, "没拿到视频 aid, 暂时不能评论");
         if (string.IsNullOrWhiteSpace(message)) return (false, "评论内容不能为空");
@@ -3454,7 +3453,7 @@ public class ApiClient
         var form = new Dictionary<string, string>
         {
             ["oid"] = aid.ToString(),
-            ["type"] = "1",
+            ["type"] = replyType.ToString(),
             ["message"] = message,
             ["plat"] = "1",
             ["ordering"] = "heat"
@@ -3756,7 +3755,7 @@ public class ApiClient
     /// 首页接口 /x/v2/reply/main 只内联前 3 条回复, 要看全就只能走这个接口,
     /// 否则用户会觉得"别人回复的内容看不到"。
     /// </summary>
-    public async Task<(bool ok, string? err, List<CommentItem> items)> GetReplyRepliesAsync(long aid, long rootRpid, int pn = 1, int ps = 20)
+    public async Task<(bool ok, string? err, List<CommentItem> items)> GetReplyRepliesAsync(long aid, long rootRpid, int pn = 1, int ps = 20, int replyType = 1)
     {
         var result = new List<CommentItem>();
         try
@@ -3765,7 +3764,7 @@ public class ApiClient
             var ps2 = new Dictionary<string, string>
             {
                 ["oid"] = aid.ToString(),
-                ["type"] = "1",
+                ["type"] = replyType.ToString(),
                 ["root"] = rootRpid.ToString(),
                 ["ps"] = ps.ToString(),
                 ["pn"] = pn.ToString()

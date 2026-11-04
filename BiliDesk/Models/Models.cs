@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -1889,12 +1889,23 @@ public class DynamicPicture
 ///   (bvid/时长/播放量), 图文动态一条都没有, 塞进去会让一半字段永远为空,
 ///   而且点击逻辑要到处判空。分开之后: 卡片按 Kind 选模板, 点击按 Kind 选去向。
 /// </summary>
-public class DynamicItem
+public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
 {
     /// <summary>动态 id(字符串, 用于去重与"已读"标记)</summary>
     public string Id { get; set; } = "";
 
     public DynamicKind Kind { get; set; }
+    public string CommentOid { get; set; } = "";
+    public int CommentType { get; set; }
+    public string DetailUrl { get; set; } = "";
+    public string ContentTitle { get; set; } = "";
+    public bool IsLiked { get; set; }
+    public bool LikeForbidden { get; set; }
+    private bool _isLiking;
+    public bool IsLiking {get=>_isLiking;set {if(_isLiking==value)return;_isLiking=value;Notify(nameof(CanLike));}}
+    public bool CanLike => !IsLiking && !LikeForbidden;
+
+    public bool HasContentTitle => ContentTitle.Length > 0;
 
     /// <summary>作者的 mid / 昵称 / 头像</summary>
     public long AuthorMid { get; set; }
@@ -1944,11 +1955,11 @@ public class DynamicItem
     public bool IsForward => Kind == DynamicKind.Forward;
 
     /// <summary>视频/专栏/直播这类"有独立内容卡"的类型</summary>
-    public bool HasAttachedCard => Kind is DynamicKind.Video or DynamicKind.Article or DynamicKind.Live;
+    public bool HasAttachedCard => HasPictures || IsForward || Kind is DynamicKind.Video or DynamicKind.Article or DynamicKind.Live;
 
-    public string LikeText => LikeCount > 0 ? FormatCount(LikeCount) : "";
-    public string CommentText => CommentCount > 0 ? FormatCount(CommentCount) : "";
-    public string ForwardText => ForwardCount > 0 ? FormatCount(ForwardCount) : "";
+    public string LikeText => LikeCount > 0 ? "赞 " + FormatCount(LikeCount) : "赞";
+    public string CommentText => CommentCount > 0 ? "评论 " + FormatCount(CommentCount) : "评论";
+    public string ForwardText => ForwardCount > 0 ? "转发 " + FormatCount(ForwardCount) : "转发";
 
     private static string FormatCount(long n) => n switch
     {
@@ -1966,12 +1977,38 @@ public class DynamicItem
     /// </summary>
     public System.Collections.Generic.List<DynamicComment> TopComments { get; set; } = new();
 
+    public bool CommentsPreviewLoaded { get; set; }
+    public bool CommentsPreviewLoading { get; set; }
     public bool HasComments => TopComments.Count > 0;
 
     /// <summary>评论拉回来之后通知界面(DynamicItem 不是 INPC, 用一次性事件最省)。</summary>
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
-    public void HasCommentsChanged() =>
-        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(HasComments)));
+    public void HasCommentsChanged()
+    {
+        Notify(nameof(TopComments));
+        Notify(nameof(HasComments));
+    }
+    private void Notify(string name) => PropertyChanged?.Invoke(this,
+        new System.ComponentModel.PropertyChangedEventArgs(name));
+    public void NotifyContentChanged() => Notify("");
+    public void RefreshFrom(DynamicItem d)
+    {
+        Kind=d.Kind;AuthorMid=d.AuthorMid;AuthorName=d.AuthorName;AuthorFace=d.AuthorFace;
+        PubTs=d.PubTs;PubTimeText=d.PubTimeText;Text=d.Text;Pictures=d.Pictures;Video=d.Video;
+        ContentTitle=d.ContentTitle;ArticleTitle=d.ArticleTitle;ArticleCover=d.ArticleCover;ArticleId=d.ArticleId;
+        LiveRoomId=d.LiveRoomId;Original=d.Original;OriginalDeleted=d.OriginalDeleted;
+        LikeCount=d.LikeCount;CommentCount=d.CommentCount;ForwardCount=d.ForwardCount;
+        IsLiked=d.IsLiked;LikeForbidden=d.LikeForbidden;CommentOid=d.CommentOid;CommentType=d.CommentType;
+        NotifyContentChanged();
+    }
+    public void SetLiked(bool liked)
+    {
+        if (IsLiked == liked) return;
+        IsLiked = liked;
+        LikeCount = Math.Max(0, LikeCount + (liked ? 1 : -1));
+        Notify(nameof(IsLiked));
+        Notify(nameof(LikeText));
+    }
 
     /// <summary>动态类型标识(接口原文的数字), 评论接口要用它区分 12/17(图文) 与 1(转发)</summary>
     public int RawType { get; set; }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
@@ -28,6 +28,9 @@ public class FollowViewModel : ObservableObject
     private bool _hasMore = true;
     private string _error = "";
     private long _selfMid;
+    private bool _hasMoreUsers = true;
+    private bool _loadingUsers;
+    public bool LoadingUsers { get => _loadingUsers; private set => SetProperty(ref _loadingUsers, value); }
     private int _followingPage = 1;      // 左栏 UP 列表的翻页
 
     public ObservableCollection<FollowUser> Users { get; } = new();
@@ -99,16 +102,17 @@ public class FollowViewModel : ObservableObject
     public bool IsAllSelected => SelectedUp == null;
 
     /// <summary>右栏标题: 说明当前在看谁的内容</summary>
-    public string SelectionTitle => SelectedUp == null ? "全部动态" : SelectedUp.Name + " 的视频";
+    public string SelectionTitle => SelectedUp == null ? "全部动态" : SelectedUp.Name + " 的动态";
 
-    public bool Loading { get => _loading; private set => SetProperty(ref _loading, value); }
+    public bool Loading { get => _loading; private set { if (SetProperty(ref _loading, value)) { OnPropertyChanged(nameof(ShowFullLoading)); OnPropertyChanged(nameof(ShowContent)); } } }
 
     /// <summary>
     /// 整页加载遮罩只在"右栏还没有任何内容"时显示。
     /// 切 UP / 回全部动态时右栏换血, 若还整页盖 spinner 会闪烁 —— 那种情况
     /// 让旧内容留着、右栏自己呈现加载状态更稳。
     /// </summary>
-    public bool ShowFullLoading => Loading && FeedItems.Count == 0;
+    public bool ShowFullLoading => Loading && Dynamics.Count == 0 && Users.Count == 0;
+    public bool ShowContent => !NotLoggedIn && !ShowFullLoading;
     public bool LoadingMore { get => _loadingMore; private set => SetProperty(ref _loadingMore, value); }
     public bool HasMore { get => _hasMore; private set => SetProperty(ref _hasMore, value); }
     public string Error { get => _error; private set => SetProperty(ref _error, value); }
@@ -177,6 +181,7 @@ public class FollowViewModel : ObservableObject
     {
         if (!Svc.Session.HasLogin || _liveBoardBusy) return;
         _liveBoardBusy = true;
+        var session = Svc.Session.Current.SessData;
         if (showLoading) LiveBoardLoading = true;
         try
         {
@@ -184,7 +189,7 @@ public class FollowViewModel : ObservableObject
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 LiveBoardLoading = false;
-                if (!ok) return;   // 静默: 风控/网络抖动时看板保持原样
+                if (!ok || session != Svc.Session.Current.SessData) return;   // 静默: 风控/网络抖动时看板保持原样
                 LiveNow.Clear();
                 if (items != null)
                     foreach (var it in items) LiveNow.Add(it);
@@ -219,7 +224,6 @@ public class FollowViewModel : ObservableObject
     // 分页游标(两种来源各自一套)。
     // "快速连点导致结果串台"用 LoadSelectionAsync 里的 forUp 快照 + SelectedUp 比对兜住。
     private string? _feedOffset;         // 全部动态: 游标
-    private int _upVideoPage = 1;
     /// <summary>单 UP 动态流的分页游标(feed/space 用 offset 而不是页码)</summary>
     private string? _upDynOffset;        // 单 UP: 页码
 
@@ -259,6 +263,7 @@ public class FollowViewModel : ObservableObject
     private void OnSessionChanged()
     {
         OnPropertyChanged(nameof(NotLoggedIn));
+        OnPropertyChanged(nameof(ShowContent));
         _ = RefreshAsync();
     }
 
@@ -284,7 +289,7 @@ public class FollowViewModel : ObservableObject
     {
         Users.Remove(u);
         OnPropertyChanged(nameof(Count));
-        if (SelectedUp?.Mid == u.Mid) SelectedUp = null;
+        if (SelectedUp?.Mid == u.Mid) _ = SelectAllAsync();
     }
 
     /// <summary>选中「全部动态」</summary>
@@ -331,61 +336,52 @@ public class FollowViewModel : ObservableObject
     ///
     /// ★ 失败静默: 这是锦上添花, 不该弹错误。
     /// </summary>
+    private bool _checkingNew;
     public async Task CheckNewDynamicsAsync()
     {
-        if (!Svc.Session.HasLogin || Dynamics.Count == 0) return;
+        if (!Svc.Session.HasLogin || _checkingNew || Loading) return;
+        _checkingNew = true;
+        var generation = _selectionGeneration;
+        var forUp = SelectedUp;
         try
         {
-            var (ok, _, items, _, _) = await Svc.Api.GetDynamicFeedFullAsync(null);
-            if (!ok || items == null || items.Count == 0) return;
-
-            var known = _seenDynamicIds;
-            var fresh = items.Where(d => d.Id.Length > 0 && !known.Contains(d.Id)).ToList();
-            if (fresh.Count == 0)
-            {
-                HasNewDynamics = false;
-                return;
-            }
+            var result = forUp == null
+                ? await Svc.Api.GetDynamicFeedFullAsync()
+                : await Svc.Api.GetSpaceDynamicsAsync(forUp.Mid);
+            if (generation != _selectionGeneration || !result.ok || result.items == null) return;
+            if (forUp == null) UpdateUnreadBadges(result.items);
+            var fresh = result.items.TakeWhile(d => !_seenDynamicIds.Contains(d.Id))
+                .Where(d => d.Id.Length > 0).ToList();
             _pendingNewDynamics = fresh;
-            NewDynamicsText = fresh.Count >= 20 ? "有新的动态" : $"{fresh.Count} 条新动态";
-            HasNewDynamics = true;
+            NewDynamicsText = $"{fresh.Count} 条新动态";
+            HasNewDynamics = fresh.Count > 0;
         }
-        catch { /* 静默 */ }
+        finally { _checkingNew = false; }
     }
 
-    /// <summary>待插入的新动态(用户点提示条后才真正合入列表)</summary>
     private List<DynamicItem>? _pendingNewDynamics;
-
-    /// <summary>
-    /// 用户点了「N 条新动态」: 把待插入的条目放到列表最前面, 并隐藏提示条。
-    ///
-    /// ★ 为什么"先攒后插"而不是直接刷新列表: 直接刷新会把用户正在看的那几条顶走,
-    ///   滚动位置也会跳。官方也是"点了才插"。
-    /// </summary>
     public void ApplyNewDynamics()
     {
-        if (_pendingNewDynamics is { Count: > 0 } fresh)
-        {
-            // 逆序插入, 保证接口给的顺序(新的在前)最终仍然成立
-            for (var i = fresh.Count - 1; i >= 0; i--)
-            {
-                var d = fresh[i];
-                if (d.Id.Length > 0 && !_seenDynamicIds.Add(d.Id)) continue;
-                Dynamics.Insert(0, d);
-            }
-            // 新插入的也可能带图/带视频, 补拉它们的评论
-            _ = LoadDynamicCommentsAsync(fresh);
-        }
-        _pendingNewDynamics = null;
-        HasNewDynamics = false;
+        // Refresh the first page as well as its cursor, so a gap larger than one page cannot lose posts.
+        _ = LoadSelectionAsync(reset: true);
     }
 
+    private int _refreshGeneration;
     public async Task RefreshAsync()
     {
+        var refreshGeneration = ++_refreshGeneration;
+        ++_selectionGeneration;
         Loading = true;
         Error = "";
         if (!Svc.Session.HasLogin)
         {
+            Users.Clear();
+            Dynamics.Clear();
+            LiveNow.Clear();
+            SelectedUp = null;
+            HasNewDynamics = false;
+            HasMore = false;
+            OnPropertyChanged(nameof(Count));
             Loading = false;
             Error = "请先登录后查看动态";
             return;
@@ -394,21 +390,35 @@ public class FollowViewModel : ObservableObject
         {
             // 先拿到自己的 mid
             var (_, _, me) = await Svc.Api.GetUserStateAsync();
+            if (refreshGeneration != _refreshGeneration) return;
             if (me == null || me.Mid <= 0)
             {
                 Loading = false;
                 Error = "未登录";
                 return;
             }
+            if (_selfMid > 0 && _selfMid != me.Mid)
+            {
+                SelectedUp = null;
+                Users.Clear();
+                Dynamics.Clear();
+                LiveNow.Clear();
+            }
             _selfMid = me.Mid;
 
             var (ok, err, list) = await Svc.Api.GetFollowingsAsync(_selfMid, 1, 30);
+            if (refreshGeneration != _refreshGeneration) return;
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 if (list != null)
                 {
                     Users.Clear();
-                    foreach (var u in list) Users.Add(u);
+                    foreach (var u in list)
+                    {
+                        u.IsSelected = u.Mid == SelectedUp?.Mid;
+                        Users.Add(u);
+                    }
+                    _hasMoreUsers = list.Count >= 30;
                     _followingPage = 1;
                     OnPropertyChanged(nameof(Count));
                 }
@@ -432,14 +442,17 @@ public class FollowViewModel : ObservableObject
     /// <summary>左栏翻页: 关注列表一页 30 个。只补列表, 不动右栏。</summary>
     public async Task LoadMoreAsync()
     {
-        if (LoadingMore || Loading || _selfMid <= 0) return;
-        LoadingMore = true;
+        if (LoadingUsers || Loading || !_hasMoreUsers || _selfMid <= 0) return;
+        var generation = _refreshGeneration;
+        LoadingUsers = true;
         try
         {
             var (ok, err, list) = await Svc.Api.GetFollowingsAsync(_selfMid, _followingPage + 1, 30);
+            if (generation != _refreshGeneration) return;
+            _hasMoreUsers = list == null || list.Count >= 30;
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                LoadingMore = false;
+                LoadingUsers = false;
                 if (list != null && list.Count > 0)
                 {
                     _followingPage++;
@@ -460,123 +473,76 @@ public class FollowViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            LoadingMore = false;
+            LoadingUsers = false;
             Error = ex.Message;
         }
+        finally { LoadingUsers = false; }
     }
 
     // ------------------------------------------------------------ 右栏内容
 
     /// <summary>按当前选择加载右栏。reset = 清空重来; false = 追加下一页</summary>
+    private int _selectionGeneration;
     private async Task LoadSelectionAsync(bool reset)
     {
-        if (Loading) return;
+        if (!Svc.Session.HasLogin) return;
+        if (!reset && (Loading || LoadingMore || !HasMore)) return;
+        var generation = reset ? ++_selectionGeneration : _selectionGeneration;
+        var forUp = SelectedUp;
         if (reset)
         {
             Loading = true;
+            LoadingMore = false;
             FeedItems.Clear();
             Dynamics.Clear();
-            _seenBvid.Clear();
             _seenDynamicIds.Clear();
+            _feedOffset = _upDynOffset = null;
+            HasMore = true;
+            HasNewDynamics = false;
+            _pendingNewDynamics = null;
             Error = "";
-            OnPropertyChanged(nameof(ShowFullLoading));
         }
-        else
-        {
-            if (LoadingMore || !HasMore) return;
-            LoadingMore = true;
-        }
-
-        var forUp = SelectedUp;         // 快照: 期间用户又点了别人时, 结果作废
-        bool ok;
-        string? err = null;
-        List<VideoItem>? items = null;
-        List<DynamicItem>? dyns = null;
-        var hasMore = false;
-
+        else { LoadingMore = true; Error = ""; }
+        var offset = forUp == null ? _feedOffset : _upDynOffset;
         try
         {
-            if (forUp == null)
+            var result = forUp == null
+                ? await Svc.Api.GetDynamicFeedFullAsync(offset)
+                : await Svc.Api.GetSpaceDynamicsAsync(forUp.Mid, offset);
+            if (generation != _selectionGeneration) return;
+            if (!result.ok || result.items == null)
             {
-                if (reset) _feedOffset = null;
-                // ★ 2026-11-04: 「全部动态」改走**混合流**接口, 图文/纯文字/专栏/转发/直播全都要。
-                //   原实现只取能播的视频, 于是动态页看起来"只有视频"。
-                var (rOk, rErr, rDyns, nextOffset, rHasMore) =
-                    await Svc.Api.GetDynamicFeedFullAsync(reset ? null : _feedOffset);
-                ok = rOk; err = rErr; dyns = rDyns;
-                // 翻页依据: "服务端给了新 offset 且与当前不同", 原样回传 = 到底了。
-                // ★ 为什么不用接口的 has_more(2026-10-17 修正): 原来这里的理由是"has_more 实测不可靠,
-                //   第一页标 false 却还有下一页" —— 那其实是**解析 bug**造成的: 接口给的是
-                //   bool(true/false), 而解析按 Number 读(恒为 false)。现在解析已认 bool,
-                //   has_more 是准的(探针 6 页全是 true)。
-                //   仍然保留 offset 这套判据: 它不依赖任何接口字段的语义, 且顺便挡住
-                //   "offset 原样回传却还标着 has_more=true"那类自相矛盾的响应。
-                hasMore = ok && !string.IsNullOrEmpty(nextOffset) && nextOffset != _feedOffset;
-                if (ok) _feedOffset = nextOffset;
+                Error = result.err ?? "动态加载失败，请重试";
+                return;
             }
-            else
+            if (forUp == null) _feedOffset = result.nextOffset;
+            else _upDynOffset = result.nextOffset;
+            HasMore = result.hasMore && !string.IsNullOrEmpty(result.nextOffset) && result.nextOffset != offset;
+            var added = new List<DynamicItem>();
+            foreach (var d in result.items)
             {
-                // ★★★ 2026-11-04 修"点开 UP 主看到全是视频卡":
-                //   原来这里走 GetSpaceVideosAsync(空间**投稿视频**列表), 那条路只有视频 ——
-                //   图文/转发/专栏一条都不会出现。官方 PC 客户端点 UP 主看的是 TA 的
-                //   **动态时间线**, 所以换成 feed/space。
-                if (reset) _upDynOffset = null;
-                var r2 = await Svc.Api.GetSpaceDynamicsAsync(forUp.Mid, reset ? null : _upDynOffset);
-                ok = r2.ok; err = r2.err; dyns = r2.items;
-                hasMore = ok && !string.IsNullOrEmpty(r2.nextOffset) && r2.nextOffset != _upDynOffset;
-                if (ok) _upDynOffset = r2.nextOffset;
-
-                // ★ 单 UP 视图的**头像与名字要在这里盖章**(2026-10-15 用户截图: 卡片上一个头像
-                //   都没有、名字也是空的, 只剩"· 10-14 18:45"):
-                //   空间投稿的两个接口**都不下发头像**; 风控降级接口连 UP 名都没有(只有 upMid)。
-                //   但这两样我们本来就知道 —— 左侧那一条 UP 上就摆着 —— 抄过去即可,
-                //   不必为此再发请求, 更不该让卡片空着。
-                if (items != null)
-                {
-                    foreach (var it in items)
-                    {
-                        if (string.IsNullOrEmpty(it.Author)) it.Author = forUp.Name;
-                        if (string.IsNullOrEmpty(it.AuthorFace)) it.AuthorFace = forUp.Face;
-                    }
-                }
+                if (d.Id.Length > 0 && !_seenDynamicIds.Add(d.Id)) continue;
+                Dynamics.Add(d);
+                added.Add(d);
             }
+            if (Dynamics.Count == 0 && !HasMore)
+                Error = forUp == null ? "关注的 UP 最近没有动态" : "该 UP 最近没有动态";
+            if (forUp == null) UpdateUnreadBadges();
+            else ClearUnreadBadge(forUp);
 
-            await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
-            {
-                Loading = false;
-                LoadingMore = false;
-                if (SelectedUp != forUp) return;   // 选择已变, 丢弃本次结果
-                // ★★★ 2026-11-04: **两条路现在都灌 Dynamics(混合流)**。
-                //   原来单 UP 走 FeedItems(投稿视频列表), 于是点开任何一个 UP 看到的
-                //   全是视频卡 —— 用户截图里就是这个现象("根本就没有动态")。
-                //   现在单 UP 也走 feed/space 动态流, 图文/转发/专栏一视同仁。
-                //   FeedItems 保留给"卡片墙"档位(那个档位本来就是按视频墙设计的)。
-                if (dyns == null)
-                {
-                    if (Dynamics.Count == 0) Error = err ?? "加载失败";
-                    return;
-                }
-                foreach (var d in dyns)
-                {
-                    // 按动态 id 去重: 翻页时同一条可能又给一遍
-                    if (d.Id.Length > 0 && !_seenDynamicIds.Add(d.Id)) continue;
-                    Dynamics.Add(d);
-                }
-                HasMore = hasMore;
-                OnPropertyChanged(nameof(ShowFullLoading));
-                if (Dynamics.Count == 0)
-                    Error = forUp == null ? "关注的 UP 最近没有动态" : "该 UP 最近没有动态";
-                if (forUp == null) UpdateUnreadBadges();
-                else ClearUnreadBadge(forUp);
-                // 拉前几条动态的热评(B 站 PC 客户端就是这样挂在卡片下面的)
-                _ = LoadDynamicCommentsAsync(dyns);
-            });
         }
         catch (Exception ex)
         {
-            Loading = false;
-            LoadingMore = false;
-            Error = ex.Message;
+            if (generation == _selectionGeneration) Error = ex.Message;
+        }
+        finally
+        {
+            if (generation == _selectionGeneration)
+            {
+                Loading = false;
+                LoadingMore = false;
+                OnPropertyChanged(nameof(ShowFullLoading));
+            }
         }
     }
 
@@ -610,7 +576,6 @@ public class FollowViewModel : ObservableObject
     // ------------------------------------------------------------ 左栏未读角标
 
     /// <summary>角标轻量刷新在途(定时器与页面切回可能同时触发)</summary>
-    private bool _unreadRefreshBusy;
 
     /// <summary>
     /// 只刷新左栏未读角标, **不动右栏列表**。
@@ -622,26 +587,7 @@ public class FollowViewModel : ObservableObject
     /// ★ 为什么不直接复用 LoadSelectionAsync: 那会清空 FeedItems 并弹整页 loading,
     ///   用户只是切回来瞄一眼角标, 不该被强制回到列表顶部; 这里单独拉第一页动态就够了。
     /// </summary>
-    public async Task RefreshUnreadBadgesAsync()
-    {
-        if (!Svc.Session.HasLogin || _unreadRefreshBusy || Users.Count == 0) return;
-        _unreadRefreshBusy = true;
-        try
-        {
-            var (ok, _, items, _, _) = await Svc.Api.GetDynamicFeedAsync(null);
-            if (!ok || items == null) return;   // 静默: 角标刷新失败不影响页面
-            await System.Windows.Application.Current.Dispatcher.InvokeAsync(
-                () => UpdateUnreadBadges(items));
-        }
-        catch
-        {
-            // 静默(同上)
-        }
-        finally
-        {
-            _unreadRefreshBusy = false;
-        }
-    }
+    public Task RefreshUnreadBadgesAsync() => CheckNewDynamicsAsync();
 
     /// <summary>
     /// 「全部动态」加载完 → 按这一页的条目刷新左栏各 UP 的未读角标。
@@ -654,17 +600,17 @@ public class FollowViewModel : ObservableObject
     /// ★ 本页没有出现的 UP **不动**: 动态接口只给近期条目, 一个 UP 最近没投稿就无从判断,
     ///   这时把角标清零是凭空断言"没更新"。宁可留着旧角标, 也不给错的信息。
     /// </summary>
-    private void UpdateUnreadBadges() => UpdateUnreadBadges(FeedItems);
+    private void UpdateUnreadBadges() => UpdateUnreadBadges(Dynamics);
 
     /// <summary>用指定的动态条目集合刷新角标(定时刷新时传临时列表, 不碰 FeedItems)</summary>
-    private void UpdateUnreadBadges(IReadOnlyList<VideoItem> items)
+    private void UpdateUnreadBadges(IReadOnlyList<DynamicItem> items)
     {
         // 每个 UP 在这一页里最新的一条(动态流是按时间倒序拼的, 先遇到的就是最新)
         var newest = new Dictionary<long, string>();
         foreach (var it in items)
         {
-            if (it.OwnerMid <= 0 || string.IsNullOrEmpty(it.Bvid)) continue;
-            if (!newest.ContainsKey(it.OwnerMid)) newest[it.OwnerMid] = it.Bvid;
+            if (it.AuthorMid <= 0 || string.IsNullOrEmpty(it.Id)) continue;
+            if (!newest.ContainsKey(it.AuthorMid)) newest[it.AuthorMid] = it.Id;
         }
 
         foreach (var u in Users)
@@ -686,8 +632,8 @@ public class FollowViewModel : ObservableObject
             var n = 0;
             foreach (var it in items)
             {
-                if (it.OwnerMid != u.Mid) continue;
-                if (it.Bvid == seen) break;   // 追到上次看过的那条为止
+                if (it.AuthorMid != u.Mid) continue;
+                if (it.Id == seen) break;   // 追到上次看过的那条为止
                 n++;
             }
             u.NewCount = n;
@@ -699,10 +645,10 @@ public class FollowViewModel : ObservableObject
     private void ClearUnreadBadge(FollowUser u)
     {
         u.NewCount = 0;
-        foreach (var it in FeedItems)
+        foreach (var it in Dynamics)
         {
-            if (it.OwnerMid != u.Mid || string.IsNullOrEmpty(it.Bvid)) continue;
-            DynamicSeenStore.Set(u.Mid, it.Bvid);
+            if (it.AuthorMid != u.Mid || string.IsNullOrEmpty(it.Id)) continue;
+            DynamicSeenStore.Set(u.Mid, it.Id);
             break;   // FeedItems 是时间倒序, 第一条就是最新
         }
         DynamicSeenStore.Flush();
@@ -713,25 +659,5 @@ public class FollowViewModel : ObservableObject
     {
         if (Loading || LoadingMore || !HasMore) return;
         await LoadSelectionAsync(reset: false);
-    }
-    /// <summary>
-    /// 给刚加载的动态拉热评(2026-11-04)。
-    ///
-    /// ★ 只拉**前 8 条**: 评论是锦上添花, 一次拉几十条会打一串请求、还可能吃风控。
-    /// ★ 单条失败不影响其它条(GetDynamicCommentsAsync 内部已吞异常, 失败返回 null)。
-    /// </summary>
-    private async Task LoadDynamicCommentsAsync(List<DynamicItem> items)
-    {
-        var slice = items.Where(d => d.Id.Length > 0).Take(8).ToList();
-        foreach (var d in slice)
-        {
-            var cs = await Svc.Api.GetDynamicCommentsAsync(d.Id, d.RawType);
-            if (cs == null) continue;
-            await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
-            {
-                d.TopComments = cs;
-                d.HasCommentsChanged();
-            });
-        }
     }
 }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
@@ -33,10 +33,10 @@ public class DynamicContentSelector : DataTemplateSelector
             DynamicKind.Video => VideoTemplate,
             DynamicKind.ImageText => PictureTemplate,
             DynamicKind.Forward => ForwardTemplate,
-            DynamicKind.Article => ArticleTemplate,
+            DynamicKind.Article => d.HasPictures ? PictureTemplate : ArticleTemplate,
             DynamicKind.Live => LiveTemplate,
             // 纯文字/其它: 正文已在主体里, 内容区留空
-            _ => null,
+            _ => d.HasPictures ? PictureTemplate : null,
         };
     }
 }
@@ -50,44 +50,26 @@ public class DynamicContentSelector : DataTemplateSelector
 ///   · 3/5~9 张 → 三列
 /// 这里把规则做成 ItemsPanel + UniformGrid, 列数由 <see cref="Columns"/> 决定。
 /// </summary>
-public class DynamicPicturePanel : System.Windows.Controls.Primitives.UniformGrid
+public sealed class DynamicPicturePanel : Panel
 {
-    /// <summary>
-    /// 图片格子的高度(2026-11-04)。
-    /// 单图给 180 —— 官方单图是"大图预览", 96 的高度根本看不清内容;
-    /// 多图给 96 —— 九宫格要控制整卡高度, 否则一屏放不下两条动态。
-    /// 由 DynamicFeedCard 的 XAML 通过 ElementName 绑定到每个 tile 的 Height。
-    /// </summary>
-    public double TileHeight { get; private set; } = 96;
-
-    public DynamicPicturePanel()
-    {
-        // 行数自动: UniformGrid 在 Rows=0 时按列数推
-        Rows = 0;
-    }
-
-    protected override void OnInitialized(EventArgs e)
-    {
-        base.OnInitialized(e);
-        ApplyShape();
-    }
-
+    private int _columns=1;
+    private double _tileHeight=180;
     protected override Size MeasureOverride(Size constraint)
     {
-        ApplyShape();
-        return base.MeasureOverride(constraint);
+        var count=InternalChildren.Count;
+        _columns=count is 2 or 4?2:count<=1?1:3;
+        var width=double.IsFinite(constraint.Width)?Math.Max(1,constraint.Width):Math.Max(1,ActualWidth>0?ActualWidth:300);
+        var picture=count==1?ItemsControl.GetItemsOwner(this)?.Items.Cast<DynamicPicture>().FirstOrDefault():null;
+        var ratio=picture is {Width:>0,Height:>0}?(double)picture.Height/picture.Width:0.75;
+        _tileHeight=count==1?Math.Clamp(width*ratio,140,450):Math.Clamp(width/_columns-4,96,300);
+        foreach(UIElement child in InternalChildren)child.Measure(new Size(width/_columns,_tileHeight));
+        return new Size(width,Math.Ceiling((double)count/_columns)*_tileHeight);
     }
-
-    private void ApplyShape()
+    protected override Size ArrangeOverride(Size size)
     {
-        var count = Children.Count;
-        Columns = count switch
-        {
-            1 => 1,
-            2 or 4 => 2,
-            _ => 3,
-        };
-        TileHeight = count == 1 ? 180 : 96;
+        for(int i=0;i<InternalChildren.Count;i++)
+            InternalChildren[i].Arrange(new Rect(i%_columns*size.Width/_columns,i/_columns*_tileHeight,size.Width/_columns,_tileHeight));
+        return size;
     }
 }
 
@@ -99,7 +81,7 @@ public static class DynamicActions
     public static void OpenAuthor(DynamicItem d)
     {
         if (d.AuthorMid <= 0) return;
-        Svc.Navigate.OpenUserSpace(d.AuthorMid.ToString());
+        Svc.Navigate?.OpenUserSpace(d.AuthorMid.ToString());
     }
 
     public static void OpenVideo(DynamicItem d)
@@ -111,8 +93,7 @@ public static class DynamicActions
 
     public static void OpenArticle(DynamicItem d)
     {
-        if (string.IsNullOrEmpty(d.ArticleId)) return;
-        Svc.Navigate.OpenWebViewWindow($"https://www.bilibili.com/read/cv{d.ArticleId}", "专栏");
+        OpenDetail(d);
     }
 
     public static void OpenLive(DynamicItem d)
@@ -121,32 +102,16 @@ public static class DynamicActions
         Svc.Player.PlayLive(d.LiveRoomId, d.Text);
     }
 
-    /// <summary>
-    /// 打开动态详情页(2026-11-04)。
-    ///
-    /// ★ 官方 PC 客户端里"点一下整条动态"会进详情页看完整内容 + 全部评论。
-    ///   我们这边用内嵌 WebView 打开 t.bilibili.com 的那条动态 ——
-    ///   这样评论、图片查看、转发链、投票全都能用, 不用自己再实现一遍。
-    /// ★ 没有 id(极少见)时退回作者主页, 总比点了没反应好。
-    /// </summary>
+    /// <summary>在主窗口导航栈内打开原生动态详情，返回时保留原列表位置。</summary>
     public static void OpenDetail(DynamicItem d)
     {
-        if (!string.IsNullOrEmpty(d.Id))
-        {
-            Svc.Navigate.OpenWebViewWindow($"https://t.bilibili.com/{d.Id}", "动态");
-            return;
-        }
-        OpenAuthor(d);
+        Svc.Navigate?.OpenDynamic(d);
     }
 
-    /// <summary>
-    /// 查看大图(2026-11-04)。
-    /// ★ 官方是点图片进一个可左右翻的看图器。这里用内嵌窗口打开原图地址 ——
-    ///   图片本身是 CDN 直链, WebView 能缩放/保存, 对"我就想看清楚"这个需求够了。
-    /// </summary>
+    /// <summary>使用原生图片查看器显示单张图片。</summary>
     public static void OpenPicture(DynamicPicture pic)
     {
         if (pic == null || string.IsNullOrEmpty(pic.Url)) return;
-        Svc.Navigate.OpenWebViewWindow(pic.Url, "查看图片");
+        BiliDesk.Helpers.MediaActions.ShowImage(pic.Url, "动态图片");
     }
 }

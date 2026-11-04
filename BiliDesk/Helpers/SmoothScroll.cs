@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -76,6 +76,7 @@ public static class SmoothScroll
         {
             var sv = fe as ScrollViewer ?? FindDescendantScrollViewer(fe);
             if (sv == null) return;
+            sv.PreviewMouseWheel -= OnPreviewWheel;
             sv.PreviewMouseWheel += OnPreviewWheel;
         };
     }

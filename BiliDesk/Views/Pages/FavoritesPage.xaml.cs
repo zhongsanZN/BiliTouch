@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Windows;
@@ -200,7 +200,7 @@ public partial class FavoritesPage : UserControl
 
     /// <summary>右上角返回按钮: 历史/收藏/缓存的入口都在「我的」页, 统一回那里</summary>
     private void OnBackToMineClick(object sender, RoutedEventArgs e)
-        => App.MainVm.Navigate(PageKey.Mine);
+        => BiliDesk.Services.SvcWindow.Main?.OpenMineOverview();
 
     /// <summary>列表滚动到底部自动加载下一页</summary>
     private async void OnListScrollChanged(object sender, ScrollChangedEventArgs e)

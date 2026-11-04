@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
@@ -341,8 +341,8 @@ public class HomeViewModel : ObservableObject
     {
         if (_bangumiLoading) return;
         _bangumiLoading = true;
-        Loading = true;
-        Error = "";
+        if(IsBangumiTab) Loading = true;
+        if(IsBangumiTab) Error = "";
         if (reset) BangumiHint = "";
         try
         {
@@ -368,17 +368,18 @@ public class HomeViewModel : ObservableObject
             // ---- 番剧 / 国创推荐(一次请求, 就地分流) ----
             // ---- 番剧推荐(一次请求; 番剧 + 国创合并收进同一个集合) ----
             var (ok, err, items, hasNext) =
-                await Svc.Api.GetBangumiRecommendAsync(_bangumiPage);
+                await Svc.Api.GetBangumiRecommendAsync(reset?1:_bangumiPage+1);
 
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                Loading = false;
+                if(IsBangumiTab) Loading = false;
                 if (!ok || items == null)
                 {
-                    Error = err ?? "加载番剧推荐失败";
+                    if(IsBangumiTab) Error = err ?? "加载番剧推荐失败";
                     return;
                 }
 
+                _bangumiPage=reset?1:_bangumiPage+1;
                 if (reset) BangumiRecommend.Clear();
                 // ★ 不再按 season_type 分栏(2026-11-12 合并国创): 接口一页返回的
                 //   番剧与国创**全部收进这一栏**, 用户看到的是一个连续的推荐流。
@@ -398,8 +399,8 @@ public class HomeViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            Loading = false;
-            Error = ex.Message;
+            if(IsBangumiTab) Loading = false;
+            if(IsBangumiTab) Error = ex.Message;
         }
         finally
         {
@@ -438,6 +439,10 @@ public class HomeViewModel : ObservableObject
 
     private void SetTab(PageTab tab)
     {
+        Loading=tab switch {PageTab.Recommend=>_recommendLoading,PageTab.Popular=>_popularLoading,
+            PageTab.Ranking=>_rankingLoading,PageTab.Live=>_liveLoading,PageTab.Bangumi=>_bangumiLoading,_=>false};
+        LoadingMore=false;
+        Error="";
         IsRecommendTab = tab == PageTab.Recommend;
         IsPopularTab = tab == PageTab.Popular;
         IsRankingTab = tab == PageTab.Ranking;
@@ -452,18 +457,19 @@ public class HomeViewModel : ObservableObject
         // 同推荐流: 这个入口会被"切换 tab"和"滚动加载"两条路径打到, 需要防重入
         if (_liveLoading) return;
         _liveLoading = true;
-        if (reset) Loading = true;
-        else LoadingMore = true;
-        Error = "";
+        if (reset) { if(IsLiveTab) Loading = true; }
+        else if(IsLiveTab) LoadingMore = true;
+        if(IsLiveTab) Error = "";
         try
         {
-            var (ok, err, items) = await Svc.Api.GetLiveListAsync(_livePage);
+            var (ok, err, items) = await Svc.Api.GetLiveListAsync(reset?1:_livePage+1);
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                Loading = false;
+                if(IsLiveTab) Loading = false;
                 LoadingMore = false;
                 if (items != null)
                 {
+                    _livePage=reset?1:_livePage+1;
                     if (reset) LiveItems.Clear();
                     var seen = new HashSet<long>(LiveItems.Select(x => x.RoomId));
                     foreach (var it in items)
@@ -474,15 +480,15 @@ public class HomeViewModel : ObservableObject
                 }
                 else
                 {
-                    Error = err ?? "直播列表加载失败";
+                    if(IsLiveTab) Error = err ?? "直播列表加载失败";
                 }
             });
         }
         catch (Exception ex)
         {
-            Loading = false;
+            if(IsLiveTab) Loading = false;
             LoadingMore = false;
-            Error = ex.Message;
+            if(IsLiveTab) Error = ex.Message;
         }
         finally
         {
@@ -494,14 +500,16 @@ public class HomeViewModel : ObservableObject
 
     private async Task LoadPopularAsync(bool reset = false)
     {
-        Loading = true;
-        Error = "";
+        if(_popularLoading)return;
+        _popularLoading=true;
+        if(IsPopularTab) Loading = true;
+        if(IsPopularTab) Error = "";
         try
         {
             var (ok, err, items) = await Svc.Api.GetPopularAsync(_popularPage);
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                Loading = false;
+                if(IsPopularTab) Loading = false;
                 if (items != null)
                 {
                     if (reset) PopularItems.Clear();
@@ -512,15 +520,16 @@ public class HomeViewModel : ObservableObject
                 }
                 else
                 {
-                    Error = err ?? "加载失败";
+                    if(IsPopularTab) Error = err ?? "加载失败";
                 }
             });
         }
         catch (Exception ex)
         {
-            Loading = false;
-            Error = ex.Message;
+            if(IsPopularTab) Loading = false;
+            if(IsPopularTab) Error = ex.Message;
         }
+        finally { _popularLoading=false; }
     }
 
     // ----------------- 推荐 -----------------
@@ -535,6 +544,8 @@ public class HomeViewModel : ObservableObject
     /// (多一次网络往返 + 多一轮封面解码, 首屏反而更慢)。
     /// </summary>
     private bool _recommendLoading;
+    private bool _popularLoading;
+    private bool _rankingLoading;
 
     /// <summary>
     /// 按 Bvid 去重追加(实现搬到了 <see cref="VideoList.AppendDistinct"/> —— 搜索结果那边也要用;
@@ -555,14 +566,14 @@ public class HomeViewModel : ObservableObject
     {
         if (_recommendLoading) return; // 已有推荐请求在跑, 直接复用它的结果
         _recommendLoading = true;
-        Loading = true;
-        Error = "";
+        if(IsRecommendTab) Loading = true;
+        if(IsRecommendTab) Error = "";
         try
         {
             var (ok, err, items) = await Svc.Api.GetRecommendAsync(reset);
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                Loading = false;
+                if(IsRecommendTab) Loading = false;
                 if (items != null)
                 {
                     if (reset) RecommendItems.Clear();
@@ -571,14 +582,14 @@ public class HomeViewModel : ObservableObject
                 }
                 else
                 {
-                    Error = err ?? "加载失败";
+                    if(IsRecommendTab) Error = err ?? "加载失败";
                 }
             });
         }
         catch (Exception ex)
         {
-            Loading = false;
-            Error = ex.Message;
+            if(IsRecommendTab) Loading = false;
+            if(IsRecommendTab) Error = ex.Message;
         }
         finally
         {
@@ -591,12 +602,12 @@ public class HomeViewModel : ObservableObject
     public async Task LoadMoreAsync()
     {
         if (LoadingMore || Loading) return;
+        Error="";
 
         // 直播单独走: 它的"还有没有下一页"是 LiveHasMore, 而且重新拉取是整页替换语义
         if (IsLiveTab)
         {
             if (!LiveHasMore) return;
-            _livePage++;
             await LoadLiveAsync(reset: false);
             return;
         }
@@ -607,7 +618,6 @@ public class HomeViewModel : ObservableObject
         if (IsBangumiTab)
         {
             if (!_bangumiHasMore) return;
-            _bangumiPage++;
             LoadingMore = true;
             try { await LoadBangumiAsync(reset: false); }
             finally { LoadingMore = false; }
@@ -620,14 +630,15 @@ public class HomeViewModel : ObservableObject
         {
             if (IsPopularTab)
             {
-                _popularPage++;
-                var (ok, err, items) = await Svc.Api.GetPopularAsync(_popularPage);
+                var nextPage=_popularPage+1;
+                var (ok, err, items) = await Svc.Api.GetPopularAsync(nextPage);
                 await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     LoadingMore = false;
                     if (items != null)
                     {
-                        foreach (var it in items) PopularItems.Add(it);
+                        _popularPage=nextPage;
+                        AppendDistinct(PopularItems,items);
                         _popularHasMore = items.Count >= 20;
                         OnPropertyChanged(nameof(PopularHasMore));
                         OnPropertyChanged(nameof(PopularCount));
@@ -662,6 +673,7 @@ public class HomeViewModel : ObservableObject
                             AppendDistinct(RecommendItems, items);
                             OnPropertyChanged(nameof(RecommendCount));
                         }
+                        else if(!ok && IsRecommendTab) Error=err ?? "加载更多失败，请重试";
                     });
                 }
                 finally
@@ -681,15 +693,17 @@ public class HomeViewModel : ObservableObject
 
     private async Task LoadRankingAsync()
     {
-        Loading = true;
-        Error = "";
+        if(_rankingLoading)return;
+        _rankingLoading=true;
+        if(IsRankingTab) Loading = true;
+        if(IsRankingTab) Error = "";
         RankingBlocked = false;
         try
         {
             var (ok, err, items) = await Svc.Api.GetRankingAsync();
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
-                Loading = false;
+                if(IsRankingTab) Loading = false;
                 if (items != null)
                 {
                     RankingItems.Clear();
@@ -699,19 +713,20 @@ public class HomeViewModel : ObservableObject
                 else if (err != null && err.Contains("-352"))
                 {
                     RankingBlocked = true;
-                    Error = "排行榜接口被风控拦截, 可改用网页版查看";
+                    if(IsRankingTab) Error = "排行榜暂时加载失败，请稍后重试";
                 }
                 else
                 {
-                    Error = err ?? "加载失败";
+                    if(IsRankingTab) Error = err ?? "加载失败";
                 }
             });
         }
         catch (Exception ex)
         {
-            Loading = false;
-            Error = ex.Message;
+            if(IsRankingTab) Loading = false;
+            if(IsRankingTab) Error = ex.Message;
         }
+        finally { _rankingLoading=false; }
     }
 
     // ------------------------------------------------------------ 右上角搜索卡

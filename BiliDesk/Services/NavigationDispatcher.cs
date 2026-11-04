@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using BiliDesk.Utils;
 using BiliDesk.Views;
@@ -57,6 +57,16 @@ public class NavigationDispatcher
         // 之前这里每次 new 一个 PlayerWindow, 与 PlayerService 的复用逻辑并存,
         // 是"播放后立刻退出、再点视频又立刻退出 / 偶发 0xc0000005"的诱因之一。
         Svc.Player.PlayVideo(bvid);
+    }
+
+    public void OpenDynamic(BiliDesk.Models.DynamicItem item,bool repost=false)
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            var page=new DynamicDetailPage(item,repost);
+            if(SvcWindow.Main is {IsLoaded:true} main)main.ShowEmbeddedPage(page,"动态详情");
+            else new Window {Title="动态详情",Content=page,Width=1100,Height=800,Owner=_owner,Background=ThemeBackground()}.Show();
+        });
     }
 
     /// <summary>用 WebView2 打开任意网页(用户主动触发的回退入口, 非主流程)</summary>
