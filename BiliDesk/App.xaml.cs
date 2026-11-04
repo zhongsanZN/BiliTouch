@@ -125,6 +125,15 @@ public partial class App : Application
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         main.Show();
 
+        // ★ 预热播放器窗口(2026-11-04): 主窗口起来后**空闲**时把 PlayerWindow 建出来藏好。
+        //   不预热的话, 用户第一次点视频要现场付 WPF 窗口树 + HwndHost + DWM chrome 的
+        //   首次开销 —— 表现就是"先一团大色块, 等一会儿才出画面"。预热之后那一步只剩
+        //   Show + 起播, 接近官方客户端的"秒出"。
+        //   ★ 用 Background 优先级: 首页的首次布局/封面解码优先, 别和启动抢 UI 线程。
+        //   ★ 失败静默(见 WarmUp 的 catch): 预热是优化, 不是功能。
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
+            new Action(() => Svc.Player.WarmUp()));
+
         // 系统托盘: 双击回主界面, 右键可退出(失败只记日志, 不影响启动)
         TrayService.Instance.Initialize();
 

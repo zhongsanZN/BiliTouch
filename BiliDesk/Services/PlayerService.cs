@@ -18,6 +18,52 @@ public class PlayerService
     /// </summary>
     public bool IsCurrent(PlayerWindow window) => ReferenceEquals(_window, window);
 
+    /// <summary>
+    /// 预热播放器窗口(2026-11-04)。
+    ///
+    /// 官方客户端点开视频是"秒出", 我们是"先一团大色块, 等一会儿才出画面" ——
+    /// 那团色块是 WPF 窗口**第一次**创建时的同步开销:
+    ///   · PlayerWindow 的 XAML 树(2000+ 行, 含评论模板/弹幕层/控制栏)第一次 Measure/Arrange;
+    ///   · LibVLC 的 VideoView(HwndHost)第一次建原生窗口;
+    ///   · FluentWindow 的 WindowChrome / DWM 扩展第一次走一遍。
+    /// 这三件事加起来在 3K/225% 下是几百毫秒到一秒级, 而且全部落在 UI 线程上。
+    ///
+    /// 做法: 启动后空闲时把窗口**建出来但不显示**(Opacity=0 + 屏幕外), 让它把这些
+    /// 一次性开销先付掉; 真正播放时只需 Show + 起播, 那一步很快。
+    ///
+    /// ★ 必须等到主窗口 Loaded 之后再预热: 启动瞬间抢 UI 线程会让首页也慢一拍。
+    /// ★ 预热失败必须静默(见 catch): 预热是优化, 不是功能, 失败不能影响点视频。
+    /// </summary>
+    public void WarmUp()
+    {
+        if (_window != null || _closing) return;
+        try
+        {
+            var win = new PlayerWindow();
+            // 屏幕外 + 全透明: 用户看不见, 但布局/原生窗口照样会建出来。
+            win.WindowStartupLocation = WindowStartupLocation.Manual;
+            win.Left = -32000;
+            win.Top = -32000;
+            win.Opacity = 0;
+            win.ShowInTaskbar = false;
+            win.ShowActivated = false;
+            win.Show();
+            // 建完立刻藏起来: 留在屏幕外会被 DWM 当成可见窗口持续合成, 白耗 GPU。
+            win.Hide();
+            win.Opacity = 1;
+            win.ShowInTaskbar = true;
+            _window = win;
+        }
+        catch
+        {
+            // 预热失败就退回"用时再建", 与从前一致
+        }
+    }
+
+    private bool _closing;
+    /// <summary>应用退出时不再预热/新建窗口</summary>
+    public void MarkClosing() => _closing = true;
+
     /// <summary>播放视频(复用窗口)</summary>
     public void PlayVideo(string bvid, string? title = null)
         => Play(title, win => win.PlayVideo(bvid));
