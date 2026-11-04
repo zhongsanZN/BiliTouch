@@ -1835,3 +1835,123 @@ public sealed class BangumiDetail
     /// <summary>评分那一行的文案; 没有评分就整段不显示。</summary>
     public string ScoreText => string.IsNullOrEmpty(Score) ? "" : Score + " 分";
 }
+
+// ============================================================ 动态混合流(2026-11-04)
+
+/// <summary>
+/// 一条动态的**类型**。B 站动态是混合流: 视频投稿、图文、纯文字、转发、专栏、直播开播……
+/// 之前 FollowViewModel 只收 type=8(视频), 其余全丢, 于是"动态页只有视频"。
+///
+/// ★ 值来自接口的 type 字段(实测):
+///   1=转发 2=图文 4=纯文字 8=视频投稿 64=专栏 4308=直播开播 等。
+///   认不出来的类型统一归 Other, 仍然**照常显示**(有正文就显示正文), 不再丢弃 ——
+///   "宁可显示一条信息不完整的动态, 也不要整条消失"是这次重构的核心原则。
+/// </summary>
+public enum DynamicKind
+{
+    /// <summary>转发(带原动态引用)</summary>
+    Forward,
+    /// <summary>图文(正文 + 图片九宫格)</summary>
+    ImageText,
+    /// <summary>纯文字(没有图片)</summary>
+    Text,
+    /// <summary>视频投稿(封面 + 标题, 可点开播放)</summary>
+    Video,
+    /// <summary>专栏文章</summary>
+    Article,
+    /// <summary>直播开播提醒</summary>
+    Live,
+    /// <summary>认不出来的类型(仍然显示正文/图片)</summary>
+    Other,
+}
+
+/// <summary>动态里的一张图片(九宫格用)。</summary>
+public class DynamicPicture
+{
+    public string Url { get; set; } = "";
+    /// <summary>原图宽高(接口给, 用来算九宫格里的占位比例; 拿不到时按 1:1)</summary>
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public double Aspect => Width > 0 && Height > 0 ? (double)Width / Height : 1.0;
+}
+
+/// <summary>
+/// 动态混合流里的一条。与 <see cref="VideoItem"/> **并列**而不是替代:
+/// 视频动态仍然要能点开播放, 所以内部持有一个 VideoItem(可空)。
+///
+/// ★ 为什么不把图文硬塞进 VideoItem: VideoItem 的字段全是"视频"语义
+///   (bvid/时长/播放量), 图文动态一条都没有, 塞进去会让一半字段永远为空,
+///   而且点击逻辑要到处判空。分开之后: 卡片按 Kind 选模板, 点击按 Kind 选去向。
+/// </summary>
+public class DynamicItem
+{
+    /// <summary>动态 id(字符串, 用于去重与"已读"标记)</summary>
+    public string Id { get; set; } = "";
+
+    public DynamicKind Kind { get; set; }
+
+    /// <summary>作者的 mid / 昵称 / 头像</summary>
+    public long AuthorMid { get; set; }
+    public string AuthorName { get; set; } = "";
+    public string AuthorFace { get; set; } = "";
+
+    /// <summary>发布时间戳(秒)与排好版的文本("2小时前")</summary>
+    public long PubTs { get; set; }
+    public string PubTimeText { get; set; } = "";
+
+    /// <summary>正文(纯文字/图文/转发的评论)。转发时这是"转发理由"。</summary>
+    public string Text { get; set; } = "";
+
+    /// <summary>正文里的图片(九宫格)</summary>
+    public List<DynamicPicture> Pictures { get; set; } = new();
+
+    /// <summary>视频动态: 可播放对象(非视频动态为 null)</summary>
+    public VideoItem? Video { get; set; }
+
+    /// <summary>专栏: 标题 + 封面 + cv 号</summary>
+    public string ArticleTitle { get; set; } = "";
+    public string ArticleCover { get; set; } = "";
+    public string ArticleId { get; set; } = "";
+
+    /// <summary>直播: 房间号</summary>
+    public long LiveRoomId { get; set; }
+
+    /// <summary>转发: 被转发的原动态(可能为 null = 原动态已删除)</summary>
+    public DynamicItem? Original { get; set; }
+    /// <summary>原动态已删除时的提示</summary>
+    public bool OriginalDeleted { get; set; }
+
+    /// <summary>点赞/评论/转发数(拿不到就是 0, 卡片会隐藏)</summary>
+    public long LikeCount { get; set; }
+    public long CommentCount { get; set; }
+    public long ForwardCount { get; set; }
+
+    // ---- 展示辅助 ----
+
+    /// <summary>有没有正文可显示</summary>
+    public bool HasText => !string.IsNullOrWhiteSpace(Text);
+    /// <summary>有没有图片</summary>
+    public bool HasPictures => Pictures.Count > 0;
+    /// <summary>九宫格是否只有一张(单图走大图版式)</summary>
+    public bool IsSinglePicture => Pictures.Count == 1;
+    /// <summary>是不是转发(要画引用框)</summary>
+    public bool IsForward => Kind == DynamicKind.Forward;
+
+    /// <summary>视频/专栏/直播这类"有独立内容卡"的类型</summary>
+    public bool HasAttachedCard => Kind is DynamicKind.Video or DynamicKind.Article or DynamicKind.Live;
+
+    public string LikeText => LikeCount > 0 ? FormatCount(LikeCount) : "";
+    public string CommentText => CommentCount > 0 ? FormatCount(CommentCount) : "";
+    public string ForwardText => ForwardCount > 0 ? FormatCount(ForwardCount) : "";
+
+    private static string FormatCount(long n) => n switch
+    {
+        >= 100_000_000 => (n / 100_000_000.0).ToString("0.#") + "亿",
+        >= 10_000 => (n / 10_000.0).ToString("0.#") + "万",
+        _ => n.ToString(),
+    };
+
+    /// <summary>卡片顶部的"作者 · 时间"那一行的第二部分</summary>
+    public string AuthorTimeText =>
+        string.IsNullOrEmpty(PubTimeText) ? AuthorName : AuthorName + " · " + PubTimeText;
+}

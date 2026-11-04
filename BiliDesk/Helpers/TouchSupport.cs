@@ -112,7 +112,9 @@ public static class TouchSupport
                 //     后写的会覆盖先写的, 抬起时命中就乱了。
                 if (_tapSource == null)
                 {
-                    _tapPoint = e.GetTouchPoint(viewer).Position;
+                    // ★ 用**根坐标**(null)记录: 嵌套 ScrollViewer 里内外层的局部坐标不同,
+                    //   按下与移动若用了不同的参照物, 位移永远是 0, 拖动会被当成点击。
+                    _tapPoint = e.GetTouchPoint(null).Position;
                     _tapSource = e.OriginalSource as DependencyObject;
                     _tapMoved = false;
                 }
@@ -121,11 +123,15 @@ public static class TouchSupport
         EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.PreviewTouchMoveEvent,
             new EventHandler<TouchEventArgs>((sender, e) =>
             {
-                if (sender is not ScrollViewer viewer || !ReferenceEquals(_touchViewer, viewer)) return;
-                _touchViewerAt = Environment.TickCount64;
-                if (ReferenceEquals(_tapViewer, viewer) && !_tapMoved)
+                if (sender is not ScrollViewer viewer) return;
+                if (ReferenceEquals(_touchViewer, viewer)) _touchViewerAt = Environment.TickCount64;
+                // ★ 这里**不能**要求 viewer == _touchViewer: 隧道阶段最外层先执行, 而
+                //   _touchViewer 记的是最内层(被最后写的), 两者永不相等 —— 于是 _tapMoved
+                //   永远是 false, 任何拖动都被当成点击(表现: 划列表时误开视频)。
+                //   只要这次按下记过来源, 就用**同一个基准**累计位移。
+                if (_tapSource != null && !_tapMoved)
                 {
-                    var p = e.GetTouchPoint(viewer).Position;
+                    var p = e.GetTouchPoint(null).Position;
                     if (Math.Abs(p.X - _tapPoint.X) > TapSlop || Math.Abs(p.Y - _tapPoint.Y) > TapSlop)
                         _tapMoved = true;
                 }

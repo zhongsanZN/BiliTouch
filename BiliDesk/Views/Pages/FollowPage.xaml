@@ -415,15 +415,25 @@
                                 </StackPanel>
                             </Border>
 
+                            <!-- ===== 混合流(「全部动态」专用, 2026-11-04) =====
+                                 对标官方手机端: 视频/图文/纯文字/转发/专栏/直播混排。
+                                 单 UP 视图不走这里(那一路是"TA 的投稿视频", 只有视频)。 -->
+                            <ItemsControl ItemsSource="{Binding Dynamics}" Margin="4,0,8,0"
+                                          Visibility="{Binding ShowDynamics, Converter={StaticResource BoolToVis}}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <controls:DynamicFeedCard />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
                             <!-- ===== 两档排版共用同一个 FeedItems, 只切可见性 =====
                                  ★ 不做"换模板/重建列表": 那会把滚动位置和已生成的容器一起丢掉,
                                    切一下就跳回顶部。两个 ItemsControl 各自绑自己的可见性最省事 ——
                                    Collapsed 的那个不参与测量, 也不会生成容器。
-                                 ★ 默认档 = 动态卡(见 SettingsStore.FollowCardWall)。 -->
-
-                            <!-- 动态卡(默认): 单列, 每条 = 头像 + UP 名 + 发布时间 + 视频。
-                                 不挂卡片墙(CardWallPanel) —— 卡片墙是"一屏铺满尽量多张"的网格,
-                                 而动态流要的是每条都有清晰的作者与时间归属, 两者目标相反。 -->
+                                 ★ 默认档 = 动态卡(见 SettingsStore.FollowCardWall)。
+                                 ★ 2026-11-04: 这两个列表现在只在**单 UP 视图**下显示
+                                   (全部动态走上面的混合流)。 -->
                             <ItemsControl ItemsSource="{Binding FeedItems}" Margin="4,0,8,0"
                                           Visibility="{Binding UseCardWall, Converter={StaticResource InvBoolToVis}}">
                                 <ItemsControl.ItemTemplate>

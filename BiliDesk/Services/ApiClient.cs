@@ -1303,7 +1303,23 @@ public class ApiClient
     public async Task<(bool ok, string? err, List<VideoItem>? items, string? nextOffset, bool hasMore)>
         GetDynamicFeedAsync(string? offset = null)
     {
-        var items = new List<VideoItem>();
+        var full = await GetDynamicFeedFullAsync(offset);
+        var videos = full.items?.Where(d => d.Video != null).Select(d => d.Video!).ToList();
+        return (full.ok, full.err, videos, full.nextOffset, full.hasMore);
+    }
+
+    /// <summary>
+    /// 动态混合流(2026-11-04): 返回**全部类型**的动态, 不再只挑视频。
+    ///
+    /// 这是"动态页内容不全"的根治点: 原实现走 ParseDynamicVideo, 图文/纯文字/专栏/转发
+    /// 全部返回 null 被丢弃, 于是动态页看起来"只有视频"。现在改用 DynamicParser 解析全部类型。
+    ///
+    /// ★ 保留旧接口: 消息页/单 UP 视图只要视频列表, 它们仍走 GetDynamicFeedAsync。
+    /// </summary>
+    public async Task<(bool ok, string? err, List<DynamicItem>? items, string? nextOffset, bool hasMore)>
+        GetDynamicFeedFullAsync(string? offset = null)
+    {
+        var items = new List<DynamicItem>();
         try
         {
             await EnsureBuvidAsync();
@@ -1329,7 +1345,7 @@ public class ApiClient
             {
                 foreach (var e in list.EnumerateArray())
                 {
-                    var item = ParseDynamicVideo(e);
+                    var item = DynamicParser.Parse(e);
                     if (item != null) items.Add(item);
                 }
             }

@@ -35,6 +35,20 @@ public class FollowViewModel : ObservableObject
     /// <summary>右栏内容(视频卡片)。切选择时整体换血。</summary>
     public ObservableCollection<VideoItem> FeedItems { get; } = new();
 
+    /// <summary>
+    /// 「全部动态」的混合流(2026-11-04)。
+    ///
+    /// ★ 为什么与 FeedItems 并存而不是替换它: 单 UP 视图(点左边某个 UP)拿的是
+    ///   "TA 的投稿视频"接口, 那一路只有视频、没有动态混合流的概念。
+    ///   两个集合各管一条路, 页面按 SelectedUp 是否为 null 切显隐。
+    /// ★ 混合流里**视频动态也在里面**(DynamicItem.Video), 不再单独进 FeedItems ——
+    ///   否则同一条会显示两次。
+    /// </summary>
+    public ObservableCollection<DynamicItem> Dynamics { get; } = new();
+
+    /// <summary>当前右栏显示的是混合流(全部动态)还是单 UP 的视频列表</summary>
+    public bool ShowDynamics => SelectedUp == null;
+
     private FollowUser? _selectedUp;
 
     /// <summary>当前选中的 UP(null = 全部动态)</summary>
@@ -53,6 +67,8 @@ public class FollowViewModel : ObservableObject
             if (value != null) value.IsSelected = true;
             OnPropertyChanged(nameof(IsAllSelected));
             OnPropertyChanged(nameof(SelectionTitle));
+            // 右栏两套列表按它切显隐(混合流 vs 单 UP 视频)
+            OnPropertyChanged(nameof(ShowDynamics));
         }
     }
 
@@ -184,6 +200,9 @@ public class FollowViewModel : ObservableObject
     /// reset 时清空。
     /// </summary>
     private readonly HashSet<string> _seenBvid = new(StringComparer.Ordinal);
+
+    /// <summary>混合流已收录的动态 id(翻页去重)</summary>
+    private readonly HashSet<string> _seenDynamicIds = new(StringComparer.Ordinal);
 
     public FollowViewModel()
     {
@@ -349,7 +368,9 @@ public class FollowViewModel : ObservableObject
         {
             Loading = true;
             FeedItems.Clear();
+            Dynamics.Clear();
             _seenBvid.Clear();
+            _seenDynamicIds.Clear();
             Error = "";
             OnPropertyChanged(nameof(ShowFullLoading));
         }
@@ -363,6 +384,7 @@ public class FollowViewModel : ObservableObject
         bool ok;
         string? err = null;
         List<VideoItem>? items = null;
+        List<DynamicItem>? dyns = null;
         var hasMore = false;
 
         try
@@ -370,9 +392,11 @@ public class FollowViewModel : ObservableObject
             if (forUp == null)
             {
                 if (reset) _feedOffset = null;
-                var (rOk, rErr, rItems, nextOffset, rHasMore) =
-                    await Svc.Api.GetDynamicFeedAsync(reset ? null : _feedOffset);
-                ok = rOk; err = rErr; items = rItems;
+                // ★ 2026-11-04: 「全部动态」改走**混合流**接口, 图文/纯文字/专栏/转发/直播全都要。
+                //   原实现只取能播的视频, 于是动态页看起来"只有视频"。
+                var (rOk, rErr, rDyns, nextOffset, rHasMore) =
+                    await Svc.Api.GetDynamicFeedFullAsync(reset ? null : _feedOffset);
+                ok = rOk; err = rErr; dyns = rDyns;
                 // 翻页依据: "服务端给了新 offset 且与当前不同", 原样回传 = 到底了。
                 // ★ 为什么不用接口的 has_more(2026-10-17 修正): 原来这里的理由是"has_more 实测不可靠,
                 //   第一页标 false 却还有下一页" —— 那其实是**解析 bug**造成的: 接口给的是
@@ -411,6 +435,26 @@ public class FollowViewModel : ObservableObject
                 Loading = false;
                 LoadingMore = false;
                 if (SelectedUp != forUp) return;   // 选择已变, 丢弃本次结果
+                // ★ 两条路分开灌: 全部动态 → Dynamics(混合流), 单 UP → FeedItems(投稿视频)
+                if (forUp == null)
+                {
+                    if (dyns == null)
+                    {
+                        if (Dynamics.Count == 0) Error = err ?? "加载失败";
+                        return;
+                    }
+                    foreach (var d in dyns)
+                    {
+                        // 按动态 id 去重: 翻页时同一条可能又给一遍
+                        if (d.Id.Length > 0 && !_seenDynamicIds.Add(d.Id)) continue;
+                        Dynamics.Add(d);
+                    }
+                    HasMore = hasMore;
+                    OnPropertyChanged(nameof(ShowFullLoading));
+                    if (Dynamics.Count == 0) Error = "关注的 UP 最近没有动态";
+                    UpdateUnreadBadges();
+                    return;
+                }
                 if (items == null)
                 {
                     if (FeedItems.Count == 0) Error = err ?? "加载失败";

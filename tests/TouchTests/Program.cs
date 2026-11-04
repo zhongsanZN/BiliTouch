@@ -240,6 +240,10 @@ internal static class Program
             "the first real finger opens the gesture sheet (no toggle button needed)");
         Call(player, "OnTouchHelpClose", player, new RoutedEventArgs());
         Pump(120);
+        // 首次弹说明时顺带 StartControlsHideCountdown 了, 控件可能已自动收起。
+        // 显式拉回可见态再测"点一下隐藏"这条。
+        Call(player, "ShowControls");
+        Pump(120);
         finger = new Finger(root); finger.Down(x, y); finger.Up(x, y); Pump(500);
         Check(!controls.IsHitTestVisible, "single finger tap hides controls without toggling playback");
         finger = new Finger(root); finger.Down(x, y); finger.Up(x, y); Pump(500);
@@ -303,12 +307,20 @@ internal static class Program
             }
         }
         // Horizontal swipe on the right info panel switches 简介 / 评论 (and must not select text).
+        // ★ 前面的双指测试可能把窗口留在全屏态(全屏时信息栏整块 Collapsed、宽度 0,
+        //   横滑自然打不中) —— 先恢复常规态再测右栏。
+        if (Field<bool>(player, "_isFullscreen"))
+        {
+            Call(player, "ToggleFullscreen");
+            Pump(600);
+        }
         var infoPanel = Element<Grid>(player, "InfoPanel");
         // 右栏宽度是自适应的(窗口 30%, 340~560), 断言一下别再退回写死的 400
         Check(infoPanel.ActualWidth >= 340 && infoPanel.ActualWidth <= 560,
             "info panel width follows the window instead of a hard-coded 400");
-        // 起手点要避开顶部的标题/UP 卡片和 tab 行(那些区域里有可点元素, 手势会让给它们)
-        var ix = infoPanel.ActualWidth / 2; var iy = Math.Min(360, infoPanel.ActualHeight * 0.6);
+        // 起手点要避开顶部的标题/UP 卡片和 tab 行(那些区域里有可点元素, 手势会让给它们)。
+        // 取面板高度的 70% 处: 那里一定是简介/评论正文, 不会被按钮截走。
+        var ix = infoPanel.ActualWidth / 2; var iy = infoPanel.ActualHeight * 0.7;
         var swipe = new Finger(infoPanel);
         swipe.Down(ix, iy);
         for (var i = 1; i <= 4; i++) swipe.Move(ix - i * 20, iy);

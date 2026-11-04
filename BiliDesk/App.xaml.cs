@@ -30,9 +30,24 @@ public partial class App : Application
     /// </summary>
     public static bool IsExiting { get; set; }
 
+    /// <summary>
+    /// 本次进程是否强制静音(由 --mute 启动参数置位)。
+    /// ★ 不落盘: 只在这一次运行生效, 用户下次正常启动仍用自己设的音量。
+    /// </summary>
+    public static bool MuteForThisRun { get; private set; }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // ★ `--mute`: 启动即静音(2026-11-04, 用户要求"测试的时候不要有声音")。
+        //   放在最前面: 任何窗口/播放器创建之前就把音量落成 0, 免得起播瞬间漏一声。
+        //   ★ 只在本次进程生效, **不写回 settings.json** —— 用户下次正常启动时
+        //     仍是他自己设的音量, 不会因为"测过一次"就被永久静音。
+        if (e.Args.Any(a => string.Equals(a, "--mute", StringComparison.OrdinalIgnoreCase)))
+        {
+            MuteForThisRun = true;
+        }
 
         // ★★★ 单实例闸门必须放在**最前面**, 在初始化任何服务之前。
         //   为什么: 第二个实例一旦跑起来, 它会 Load 同一份 session.json/settings.json,

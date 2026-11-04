@@ -769,6 +769,8 @@ public partial class PlayerWindow : FluentWindow
         // ★ 也**不能**只依赖"复用同一个窗口时不重置": PlayerService 关窗重开时
         //   构造路径同样会跑到这里, 那时读的仍是设置, 所以两条路都对。
         _volumeCache = Svc.Settings.PlayerVolume;
+        // ★ --mute 启动参数: 本次进程强制 0 音量(不落盘, 见 App.MuteForThisRun)
+        if (App.MuteForThisRun) _volumeCache = 0;
         try { _mp.Volume = _volumeCache; } catch { }
         // ★★★ 滑块的 Value 也必须一起给(2026-11-12 用户报"进入下一个视频时音量条仍是 80%"):
         //   XAML 里写死 `Value="80"`, 而上面只改了 _volumeCache 与原生音量, **没碰滑块** ——

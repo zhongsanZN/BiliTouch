@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
@@ -66,10 +66,14 @@ public partial class PlayerWindow
             _infoHorizontalDecided = true;
             if (!_infoSwipeArmed) return false;
             _infoDragDx = dx;
-            if (!BeginPageDrag()) return false;
+            // ★ BeginPageDrag 失败(内容还没布局出高度, 例如面板刚切回来)时**不能就此放弃**:
+            //   原来这里 return false, 但 _infoHorizontalDecided 已经是 true, 后续移动全被
+            //   挡在 `!_infoDraggingPage` 那一行 —— 整个手势彻底失效, 用户划了没反应。
+            //   现在: 拖不起来也继续记位移, 抬手时按位移直接切 tab(降级但失灵)。
+            _infoDraggingPage = BeginPageDrag();
         }
-        if (!_infoDraggingPage) return false;
         _infoDragDx = dx;
+        if (!_infoDraggingPage) return true;   // 已消费(降级路径), 抬手时按位移切
         ApplyPageDrag(dx);
         return true;
     }
@@ -77,9 +81,27 @@ public partial class PlayerWindow
     /// <summary>Returns true when the release was consumed (page animation or click suppression).</summary>
     private bool InfoUp()
     {
+        // ★ 降级路径: 拖不起来(BeginPageDrag 失败)但方向已判定为横向 —— 按位移直接切 tab。
+        //   这条保证"划了至少有反应", 不会因为布局还没出高度就整段失灵。
         if (!_infoDraggingPage)
         {
+            // ★ 降级路径不再要求 _infoSwipeArmed: 切到评论页后它的高度可能还是 0,
+            //   BeginPageDrag 一直失败; 若此时又因为起点落在某个按钮上而不切,
+            //   用户就会觉得"能划过去、划不回来"。方向已经判定为横向了, 按位移切。
+            var degraded = _infoHorizontalDecided && Math.Abs(_infoDragDx) >= PageSwitchDistance;
+            var degradeTarget = PageIndex + (_infoDragDx < 0 ? 1 : -1);
             _infoHorizontalDecided = false;
+            if (degraded && degradeTarget is 0 or 1)
+            {
+                _infoPageSwitching = true;
+                try
+                {
+                    if (degradeTarget == 1) TabComments.IsChecked = true;
+                    else TabIntro.IsChecked = true;
+                }
+                finally { _infoPageSwitching = false; }
+                return true;
+            }
             return false;
         }
         _infoDraggingPage = false;

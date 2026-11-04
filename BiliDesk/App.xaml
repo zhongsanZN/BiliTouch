@@ -1,4 +1,4 @@
-﻿<Application x:Class="BiliDesk.App"
+<Application x:Class="BiliDesk.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:helpers="clr-namespace:BiliDesk.Helpers"
@@ -50,6 +50,7 @@
             <helpers:InverseBoolConverter x:Key="InvBool" />
             <helpers:InverseBoolToVisibilityConverter x:Key="InvBoolToVis" />
             <helpers:StringToVisibilityConverter x:Key="StrToVis" />
+            <helpers:NotNullToVisibilityConverter x:Key="NotNullToVis" />
             <helpers:InverseStringToVisibilityConverter x:Key="InvStrToVis" />
             <helpers:CountToVisibilityConverter x:Key="CountToVis" />
             <helpers:WidthClassToValueConverter x:Key="ClassToValue" />
