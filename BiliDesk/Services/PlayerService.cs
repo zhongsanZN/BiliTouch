@@ -19,20 +19,27 @@ public class PlayerService
     public bool IsCurrent(PlayerWindow window) => ReferenceEquals(_window, window);
 
     /// <summary>
-    /// 预热播放器窗口(2026-11-04)。
+    /// 预热播放器窗口(2026-11-04, 2026-11-04 二次修)。
     ///
-    /// 官方客户端点开视频是"秒出", 我们是"先一团大色块, 等一会儿才出画面" ——
-    /// 那团色块是 WPF 窗口**第一次**创建时的同步开销:
-    ///   · PlayerWindow 的 XAML 树(2000+ 行, 含评论模板/弹幕层/控制栏)第一次 Measure/Arrange;
-    ///   · LibVLC 的 VideoView(HwndHost)第一次建原生窗口;
-    ///   · FluentWindow 的 WindowChrome / DWM 扩展第一次走一遍。
-    /// 这三件事加起来在 3K/225% 下是几百毫秒到一秒级, 而且全部落在 UI 线程上。
+    /// ## 为什么必须"建出来但不 Show"
+    /// 官方客户端点开视频是"秒出", 我们是"先一团大色块" —— 那团色块是 WPF 窗口**第一次**
+    /// 创建时的同步开销(XAML 树首次 Measure/Arrange、HwndHost 建原生窗口、DWM chrome)。
     ///
-    /// 做法: 启动后空闲时把窗口**建出来但不显示**(Opacity=0 + 屏幕外), 让它把这些
-    /// 一次性开销先付掉; 真正播放时只需 Show + 起播, 那一步很快。
+    /// ## ★★★ 为什么**不能** Show 出来(桌面上一块黑的根因)
+    /// LibVLC 的 `VideoView` 是 **HwndHost**, 它内部是一个**原生子窗口**。
+    /// WPF 的 `Opacity` 只作用于 WPF 自己的合成层, **管不到 HwndHost 里的原生窗口** ——
+    /// 所以 `Opacity = 0` 对视频区那块黑色矩形**完全无效**, 一 Show 就直接画到桌面上。
+    /// 之前的 `Show() → Hide()` 就是这个现象的来源: 中间那一帧黑块已经上屏了。
     ///
-    /// ★ 必须等到主窗口 Loaded 之后再预热: 启动瞬间抢 UI 线程会让首页也慢一拍。
-    /// ★ 预热失败必须静默(见 catch): 预热是优化, 不是功能, 失败不能影响点视频。
+    /// ## 现在的做法
+    /// 只做**不依赖可见性**的那部分预热:
+    ///   · `InitializeComponent()` 已经跑了(构造 PlayerWindow 时就跑完) —— XAML 树建好;
+    ///   · 强制一次 Measure/Arrange, 把布局算好(不需要窗口可见);
+    ///   · 初始化 MediaPlayer 等托管对象。
+    /// 真正的 HwndHost 原生窗口会在第一次 Show 时创建 —— 那一步很便宜(几十毫秒),
+    /// 换来的是**绝不出现桌面上那块黑**。
+    ///
+    /// ★ 结论: 用"少预热一点"换"绝不出脏东西", 这个取舍没有第二种选法。
     /// </summary>
     public void WarmUp()
     {
@@ -40,46 +47,25 @@ public class PlayerService
         try
         {
             var win = new PlayerWindow();
-            // ★★★ 2026-11-04 修"点开视频详情页一直不出现"的**真根因**:
-            //
-            //   预热原来是: Left/Top = -32000 → Show() → Hide() → Left/Top = NaN。
-            //   实测日志(player-show.log)打下起播那一刻的真实状态:
-            //       vis=True state=Normal left=-14563.55 top=-14563.55
-            //   也就是说 **NaN 没能把位置复位** —— WPF 对已经过布局的窗口,
-            //   Left/Top 设 NaN 只表示"没显式设过", 并不会重新居中; 而
-            //   WindowStartupLocation=CenterScreen 只在**首次** Show 时生效一次,
-            //   这个窗口已经 Show 过了 ⇒ 两者都不起作用, 窗口永远停在屏幕外。
-            //   (另外 DWM 会把它夹到 -14563 这种"虚拟桌面边界"值, 于是连我原来
-            //    `Left <= -30000` 的兜底判断都永远不成立 —— 双重失效。)
-            //
-            //   现在改成: **预热也用真实屏幕坐标**, 只是靠 Opacity=0 + 移出可视区一点点
-            //   来保证用户看不见。位置从一开始就在屏幕内, 不存在"要不要复位"的问题。
+
+            // 只做布局预热, **不 Show**(见上面那段: Opacity 对 HwndHost 无效)。
+            // Measure/Arrange 在不可见窗口上照样能跑, 足够把 XAML 树的首次开销付掉。
+            win.Measure(new Size(1280, 760));
+            win.Arrange(new Rect(0, 0, 1280, 760));
+
+            // 位置先摆好: 真正 Show 时就在屏幕中央, 不会有一帧跑到角落
             var wa = SystemParameters.WorkArea;
             win.WindowStartupLocation = WindowStartupLocation.Manual;
             win.Left = wa.Left + Math.Max(0, (wa.Width - 1280) / 2);
             win.Top = wa.Top + Math.Max(0, (wa.Height - 760) / 2);
-            win.Opacity = 0;          // 全透明: 用户看不见, 但布局/原生窗口照样建出来
-            win.ShowInTaskbar = false;
-            win.ShowActivated = false;
-            win.Topmost = false;      // ★ 绝不置顶: 否则预热窗口会盖在首页上
-            win.Show();
-            // 建完立刻藏起来: 留在屏幕上会被 DWM 当成可见窗口持续合成, 白耗 GPU。
-            win.Hide();
-            win.Opacity = 1;
+
             win.ShowInTaskbar = true;
-            // ★★★ 2026-11-04 修"刚进首页时播放详情页的 UI 控件直接叠在首页上, 点一下才消失":
-            //
-            //   根因是预热的那个 Show(): 窗口虽然 Opacity=0 且随即 Hide(), 但它在这段间隙里
-            //   已经**完成了一次前台激活**(WPF 在 Show 时会尝试激活, 即使 ShowActivated=false
-            //   也可能因为抢占而短暂置前), 并且它的 WPF 视觉层被 DWM 合成了那一帧 ——
-            //   于是首页上会残留播放器控制栏/右栏的半透明影像, 直到用户点一下触发重绘才消失。
-            //
-            //   修法(两道):
-            //     ① 预热结束把窗口**彻底降权**: 不置顶、不激活、清 Owner;
-            //     ② 立刻把主窗口重新激活一次(见 App.WarmUp 调用点), 把焦点与 Z 序抢回首页。
-            //   这里只做 ①, ② 交给调用方(它拿得到主窗口)。
+            win.ShowActivated = false;
             win.Topmost = false;
             win.Owner = null;
+
+            // ★ 不 Show、不 Hide: 窗口保持"已构造未显示"状态。
+            //   首次真正播放时 GetOrCreateWindow 会 Show 它, 那时才建原生窗口。
             _window = win;
         }
         catch
@@ -129,46 +115,16 @@ public class PlayerService
         start(win);
         if (!string.IsNullOrEmpty(title)) win.Title = title + " - BiliDesk";
 
-        // ★★★ 2026-11-04 修"点了视频详情页还是不出现"(第三版, 按实测日志定案):
+        // ★★★ 2026-11-04 删除这里的"强制显形兜底"(它曾是桌面上那块黑的来源之一)。
         //
-        //   日志给出的那一刻状态是 vis=True / state=Normal / left=-14563 / top=-14563 ——
-        //   窗口**可见、状态正常**, 只是位置在屏幕外。所以问题从来不是"没 Show",
-        //   而是"位置在屏幕外, 且复位逻辑没生效"(根因见 WarmUp 里那段说明)。
-        //
-        //   这里改成**按屏幕矩形判定**, 不再用某个魔法阈值(-30000 那个判断被 DWM 夹到
-        //   -14563 的值绕过了)。判定标准: 窗口矩形与任何屏幕工作区**不相交**就拉回。
-        win.Dispatcher.BeginInvoke(new Action(() =>
-        {
-            try
-            {
-                System.IO.File.AppendAllText(
-                    System.IO.Path.Combine(AppPaths.DataDir, "player-show.log"),
-                    $"[after-start] vis={win.IsVisible} state={win.WindowState} " +
-                    $"left={win.Left} top={win.Top} opacity={win.Opacity} " +
-                    $"taskbar={win.ShowInTaskbar} closing={win.IsClosing}\n");
-                if (win.IsClosing) return;
-                if (!win.IsVisible) win.Show();
-                if (win.WindowState == WindowState.Minimized)
-                    win.WindowState = WindowState.Maximized;
-
-                // 位置兜底: 按**真实屏幕矩形**判定, 与阈值无关
-                var wa = SystemParameters.WorkArea;
-                if (!IsOnAnyScreen(win))
-                {
-                    win.WindowStartupLocation = WindowStartupLocation.Manual;
-                    win.Left = wa.Left + Math.Max(0, (wa.Width - win.Width) / 2);
-                    win.Top = wa.Top + Math.Max(0, (wa.Height - win.Height) / 2);
-                }
-                win.Activate();
-                win.Topmost = true;
-                win.Topmost = false;   // 一闪拿焦点, 但不长期置顶
-
-                System.IO.File.AppendAllText(
-                    System.IO.Path.Combine(AppPaths.DataDir, "player-show.log"),
-                    $"[after-fix] left={win.Left} top={win.Top} onScreen={IsOnAnyScreen(win)}\n");
-            }
-            catch { /* 兜底失败不影响播放 */ }
-        }), System.Windows.Threading.DispatcherPriority.Loaded);
+        //   原来这里排了一个 Dispatcher 回调, 里面有:
+        //       if (!win.IsVisible) win.Show();
+        //       win.Topmost = true;  win.Topmost = false;
+        //   问题: 窗口的显示状态在 GetOrCreateWindow 里已经处理好了(该 Show 的 Show、
+        //   该最大化的最大化)。这里再 Show 一次纯属重复, 而且 Topmost 一闪会让窗口
+        //   抢到最前面 —— 配合 HwndHost(原生子窗口不受 Opacity 影响), 就会在桌面上
+        //   闪出一块黑色视频区。
+        //   ⇒ 显形只有一个入口: GetOrCreateWindow。这里什么都不做。
     }
 
     /// <summary>
@@ -197,21 +153,38 @@ public class PlayerService
         // 刚打开的新视频一起关掉 —— 表现为"点了视频又立刻自动退出"。
         if (_window is { IsLoaded: true } reuse && !reuse.IsClosing)
         {
-            // ★★★ 2026-11-04 修"点了视频在播但看不见窗口":
-            //   预热(WarmUp)把窗口建在屏幕外 (-32000,-32000) 并 Hide() 掉了,
-            //   而这里原来只调 Activate() —— 对一个隐藏窗口 Activate 是**无效**的,
-            //   于是音频正常播、画面留在屏幕外, 用户完全看不到。
-            //   必须: 先 Show(若是隐藏态) → 拉回屏幕内 → 再 Activate。
-            if (!reuse.IsVisible) reuse.Show();
-            if (reuse.Left <= -30000 || reuse.Top <= -30000)
+            // ★★★ 2026-11-04 修"一直以来根本没有默认最大化"的**根因**:
+            //
+            //   原来 `WindowState = Maximized` 只写在**新建窗口**那条路径里(见下面)。
+            //   但预热之后, 用户点视频走的是**这条复用路径** —— 这里从头到尾没有设过
+            //   WindowState, 所以窗口以 Normal(1280×760) 打开。
+            //   用户看到的就是"从来没有默认最大化", 而我以为写了就等于生效了。
+            //
+            //   现在: 复用路径也**显式最大化**, 并且放在 Show() 之前(理由同下面那段:
+            //   Show 之后再改会先按 Normal 布局一帧再跳, 那一下闪动正好落在起播画面上)。
+            if (!reuse.IsVisible)
             {
-                // 从预热位置挪回主屏中央(与原 WindowStartupLocation=CenterScreen 等价)
-                reuse.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-                reuse.Left = double.NaN;
-                reuse.Top = double.NaN;
+                reuse.WindowState = WindowState.Maximized;   // ★ 先定状态
+                reuse.Show();                                 // ★ 再显示
             }
-            if (reuse.WindowState == WindowState.Minimized)
-                reuse.WindowState = WindowState.Normal;
+            else if (reuse.WindowState == WindowState.Minimized)
+            {
+                reuse.WindowState = WindowState.Maximized;
+            }
+            else if (reuse.WindowState != WindowState.Maximized)
+            {
+                // 窗口已经可见但被用户还原过: 仍然按"进详情页默认最大化"的要求拉满
+                reuse.WindowState = WindowState.Maximized;
+            }
+
+            // 位置兜底: 预热若把它摆到了屏幕外(不该发生, 但便宜), 拉回主屏中央
+            if (!IsOnAnyScreen(reuse))
+            {
+                var wa0 = SystemParameters.WorkArea;
+                reuse.WindowStartupLocation = WindowStartupLocation.Manual;
+                reuse.Left = wa0.Left + Math.Max(0, (wa0.Width - 1280) / 2);
+                reuse.Top = wa0.Top + Math.Max(0, (wa0.Height - 760) / 2);
+            }
             reuse.Activate();
             return reuse;
         }

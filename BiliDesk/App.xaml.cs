@@ -140,29 +140,21 @@ public partial class App : Application
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         main.Show();
 
-        // ★ 预热播放器窗口(2026-11-04): 主窗口起来后**空闲**时把 PlayerWindow 建出来藏好。
-        //   不预热的话, 用户第一次点视频要现场付 WPF 窗口树 + HwndHost + DWM chrome 的
-        //   首次开销 —— 表现就是"先一团大色块, 等一会儿才出画面"。预热之后那一步只剩
-        //   Show + 起播, 接近官方客户端的"秒出"。
+        // ★ 预热播放器窗口(2026-11-04): 主窗口起来后**空闲**时把 PlayerWindow 建出来。
+        //
+        // ★★★ 2026-11-04 二次修: 预热**不再 Show 窗口**。
+        //   原因(桌面上一块黑的根因): LibVLC 的 VideoView 是 HwndHost, 里面是**原生子窗口**,
+        //   WPF 的 Opacity 管不到它 —— 一 Show 那块黑色视频区就直接画到桌面上。
+        //   现在 WarmUp 只做"构造 + 一次 Measure/Arrange"(不 Show), 见 WarmUp 的说明。
+        //   代价是 HwndHost 的原生窗口仍要在首次播放时创建(几十毫秒), 换来绝不出脏东西。
+        //
+        // ★ 因此这里也不再需要"抢回前台"的补偿动作 —— 窗口根本没显示过, 不会抢焦点。
         //   ★ 用 Background 优先级: 首页的首次布局/封面解码优先, 别和启动抢 UI 线程。
         //   ★ 失败静默(见 WarmUp 的 catch): 预热是优化, 不是功能。
-        //
-        // ★★★ 2026-11-04 修"刚进首页时播放器的 UI 控件叠在首页之上, 点一下才消失":
-        //   预热那一次 Show 会让播放器窗口短暂获得前台激活, 首页上就残留它的影像。
-        //   预热**结束后立刻把主窗口重新激活**, 把焦点与 Z 序抢回首页。
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
             new Action(() =>
             {
-                try
-                {
-                    Svc.Player.WarmUp();
-                    // 把前台还给主窗口(此时预热窗口已 Hide 且不置顶)
-                    if (main.IsVisible)
-                    {
-                        main.Activate();
-                        main.Focus();
-                    }
-                }
+                try { Svc.Player.WarmUp(); }
                 catch { /* 预热是优化, 任何异常都不影响启动 */ }
             }));
 
