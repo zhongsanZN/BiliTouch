@@ -20,6 +20,8 @@ public partial class PlayerWindow
     private double _touchBrightness = 1, _touchStartBrightness;
     private bool _touchDoubleTap, _touchOwnsSeek;
     private bool _lastPlayerInputWasTouch;
+    /// <summary>手势说明只在首次用手指点时自动弹一次(控制栏的「触控」按钮已删除)</summary>
+    private bool _touchHelpShown;
 
     // ---- 双指捏合 = 全屏 / 退出全屏 ----
     // 手机/平板上这是最自然的"放大画面"手势: 两指张开 → 全屏, 捏合 → 退出。
@@ -54,9 +56,8 @@ public partial class PlayerWindow
         InfoPanel.PreviewMouseLeftButtonDown += OnInfoMouseDown;
         InfoPanel.PreviewMouseMove += OnInfoMouseMove;
         InfoPanel.PreviewMouseLeftButtonUp += OnInfoMouseUp;
-        // The gesture help is only advertised when the machine has a touch digitizer; the first
-        // finger that lands on the video reveals it anyway, so it is discoverable on any device.
-        TouchHelpButton.Visibility = TouchSupport.HasTouchDevice ? Visibility.Visible : Visibility.Collapsed;
+        // ★ 2026-11-04: 控制栏的「触控」按钮已删除(用户: "触控不需要开关, 该是底层支持")。
+        //   手势本来就全默认生效; 说明改成**首次用手指点视频时自动弹一次**, 之后不再打扰。
     }
 
     private void OnTouchWindowDeactivated(object? sender, EventArgs e) => Dispatcher.BeginInvoke(new Action(() =>
@@ -99,7 +100,18 @@ public partial class PlayerWindow
         }
         // Use the routed source, never IsMouseOver: a finger does not need a mouse cursor.
         if (IsTouchControl(e.OriginalSource as DependencyObject) || AnyPlayerPopupOpen || _mp == null) return;
-        TouchHelpButton.Visibility = Visibility.Visible; // A real finger is proof of a touch digitizer.
+        // ★ 首次用手指点视频: 自动弹一次手势说明(控制栏那个「触控」按钮已经删了)。
+        //   只弹一次; 这一次触摸**只用于展示**, 不继续走单击/长按 —— 否则同一帧里
+        //   下面那段"点说明面板就收起"会立刻把它关掉(自己吃自己)。
+        if (!_touchHelpShown)
+        {
+            _touchHelpShown = true;
+            TouchHelp.Visibility = Visibility.Visible;
+            ShowControls();
+            StartControlsHideCountdown();
+            e.Handled = true;
+            return;
+        }
         if (TouchHelp.Visibility == Visibility.Visible)
         {
             // Tapping the picture dismisses the gesture sheet instead of toggling the control bar.

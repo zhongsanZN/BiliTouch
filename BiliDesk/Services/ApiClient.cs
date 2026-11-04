@@ -3916,11 +3916,26 @@ public class ApiClient
     ///             └ url_info[]  → host + base_url 拼出完整地址
     /// 优先选 http_stream + flv: 延迟最低, LibVLC 也最稳; 拿不到再退回列表里第一个。
     /// </summary>
-    public async Task<(bool ok, string? err, string? url)> GetLivePlayUrlAsync(long roomId)
+    public async Task<(bool ok, string? err, string? url)> GetLivePlayUrlAsync(long roomId, int qn = 0)
+    {
+        var r = await GetLivePlayUrlExAsync(roomId, qn);
+        return (r.ok, r.err, r.url);
+    }
+
+    /// <summary>
+    /// 直播取流(带清晰度)。返回**实际拿到的档位**与可选档位列表。
+    ///
+    /// ★ 2026-11-04 之前这里写死 `qn=0`(让服务端给默认档), 于是用户永远只能看默认清晰度,
+    ///   控制栏上连"清晰度"按钮都不显示。但 B 站直播**支持选档**:
+    ///   `playurl_info.playurl.g_qn_desc` 给出全部可选档位, `qn` 传对应值就能要那一档。
+    /// ★ 能真拿到哪一档还取决于登录态与主播推流: 未登录通常封顶 720p, 登录后按账号权限给原画。
+    /// </summary>
+    public async Task<(bool ok, string? err, string? url, int actualQn, List<(int qn, string label)> options)>
+        GetLivePlayUrlExAsync(long roomId, int qn = 0)
     {
         try
         {
-            if (roomId <= 0) return (false, "缺少直播间号", null);
+            if (roomId <= 0) return (false, "缺少直播间号", null, 0, new());
             await EnsureBuvidAsync();
 
             var (code, msg, data) = await GetJsonAsync(
@@ -3930,7 +3945,7 @@ public class ApiClient
                     ["room_id"] = roomId.ToString(),
                     ["no_playurl"] = "0",
                     ["mask"] = "1",
-                    ["qn"] = "0",              // 0 = 让服务端给默认清晰度(原画由登录态决定)
+                    ["qn"] = qn.ToString(),   // 0 = 默认档; >0 = 指定档位
                     ["platform"] = "web",
                     ["protocol"] = "0,1",
                     ["format"] = "0,1,2",
@@ -3939,33 +3954,61 @@ public class ApiClient
                     ["panorama"] = "1"
                 },
                 referer: $"https://live.bilibili.com/{roomId}");
-            if (code != 0 || data == null) return (false, msg ?? $"请求失败 (code {code})", null);
+            if (code != 0 || data == null)
+                return (false, msg ?? $"请求失败 (code {code})", null, 0, new());
 
             // live_status: 0 未开播 / 1 直播中 / 2 轮播。没开播的话后面拿不到流, 直接说清楚。
             if (data.Value.TryGetProperty("live_status", out var ls) &&
                 ls.ValueKind == JsonValueKind.Number && ls.GetInt32() == 0)
-                return (false, "主播还没有开播", null);
+                return (false, "主播还没有开播", null, 0, new());
 
-            var url = PickLiveUrl(data.Value);
-            return url == null ? (false, "没有取到可用的直播流地址", null) : (true, null, url);
+            // 可选档位: g_qn_desc = [{qn, desc}, ...]
+            var options = new List<(int qn, string label)>();
+            if (data.Value.TryGetProperty("playurl_info", out var pi0) &&
+                pi0.ValueKind == JsonValueKind.Object &&
+                pi0.TryGetProperty("playurl", out var pu0) &&
+                pu0.ValueKind == JsonValueKind.Object &&
+                pu0.TryGetProperty("g_qn_desc", out var qd) &&
+                qd.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var q in qd.EnumerateArray())
+                {
+                    var v = (int)GetLong(q, "qn");
+                    var desc = GetStr(q, "desc");
+                    if (v > 0 && desc.Length > 0) options.Add((v, desc));
+                }
+            }
+
+            var (url, actualQn) = PickLiveUrlEx(data.Value);
+            return url == null
+                ? (false, "没有取到可用的直播流地址", null, 0, options)
+                : (true, null, url, actualQn, options);
         }
         catch (Exception ex)
         {
-            return (false, ex.Message, null);
+            return (false, ex.Message, null, 0, new());
         }
     }
 
     /// <summary>从 getRoomPlayInfo 的响应里挑一个播放地址</summary>
-    private static string? PickLiveUrl(JsonElement data)
+    private static string? PickLiveUrl(JsonElement data) => PickLiveUrlEx(data).url;
+
+    /// <summary>
+    /// 挑地址的同时把**实际档位**带出来。
+    /// ★ 为什么要带: 请求原画但账号没权限时服务端会**静默降级**返回别的档,
+    ///   界面若还显示"原画"就是在骗用户。actualQn 来自 codec 的 current_qn。
+    /// </summary>
+    private static (string? url, int actualQn) PickLiveUrlEx(JsonElement data)
     {
         if (!data.TryGetProperty("playurl_info", out var pi) || pi.ValueKind != JsonValueKind.Object)
-            return null;
+            return (null, 0);
         if (!pi.TryGetProperty("playurl", out var pu) || pu.ValueKind != JsonValueKind.Object)
-            return null;
+            return (null, 0);
         if (!pu.TryGetProperty("stream", out var streams) || streams.ValueKind != JsonValueKind.Array)
-            return null;
+            return (null, 0);
 
         string? first = null;
+        var firstQn = 0;
         foreach (var st in streams.EnumerateArray())
         {
             var protocol = GetStr(st, "protocol_name");
@@ -3998,14 +4041,15 @@ public class ApiClient
                     // 整条 CDN 全部 403/404 —— 表现就是"视频播放出错, 请检查网络或尝试其他清晰度"。
                     if (extra.Length > 0 && !extra.StartsWith('?')) extra = "?" + extra;
                     var full = host + path + extra;
+                    var qn = (int)GetLong(cd, "current_qn");
 
                     // http_stream(原流) + flv 是最优解: 延迟低、LibVLC 支持最成熟
-                    if (protocol == "http_stream" && format == "flv") return full;
-                    first ??= full;
+                    if (protocol == "http_stream" && format == "flv") return (full, qn);
+                    if (first == null) { first = full; firstQn = qn; }
                 }
             }
         }
-        return first;
+        return (first, firstQn);
     }
 
     // ---------------------------------------------------------------- 评论

@@ -332,6 +332,10 @@ public partial class PlayerWindow : FluentWindow
     private int _currentQn = QualityPreference.DefaultQn;
     private bool _switchingQuality;
     private bool _fillingQualityMenu;
+    /// <summary>直播请求的档位(0=默认)。与点播的 _currentQn 分开: 直播的档位值域不一样。</summary>
+    private int _liveQn;
+    /// <summary>直播**实际**拿到的档位(服务端可能降级, 界面要按这个写)</summary>
+    private int _liveActualQn;
     // 切换清晰度后要恢复到的进度(>0 生效, 起播后清零)
     private long _resumeAfterSwitchMs;
 
@@ -1056,19 +1060,30 @@ public partial class PlayerWindow : FluentWindow
             TimeText.Text = "直播中";
             _qualities.Clear();
             FillQualityMenu(0);
-            // ★ 直播没有"可选清晰度"这一说(清晰度由服务端/主播推流决定), 所以按钮上不显示
-            //   用户设置的「默认画质」—— 那会在直播里写成一个用户根本控制不了、甚至拿不到的档位
-            //   (2026-10-04: 新增「默认画质」后 FillQualityMenu(0) 会回落到偏好标签, 这里盖掉)。
+            // ★ 2026-11-04: 直播**支持选清晰度**了(之前写死 qn=0 且把按钮藏了)。
+            //   档位列表由接口的 g_qn_desc 给出, 真正拿不拿得到取决于登录态与主播推流,
+            //   所以按钮文案按**实际拿到的档位**写(见下面 actualQn)。
             if (QualityText != null) QualityText.Text = "直播";
             if (CommentHint != null) CommentHint.Text = "直播没有评论区";
             UpdateButtonState();
 
-            var (ok, err, url) = await Svc.Api.GetLivePlayUrlAsync(roomId);
+            var (ok, err, url, actualQn, qnOptions) =
+                await Svc.Api.GetLivePlayUrlExAsync(roomId, _liveQn);
             if (_closing) return;
             if (!ok || string.IsNullOrEmpty(url))
             {
                 ShowFail(err ?? "无法获取直播流地址");
                 return;
+            }
+            // 把可选档位填进清晰度菜单, 并按实际档位更新按钮文案
+            _qualities.Clear();
+            foreach (var (q, label) in qnOptions) _qualities.Add((q, label));
+            _liveActualQn = actualQn;
+            FillQualityMenu(actualQn);
+            if (QualityText != null && qnOptions.Count > 0)
+            {
+                var label = qnOptions.FirstOrDefault(o => o.qn == actualQn).label;
+                QualityText.Text = string.IsNullOrEmpty(label) ? "直播" : label;
             }
             _lastPlayUrl = url;
             _lastAudioUrl = null;   // 直播是单流, 没有独立的音轨
@@ -3731,10 +3746,78 @@ public partial class PlayerWindow : FluentWindow
         _ = SwitchQualityAsync(qn);
     }
 
+    /// <summary>
+    /// 切换直播清晰度: 重新取一路流, 不 seek(直播没有时间轴)。
+    ///
+    /// ★ 服务端可能降级(请求原画但账号没权限): 拿回来的 actualQn 才是真在播的档,
+    ///   界面按它写, 不能按请求值写 —— 否则用户看到"原画"实际是 720p。
+    /// </summary>
+    private async Task SwitchLiveQualityAsync(int qn)
+    {
+        if (_closing || _switchingQuality || _liveRoomId <= 0) return;
+        _switchingQuality = true;
+        try
+        {
+            ShowLoading("正在切换直播清晰度…");
+            var (ok, err, url, actualQn, options) =
+                await Svc.Api.GetLivePlayUrlExAsync(_liveRoomId, qn);
+            if (_closing) return;
+            if (!ok || string.IsNullOrEmpty(url))
+            {
+                ShowFail(err ?? "切换直播清晰度失败");
+                return;
+            }
+            _liveQn = qn;
+            _liveActualQn = actualQn;
+            if (options.Count > 0)
+            {
+                _qualities.Clear();
+                foreach (var (q, label) in options) _qualities.Add((q, label));
+            }
+            FillQualityMenu(actualQn);
+            if (QualityText != null && options.Count > 0)
+            {
+                var label = options.FirstOrDefault(o => o.qn == actualQn).label;
+                if (!string.IsNullOrEmpty(label)) QualityText.Text = label;
+            }
+            _lastPlayUrl = url;
+
+            var liveCaching = BufferPolicy.Resolve(BufferMediaKind.Live, url, shortVideo: false,
+                Svc.Settings.NetworkCachingMs, Svc.Settings.AutoBufferPolicy);
+            var liveOptions = new List<string>
+            {
+                ":no-video-title-show",
+                ":http-referrer=https://live.bilibili.com/" + _liveRoomId,
+                ":http-user-agent=" + PlayerUserAgent,
+                ":network-caching=" + liveCaching,
+                ":live-caching=" + liveCaching
+            };
+            var media = new Media(_libVLC, new Uri(url), liveOptions.ToArray());
+            _isReliableSeekSource = true;
+            if (!PlayMedia(media)) ShowFail("切换直播清晰度失败");
+        }
+        catch (Exception ex)
+        {
+            ShowFail("切换直播清晰度失败: " + ex.Message);
+        }
+        finally
+        {
+            _switchingQuality = false;
+        }
+    }
+
     /// <summary>切换清晰度: 记住播放进度, 换流后自动恢复</summary>
     private async Task SwitchQualityAsync(int qn)
     {
-        if (_closing || _switchingQuality || _currentCid <= 0) return;
+        if (_closing || _switchingQuality) return;
+        // ★ 直播分支(2026-11-04): 直播没有 cid, 走 getRoomPlayInfo 重新取流。
+        //   之前这里 `_currentCid <= 0` 直接 return, 于是直播的清晰度菜单点了没反应。
+        if (_isLive)
+        {
+            await SwitchLiveQualityAsync(qn);
+            return;
+        }
+        if (_currentCid <= 0) return;
         _switchingQuality = true;
         try
         {

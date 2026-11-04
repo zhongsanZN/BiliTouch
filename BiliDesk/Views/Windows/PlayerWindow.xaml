@@ -1134,12 +1134,11 @@
                                         </Button>
                                         <TextBlock x:Name="TimeText" Grid.Column="1" Foreground="#E6FFFFFF" FontSize="12"
                                                    VerticalAlignment="Center" Margin="10,0,0,0" Text="00:00 / 00:00" />
-                                        <Button Grid.Column="2" x:Name="TouchHelpButton" Style="{StaticResource PlayerTextBtn}"
-                                                Visibility="Collapsed"
-                                                HorizontalAlignment="Right" Margin="4,0" Click="OnTouchHelpClick"
-                                                ToolTip="查看触屏手势" AutomationProperties.Name="触屏手势说明">
-                                            <TextBlock Text="触控" Foreground="White" />
-                                        </Button>
+                                        <!-- ★ 2026-11-04: 控制栏那个「触控」按钮删了。
+                                             用户原话: "触控做什么开关, 肯定默认开啊, 根本不用给开关,
+                                             这应该是底层支持"。手势本来就全默认生效, 那个按钮只是
+                                             "查看手势说明"的入口, 却长得像开关, 还占着控制栏一格。
+                                             现在改成: 首次用手指点时自动弹一次说明(见 Touch.cs)。 -->
 
                                         <!-- 音量 -->
                                         <TextBlock x:Name="VolumeIcon" Grid.Column="3" Text="&#xE767;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"

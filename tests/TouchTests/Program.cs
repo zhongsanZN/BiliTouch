@@ -234,9 +234,14 @@ internal static class Program
             "player episode list is configured for per-pixel touch panning");
         var finger = new Finger(root);
         finger.Down(x, y); finger.Up(x, y); Pump(500);
+        // ★ 首次用手指点: 现在会自动弹出手势说明(控制栏的「触控」按钮已删)。
+        //   所以这里先断言"说明被自动打开", 再关掉它继续测普通点击。
+        Check(help.Visibility == Visibility.Visible,
+            "the first real finger opens the gesture sheet (no toggle button needed)");
+        Call(player, "OnTouchHelpClose", player, new RoutedEventArgs());
+        Pump(120);
+        finger = new Finger(root); finger.Down(x, y); finger.Up(x, y); Pump(500);
         Check(!controls.IsHitTestVisible, "single finger tap hides controls without toggling playback");
-        Check(((Button)player.FindName("TouchHelpButton")!).Visibility == Visibility.Visible,
-            "the first real finger reveals the gesture help entry point");
         finger = new Finger(root); finger.Down(x, y); finger.Up(x, y); Pump(500);
         Check(controls.IsHitTestVisible, "single finger tap restores hidden controls");
         var initialVolume = Field<int>(player, "_volumeCache");
@@ -245,10 +250,6 @@ internal static class Program
         Check(Field<int>(player, "_volumeCache") < initialVolume, "real player finger swipe adjusts volume");
         finger = new Finger(root); finger.Down(root.ActualWidth * .2, y); finger.Move(root.ActualWidth * .2, y + 50); finger.Up(root.ActualWidth * .2, y + 50);
         Check(Element<Border>(player, "TouchDimmer").Opacity > 0, "real player left swipe dims only picture overlay");
-        Call(player, "OnTouchHelpClick", player, new RoutedEventArgs());
-        Check(help.Visibility == Visibility.Visible, "gesture help can be opened");
-        Call(player, "OnTouchHelpClose", player, new RoutedEventArgs());
-        Check(help.Visibility == Visibility.Collapsed, "gesture help can be dismissed");
         if (!string.IsNullOrEmpty(videoPath))
         {
             player.PlayLocalFile(Path.GetFullPath(videoPath)); Pump(1800);
