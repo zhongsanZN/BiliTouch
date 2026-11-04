@@ -272,19 +272,23 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <!-- 右栏标题 + 排版切换(用户要求"可以自己切换排版") -->
+                    <!-- 右栏标题(★ 2026-11-04 删掉「动态卡 / 卡片墙」两枚 chip):
+                         用户明确要求"要综合, 不要纯视频, 也不要什么卡片墙" ——
+                         照官方 PC 客户端的「动态」页只留一条**混合时间线**。
+                         排版档位这个开关连同 UseCardWall 一起废弃, 卡片墙列表也从这里删掉。 -->
                     <Grid Grid.Row="0" Margin="8,0,8,10">
                         <TextBlock Text="{Binding SelectionTitle}" FontSize="15"
                                    FontWeight="SemiBold" VerticalAlignment="Center" />
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
-                                    VerticalAlignment="Center">
-                            <Button x:Name="BtnLayoutCards" Style="{StaticResource FeedLayoutChipStyle}"
-                                    Content="动态卡" Click="OnLayoutCardsClick"
-                                    ToolTip="单列动态卡: 头像 + 发布时间 + 视频" />
-                            <Button x:Name="BtnLayoutWall" Style="{StaticResource FeedLayoutChipStyle}"
-                                    Content="卡片墙" Margin="6,0,0,0" Click="OnLayoutWallClick"
-                                    ToolTip="多列卡片墙(一屏铺更多, 但没有头像与发布时间)" />
-                        </StackPanel>
+
+                        <!-- 「N 条新动态」提示条(2026-11-04, 对标官方 PC 客户端):
+                             有新动态时浮在标题右侧, **不打断**当前列表与滚动位置;
+                             点它才把新内容插到最前面。 -->
+                        <Button HorizontalAlignment="Right" VerticalAlignment="Center"
+                                Style="{StaticResource FeedLayoutChipStyle}"
+                                Content="{Binding NewDynamicsText}"
+                                Click="OnApplyNewDynamics"
+                                Visibility="{Binding HasNewDynamics, Converter={StaticResource BoolToVis}}"
+                                ToolTip="点击显示新动态" />
                     </Grid>
 
                     <!-- ===== 关注直播看板(2026-10-31 新增) =====
@@ -415,45 +419,15 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- ===== 混合流(「全部动态」专用, 2026-11-04) =====
-                                 对标官方手机端: 视频/图文/纯文字/转发/专栏/直播混排。
-                                 单 UP 视图不走这里(那一路是"TA 的投稿视频", 只有视频)。 -->
-                            <ItemsControl ItemsSource="{Binding Dynamics}" Margin="4,0,8,0"
-                                          Visibility="{Binding ShowDynamicFeed, Converter={StaticResource BoolToVis}}">
+                            <!-- ===== 混合流(唯一的动态时间线, 2026-11-04) =====
+                                 对标官方 PC 客户端的「动态」页: 视频/图文/纯文字/转发/专栏/直播混排,
+                                 每条卡片带头像、时间、正文、图片、热评、互动行。
+                                 ★ 「全部动态」与「单 UP」都走这一条 —— 单 UP 也是 TA 的动态时间线,
+                                   不是投稿视频列表(用户原话: "要综合, 不要纯视频")。 -->
+                            <ItemsControl ItemsSource="{Binding Dynamics}" Margin="4,0,8,0">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <controls:DynamicFeedCard />
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-
-                            <!-- ===== 两档排版共用同一个 FeedItems, 只切可见性 =====
-                                 ★ 不做"换模板/重建列表": 那会把滚动位置和已生成的容器一起丢掉,
-                                   切一下就跳回顶部。两个 ItemsControl 各自绑自己的可见性最省事 ——
-                                   Collapsed 的那个不参与测量, 也不会生成容器。
-                                 ★ 默认档 = 动态卡(见 SettingsStore.FollowCardWall)。
-                                 ★ 2026-11-04: 这两个列表现在只在**单 UP 视图**下显示
-                                   (全部动态走上面的混合流)。 -->
-                            <ItemsControl ItemsSource="{Binding FeedItems}" Margin="4,0,8,0"
-                                          Visibility="{Binding ShowUpFeed, Converter={StaticResource BoolToVis}}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <controls:DynamicCard />
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-
-                            <!-- 卡片墙(切换档): 复用 VideoCard(点击播放/右键操作/全局屏蔽同首页) -->
-                            <ItemsControl ItemsSource="{Binding FeedItems}" Margin="4,0,0,0"
-                                          Visibility="{Binding ShowUpFeedCardWall, Converter={StaticResource BoolToVis}}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <helpers:CardWallPanel helpers:CardWall.Enable="True" />
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <controls:VideoCard />
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>

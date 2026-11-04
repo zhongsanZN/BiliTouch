@@ -38,9 +38,10 @@ public partial class FollowPage : UserControl
     {
         if (DataContext is FollowViewModel vm)
         {
-            UpdateLayoutChips(vm);
             await vm.InitAsync();
             StartPolling();
+            // 检查有没有新动态(有就浮一条「N 条新动态」, 不打断当前列表)
+            _ = vm.CheckNewDynamicsAsync();
         }
     }
 
@@ -85,27 +86,18 @@ public partial class FollowPage : UserControl
                win.WindowState != WindowState.Minimized;
     }
 
-    // ------------------------------------------------------------ 右栏排版切换
+    // ------------------------------------------------------------ 右栏排版切换(已废弃)
 
-    private void OnLayoutCardsClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is FollowViewModel vm) { vm.UseCardWall = false; UpdateLayoutChips(vm); }
-    }
+    // ★ 2026-11-04 删除「动态卡 / 卡片墙」两枚 chip 与 UpdateLayoutChips:
+    //   用户明确要求"要综合, 不要纯视频, 也不要什么卡片墙", 官方 PC 客户端的动态页
+    //   只有一条混合时间线。排版档位(UseCardWall)不再有 UI 入口, 两个 handler
+    //   与 chip 同步逻辑一并删掉 —— 留着会让人以为还有别的档位可选。
+    //   对应地 FollowViewModel.UseCardWall 仍保留(配置兼容), 但不再参与任何可见性判断。
 
-    private void OnLayoutWallClick(object sender, RoutedEventArgs e)
+    /// <summary>点「N 条新动态」: 把攒下的新动态插到列表最前面</summary>
+    private void OnApplyNewDynamics(object sender, RoutedEventArgs e)
     {
-        if (DataContext is FollowViewModel vm) { vm.UseCardWall = true; UpdateLayoutChips(vm); }
-    }
-
-    /// <summary>
-    /// 同步两枚 chip 的选中态。★ 只在这里写 Tag(与播放页评论排序同一套约定: 字符串 "on"/"off"),
-    /// 分散着改必然出现"两边都亮"或"两边都不亮"。
-    /// </summary>
-    private void UpdateLayoutChips(FollowViewModel vm)
-    {
-        if (BtnLayoutCards == null || BtnLayoutWall == null) return;
-        BtnLayoutCards.Tag = vm.UseCardWall ? "off" : "on";
-        BtnLayoutWall.Tag = vm.UseCardWall ? "on" : "off";
+        if (DataContext is FollowViewModel vm) vm.ApplyNewDynamics();
     }
 
     // ------------------------------------------------------------ 选择

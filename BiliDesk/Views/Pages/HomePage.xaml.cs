@@ -48,6 +48,21 @@ public partial class HomePage : UserControl
             // 构造函数里 RecommendTab.IsChecked=true 触发 ShowTab 时 DataContext 还没赋, EnsureFill
             // 早退了 —— 这里(DataContext 已就绪)补上当前 tab 的分帧填充器, 让首次推荐流也走分帧。
             if (CurrentTabFromVm() is { } cur) EnsureFill(cur);
+
+            // ★★★ 2026-11-04 修"每次滑到直播页都会闪一下"(以及其它非默认 tab):
+            //   原来只有**当前 tab** 在 Loaded 时挂了填充器, 其余 tab 要等用户第一次切过去
+            //   才建 —— 那一刻先量到一屏空内容、再被卡片顶开, 视觉上就是"闪一下"。
+            //   现在启动时就把**所有 tab** 的填充器挂好(每个内部是分帧填, 不会卡启动),
+            //   等用户切过去时列表里已经有内容、有正确高度。
+            //   ★ 数据请求仍是各 tab 自己的 VM 懒加载, 这里只保证"容器与首屏已就绪"。
+            foreach (var t in new[]
+                     {
+                         HomeTabKind.Recommend, HomeTabKind.Popular, HomeTabKind.Ranking,
+                         HomeTabKind.Live, HomeTabKind.Bangumi
+                     })
+            {
+                EnsureFill(t);
+            }
             // 本页可能停在下滑位置被切走再切回来: 「回到顶部」的显隐要按当前偏移重算一次
             UpdateBackToTop(ScrollOf(CurrentTabFromVm() ?? HomeTabKind.Recommend));
             // DataContext 是外面赋进来的, 构造函数里还拿不到 VM, 所以订阅放在这里
@@ -325,6 +340,15 @@ public partial class HomePage : UserControl
     /// </summary>
     private void ShowTab(HomeTabKind tab)
     {
+        // ★★★ 2026-11-04 修"每次滑到直播页都会闪一下":
+        //
+        //   根因: 直播 tab 的可见性是绑 IsLiveTab 的, 第一次切过去那一刻才开始
+        //   挂填充器/建卡片 ⇒ 先量到一屏空内容、再被卡片顶开 ⇒ 视觉上闪一下。
+        //   首页其它 tab 因为启动时就预填了, 所以不闪。
+        //
+        //   修法: 在**启动时**就为直播 tab 也建好填充器预填第一屏, 让它的列表在
+        //   切过去之前就已经有内容、有正确高度。预填只做一次(EnsureFill 内部按 tab 去重)。
+        //   ★ 只预填"首屏", 不会多发几页请求 —— FillFeed 的首页本来就会跑。
         EnsureFill(tab);
         // 切 tab 后「回到顶部」要跟着新列表的滚动位置走(那个 tab 可能本来就停在顶部)
         UpdateBackToTop(ScrollOf(tab));

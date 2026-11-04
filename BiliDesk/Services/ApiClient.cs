@@ -4245,22 +4245,66 @@ public class ApiClient
                 ls.ValueKind == JsonValueKind.Number && ls.GetInt32() == 0)
                 return (false, "主播还没有开播", null, 0, new());
 
-            // 可选档位: g_qn_desc = [{qn, desc}, ...]
+            // 可选档位: 必须从**实际可播的流**里取, 不能用 g_qn_desc。
+            //
+            // ★★★ 2026-11-04 修"直播画质没有按实际可选做, 而是全摆出来":
+            //   `g_qn_desc` 是"这个平台支持的档位全集"(原画/蓝光/超清/高清/流畅…),
+            //   与**本直播间此刻真的在推哪些档**无关 —— 小主播只推 720p, 菜单里却列着
+            //   "原画 4K"。选了那一档只会拿到降级流或直接失败。
+            //   真正可信的是 `playurl_info.playurl.stream[].format[].codec[].accept_qn`:
+            //   每个 codec 节点都带一个 accept_qn 数组, 那就是**这条流实际可切的档位**。
             var options = new List<(int qn, string label)>();
+            var qnLabel = new Dictionary<int, string>();
             if (data.Value.TryGetProperty("playurl_info", out var pi0) &&
                 pi0.ValueKind == JsonValueKind.Object &&
                 pi0.TryGetProperty("playurl", out var pu0) &&
-                pu0.ValueKind == JsonValueKind.Object &&
-                pu0.TryGetProperty("g_qn_desc", out var qd) &&
-                qd.ValueKind == JsonValueKind.Array)
+                pu0.ValueKind == JsonValueKind.Object)
             {
-                foreach (var q in qd.EnumerateArray())
+                // 先收标签(g_qn_desc 只当"qn → 名字"的字典用, 不当可选列表)
+                if (pu0.TryGetProperty("g_qn_desc", out var qd) && qd.ValueKind == JsonValueKind.Array)
                 {
-                    var v = (int)GetLong(q, "qn");
-                    var desc = GetStr(q, "desc");
-                    if (v > 0 && desc.Length > 0) options.Add((v, desc));
+                    foreach (var q in qd.EnumerateArray())
+                    {
+                        var v = (int)GetLong(q, "qn");
+                        var desc = GetStr(q, "desc");
+                        if (v > 0 && desc.Length > 0) qnLabel[v] = desc;
+                    }
+                }
+
+                // 再扫所有 codec 的 accept_qn, 取并集 —— 那才是"实际可选"
+                var seen = new HashSet<int>();
+                if (pu0.TryGetProperty("stream", out var streams) && streams.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var st in streams.EnumerateArray())
+                    {
+                        if (!st.TryGetProperty("format", out var fmts) || fmts.ValueKind != JsonValueKind.Array)
+                            continue;
+                        foreach (var fmt in fmts.EnumerateArray())
+                        {
+                            if (!fmt.TryGetProperty("codec", out var codecs) || codecs.ValueKind != JsonValueKind.Array)
+                                continue;
+                            foreach (var cd in codecs.EnumerateArray())
+                            {
+                                if (!cd.TryGetProperty("accept_qn", out var aq) || aq.ValueKind != JsonValueKind.Array)
+                                    continue;
+                                foreach (var one in aq.EnumerateArray())
+                                {
+                                    if (one.ValueKind != JsonValueKind.Number) continue;
+                                    var v = one.GetInt32();
+                                    if (v <= 0 || !seen.Add(v)) continue;
+                                    options.Add((v, qnLabel.TryGetValue(v, out var nm) ? nm : "清晰度 " + v));
+                                }
+                            }
+                        }
+                    }
                 }
             }
+            // 按档位从高到低排(用户期望"原画在最上面")
+            options = options.OrderByDescending(o => o.qn).ToList();
+
+            // 一个 accept_qn 都没解析出来(接口改版/异常响应) → 退回全集, 至少能切
+            if (options.Count == 0 && qnLabel.Count > 0)
+                options = qnLabel.Select(kv => (kv.Key, kv.Value)).OrderByDescending(o => o.Key).ToList();
 
             var (url, actualQn) = PickLiveUrlEx(data.Value);
             return url == null

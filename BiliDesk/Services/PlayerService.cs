@@ -61,11 +61,25 @@ public class PlayerService
             win.Opacity = 0;          // 全透明: 用户看不见, 但布局/原生窗口照样建出来
             win.ShowInTaskbar = false;
             win.ShowActivated = false;
+            win.Topmost = false;      // ★ 绝不置顶: 否则预热窗口会盖在首页上
             win.Show();
             // 建完立刻藏起来: 留在屏幕上会被 DWM 当成可见窗口持续合成, 白耗 GPU。
             win.Hide();
             win.Opacity = 1;
             win.ShowInTaskbar = true;
+            // ★★★ 2026-11-04 修"刚进首页时播放详情页的 UI 控件直接叠在首页上, 点一下才消失":
+            //
+            //   根因是预热的那个 Show(): 窗口虽然 Opacity=0 且随即 Hide(), 但它在这段间隙里
+            //   已经**完成了一次前台激活**(WPF 在 Show 时会尝试激活, 即使 ShowActivated=false
+            //   也可能因为抢占而短暂置前), 并且它的 WPF 视觉层被 DWM 合成了那一帧 ——
+            //   于是首页上会残留播放器控制栏/右栏的半透明影像, 直到用户点一下触发重绘才消失。
+            //
+            //   修法(两道):
+            //     ① 预热结束把窗口**彻底降权**: 不置顶、不激活、清 Owner;
+            //     ② 立刻把主窗口重新激活一次(见 App.WarmUp 调用点), 把焦点与 Z 序抢回首页。
+            //   这里只做 ①, ② 交给调用方(它拿得到主窗口)。
+            win.Topmost = false;
+            win.Owner = null;
             _window = win;
         }
         catch

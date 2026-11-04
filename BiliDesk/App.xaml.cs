@@ -146,8 +146,25 @@ public partial class App : Application
         //   Show + 起播, 接近官方客户端的"秒出"。
         //   ★ 用 Background 优先级: 首页的首次布局/封面解码优先, 别和启动抢 UI 线程。
         //   ★ 失败静默(见 WarmUp 的 catch): 预热是优化, 不是功能。
+        //
+        // ★★★ 2026-11-04 修"刚进首页时播放器的 UI 控件叠在首页之上, 点一下才消失":
+        //   预热那一次 Show 会让播放器窗口短暂获得前台激活, 首页上就残留它的影像。
+        //   预热**结束后立刻把主窗口重新激活**, 把焦点与 Z 序抢回首页。
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
-            new Action(() => Svc.Player.WarmUp()));
+            new Action(() =>
+            {
+                try
+                {
+                    Svc.Player.WarmUp();
+                    // 把前台还给主窗口(此时预热窗口已 Hide 且不置顶)
+                    if (main.IsVisible)
+                    {
+                        main.Activate();
+                        main.Focus();
+                    }
+                }
+                catch { /* 预热是优化, 任何异常都不影响启动 */ }
+            }));
 
         // 系统托盘: 双击回主界面, 右键可退出(失败只记日志, 不影响启动)
         TrayService.Instance.Initialize();

@@ -1240,6 +1240,22 @@
                                                 Margin="4,0,0,0" Click="OnQualityClick" ToolTip="切换清晰度">
                                             <TextBlock x:Name="QualityText" Text="1080P" Foreground="#F2FFFFFF" />
                                         </Button>
+                                        <!-- 音质标识(2026-11-04): 用户问"到底开没开 Hi-Res", 这里直接写出来。
+                                             只在真的用上无损/杜比时才显示, AAC 档不占位置。
+                                             点它等同于点清晰度按钮(同一个菜单里的「音质」分区)。 -->
+                                        <Button x:Name="BtnAudioBadge" Style="{StaticResource PlayerTextBtn}"
+                                                Margin="4,0,0,0" Click="OnQualityClick"
+                                                Visibility="Collapsed"
+                                                ToolTip="当前音质, 点击可切换">
+                                            <Border Background="#33FF6B9D" CornerRadius="3" Padding="5,1">
+                                                <TextBlock x:Name="AudioBadgeText" Text="Hi-Res"
+                                                           FontSize="10.5" FontWeight="SemiBold" Foreground="#FFFFD9E6" />
+                                            </Border>
+                                        </Button>
+                                        <!-- 直播弹幕连接状态(只在直播时显示): 用户看不到弹幕时靠它定位问题 -->
+                                        <TextBlock x:Name="LiveDanmakuStatus" FontSize="11" Margin="8,0,0,0"
+                                                   VerticalAlignment="Center" Foreground="#99FFFFFF"
+                                                   Visibility="Collapsed" Text="" />
                                         <Popup x:Name="QualityPopup"
                                                Placement="Top" StaysOpen="False" AllowsTransparency="True"
                                                PopupAnimation="Fade">

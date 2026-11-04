@@ -302,6 +302,84 @@ public class FollowViewModel : ObservableObject
         return LoadSelectionAsync(reset: true);
     }
 
+    // ------------------------------------------------------------ 新动态提示(2026-11-04)
+
+    /// <summary>顶部「有 N 条新动态」提示条是否可见</summary>
+    private bool _hasNewDynamics;
+    public bool HasNewDynamics
+    {
+        get => _hasNewDynamics;
+        private set => SetProperty(ref _hasNewDynamics, value);
+    }
+
+    /// <summary>提示条文案(如「3 条新动态」)</summary>
+    private string _newDynamicsText = "";
+    public string NewDynamicsText
+    {
+        get => _newDynamicsText;
+        private set => SetProperty(ref _newDynamicsText, value);
+    }
+
+    /// <summary>
+    /// 检查是否有新动态(2026-11-04)。
+    ///
+    /// 官方 PC 客户端的动态页顶部会浮一条「N 条新动态」, 点一下才把新内容插到最前面 ——
+    /// 不打断用户正在看的滚动位置。这里照做:
+    ///   · 拉第一页, 与本地已显示的**最新一条 id** 比对;
+    ///   · 有更新的就记下条数并显示提示条, **不动列表**;
+    ///   · 用户点提示条才真正刷新(见 ApplyNewDynamics)。
+    ///
+    /// ★ 失败静默: 这是锦上添花, 不该弹错误。
+    /// </summary>
+    public async Task CheckNewDynamicsAsync()
+    {
+        if (!Svc.Session.HasLogin || Dynamics.Count == 0) return;
+        try
+        {
+            var (ok, _, items, _, _) = await Svc.Api.GetDynamicFeedFullAsync(null);
+            if (!ok || items == null || items.Count == 0) return;
+
+            var known = _seenDynamicIds;
+            var fresh = items.Where(d => d.Id.Length > 0 && !known.Contains(d.Id)).ToList();
+            if (fresh.Count == 0)
+            {
+                HasNewDynamics = false;
+                return;
+            }
+            _pendingNewDynamics = fresh;
+            NewDynamicsText = fresh.Count >= 20 ? "有新的动态" : $"{fresh.Count} 条新动态";
+            HasNewDynamics = true;
+        }
+        catch { /* 静默 */ }
+    }
+
+    /// <summary>待插入的新动态(用户点提示条后才真正合入列表)</summary>
+    private List<DynamicItem>? _pendingNewDynamics;
+
+    /// <summary>
+    /// 用户点了「N 条新动态」: 把待插入的条目放到列表最前面, 并隐藏提示条。
+    ///
+    /// ★ 为什么"先攒后插"而不是直接刷新列表: 直接刷新会把用户正在看的那几条顶走,
+    ///   滚动位置也会跳。官方也是"点了才插"。
+    /// </summary>
+    public void ApplyNewDynamics()
+    {
+        if (_pendingNewDynamics is { Count: > 0 } fresh)
+        {
+            // 逆序插入, 保证接口给的顺序(新的在前)最终仍然成立
+            for (var i = fresh.Count - 1; i >= 0; i--)
+            {
+                var d = fresh[i];
+                if (d.Id.Length > 0 && !_seenDynamicIds.Add(d.Id)) continue;
+                Dynamics.Insert(0, d);
+            }
+            // 新插入的也可能带图/带视频, 补拉它们的评论
+            _ = LoadDynamicCommentsAsync(fresh);
+        }
+        _pendingNewDynamics = null;
+        HasNewDynamics = false;
+    }
+
     public async Task RefreshAsync()
     {
         Loading = true;

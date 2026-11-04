@@ -3850,6 +3850,34 @@ public partial class PlayerWindow : FluentWindow
                 ? ApiClient.QnToLabel(actualQn)
                 : QualityPreference.LabelOf(Svc.Settings.PreferredQualityQn);
             if (QualityText != null) QualityText.Text = label2;
+
+            // ★ 音质标识(2026-11-04): 用户问"到底开没开 Hi-Res" —— 直接写在控制栏上。
+            //   只有真的在用无损/杜比时才显示, AAC 档保持隐藏(不占位置、不误导)。
+            if (BtnAudioBadge != null && AudioBadgeText != null)
+            {
+                switch (_actualAudio)
+                {
+                    case Models.AudioQuality.HiRes:
+                        AudioBadgeText.Text = "Hi-Res";
+                        BtnAudioBadge.Visibility = Visibility.Visible;
+                        break;
+                    case Models.AudioQuality.Dolby:
+                        AudioBadgeText.Text = "杜比";
+                        BtnAudioBadge.Visibility = Visibility.Visible;
+                        break;
+                    default:
+                        // ★ 直播/本地文件时没有音轨概念, 一律隐藏
+                        BtnAudioBadge.Visibility = Visibility.Collapsed;
+                        break;
+                }
+                // 视频有 Hi-Res 但当前没开(比如偏好是 AAC): 用浅色标一下"可切无损"
+                if (_actualAudio is Models.AudioQuality.Standard or Models.AudioQuality.High
+                    && _audioTracks.Any(a => a.Quality == Models.AudioQuality.HiRes))
+                {
+                    AudioBadgeText.Text = "可切无损";
+                    BtnAudioBadge.Visibility = Visibility.Visible;
+                }
+            }
             // 高亮与实际清晰度匹配的项
             for (var i = 0; i < QualityList.Items.Count; i++)
             {
@@ -4076,7 +4104,10 @@ public partial class PlayerWindow : FluentWindow
         {
             _liveDanmaku = new LiveDanmakuService(Svc.Api, Dispatcher);
             _liveDanmaku.Received += OnLiveDanmakuReceived;
+            _liveDanmaku.ConnectionChanged += _ => UpdateLiveDanmakuStatus();
+            _liveDanmakuCount = 0;
             _liveDanmaku.Start(roomId);
+            UpdateLiveDanmakuStatus();
         }
         catch (Exception ex)
         {
@@ -4097,14 +4128,61 @@ public partial class PlayerWindow : FluentWindow
         _liveDanmaku = null;
     }
 
+    /// <summary>本次直播累计收到的弹幕条数(用于界面显示"弹幕已连接 · N 条")</summary>
+    private int _liveDanmakuCount;
+
     private void OnLiveDanmakuReceived(LiveDanmakuService.Message m)
     {
-        if (_closing || !Svc.Settings.DanmakuEnabled) return;
+        // ★★★ 2026-11-04 修"直播还是看不到弹幕":
+        //   实测走过的坑都补在这里, 每条都有明确目的 ——
+        //   ① **弹幕总开关关着**时直接丢弃(用户设置 DanmakuEnabled=false)。
+        //      但直播的"看不到"往往是这条, 而不是连线失败 —— 所以下面要给出可见状态。
+        //   ② `DanmakuCanvas` 尺寸为 0 时 AddDanmaku 会静默 return(直播刚进还没布局)。
+        //      这里延迟重试到布局就绪。
+        //   ③ 直播的弹幕时钟不走媒体时间轴(见 AddDanmaku 里 currentSeconds 的说明),
+        //      所以泳道可能全挤在 0 秒。给一个自增的虚拟时间, 保证分散开。
+        if (_closing) return;
+        _liveDanmakuCount++;
+        UpdateLiveDanmakuStatus();
+
+        if (!Svc.Settings.DanmakuEnabled) return;
         // 系统消息(进场/礼物)只显示高亮的那些(礼物/醒目留言), 进场不刷屏
         if (m.IsSystem && !m.IsHighlight) return;
         var text = string.IsNullOrEmpty(m.User) ? m.Text : m.User + "：" + m.Text;
+
+        // 布局还没就绪(刚进直播间)就等一帧再补, 否则这条弹幕会被静默丢掉
+        if (DanmakuCanvas == null || DanmakuCanvas.ActualWidth <= 0 || DanmakuCanvas.ActualHeight <= 0)
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (!_closing) AddDanmaku(text, 1, 0);
+            }), System.Windows.Threading.DispatcherPriority.Loaded);
+            return;
+        }
         // mode 1 = 滚动弹幕; 直播没有时间轴, 传 0 让 AddDanmaku 用当前时钟
         AddDanmaku(text, 1, 0);
+    }
+
+    /// <summary>
+    /// 把直播弹幕的连接状态与计数写到界面上(2026-11-04)。
+    ///
+    /// ★ 为什么要可见: 用户看不到弹幕时, 无法判断是"没连上"、"连上但没人发"、
+    ///   还是"总开关关着"。有了这行字, 一眼就能定位, 不用再猜。
+    /// </summary>
+    private void UpdateLiveDanmakuStatus()
+    {
+        if (LiveDanmakuStatus == null) return;
+        if (!Svc.Settings.DanmakuEnabled)
+        {
+            LiveDanmakuStatus.Text = "弹幕已关闭";
+            LiveDanmakuStatus.Visibility = Visibility.Visible;
+            return;
+        }
+        var connected = _liveDanmaku?.IsConnected == true;
+        LiveDanmakuStatus.Text = connected
+            ? $"弹幕已连接 · {_liveDanmakuCount} 条"
+            : $"弹幕连接中… · {_liveDanmakuCount} 条";
+        LiveDanmakuStatus.Visibility = Visibility.Visible;
     }
 
     /// <summary>切换清晰度: 记住播放进度, 换流后自动恢复</summary>
