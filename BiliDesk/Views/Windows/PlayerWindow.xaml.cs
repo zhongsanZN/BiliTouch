@@ -828,8 +828,17 @@ public partial class PlayerWindow : FluentWindow
     /// <summary>点相关视频卡片: 换成那个视频</summary>
     public RelayCommand PlayRelatedCommand { get; }
 
-    /// <summary>简介是否处于"展开"态。默认 false = 折叠(短简介看不出来, 长简介默认收起)。</summary>
-    private bool _descExpanded;
+    /// <summary>
+    /// 简介是否处于"展开"态。
+    ///
+    /// ★★★ 2026-11-04 用户要求: **默认展开**。
+    ///   原来是默认折叠(为了给下面的相关视频腾位置), 但这样一来:
+    ///     · 用户进详情页第一眼看到的是被截断的简介, 还得点一下"展开简介";
+    ///     · 而合集现在被挪到了相关视频**之上**(见 XAML 里那段说明), 简介下方不再紧贴
+    ///       一长串推荐 —— "腾位置"这个理由本身已经不成立了。
+    ///   所以默认 true; 想看推荐就自己收起, 想看全文不用再点。
+    /// </summary>
+    private bool _descExpanded = true;
 
     /// <summary>相关视频的加载代次: 换片后作废上一片的在飞请求</summary>
     private int _relatedGen;
@@ -883,8 +892,10 @@ public partial class PlayerWindow : FluentWindow
         // +1 容差: 亚像素误差会让"刚好 6 行"被误判成没超, 按钮该出时不出。
         var overflows = needed > DescCollapsedHeight + 1;
         BtnDescFold.Visibility = overflows ? Visibility.Visible : Visibility.Collapsed;
-        // 短简介没有"展开"可言, 状态复位, 否则下次换片会带着一个无意义的展开态
-        if (!overflows) _descExpanded = false;
+        // 短简介没有"展开"可言 —— 保持展开态即可, 按钮隐藏。
+        // ★ 不要在这里把它设成 false: 默认就是展开, 设 false 会让 ApplyDescFoldText
+        //   把文案写成"展开简介", 而实际内容是全部显示的, 自相矛盾。
+        _ = overflows;
 
         ApplyDescFoldText();
     }
@@ -1068,6 +1079,12 @@ public partial class PlayerWindow : FluentWindow
             PubDateText.Text = "直播中";
             UpNameText.Text = "直播间 " + roomId;
             UpDescText.Text = "B 站直播";
+            // ★ 2026-11-04 用户要求: 在线观看人数放在**上面那条 bar**(与稍后再看/听视频同排)。
+            //   直播时上方那颗「稍后再看」没有意义(直播不能"稍后看"), 正好换成人数,
+            //   位置固定、进直播就能看到, 不必去简介里翻。
+            if (LiveOnlineBox != null) LiveOnlineBox.Visibility = Visibility.Visible;
+            if (LiveOnlineText != null) LiveOnlineText.Text = "--";
+            if (BtnWatchLaterTop != null) BtnWatchLaterTop.Visibility = Visibility.Collapsed;
             DescText.Text = "这是一个直播间。直播没有进度条与历史记录, 互动按钮在直播中不可用。";
             // 直播没有"相关视频"(接口只认视频稿件 bvid), 直接把整块藏掉,
             // 否则会停在上一片残留的推荐列表上 —— 那是**别的视频**的推荐。
@@ -1222,6 +1239,10 @@ public partial class PlayerWindow : FluentWindow
         CancelVideoTouch();
         // 换片: 上一个直播间的 WebSocket 必须断开(新片不是直播时更不能留着)
         StopLiveDanmaku();
+        // ★ 2026-11-04: 顶部 bar 的「在线人数 / 稍后再看」按"是不是直播"复位。
+        //   直播路径随后会把这里再翻过来(见 LoadLiveAsync), 所以这里统一先把非直播态摆好。
+        if (LiveOnlineBox != null) LiveOnlineBox.Visibility = Visibility.Collapsed;
+        if (BtnWatchLaterTop != null) BtnWatchLaterTop.Visibility = Visibility.Visible;
         TouchHelp.Visibility = Visibility.Collapsed;
         // A new video starts at the normal picture brightness; the old dim must not leak over.
         _touchBrightness = 1;
@@ -2131,9 +2152,10 @@ public partial class PlayerWindow : FluentWindow
         UpNameText.Text = string.IsNullOrEmpty(detail.Owner) ? "UP 主" : detail.Owner;
         UpDescText.Text = "UP 主 mid: " + detail.OwnerMid;
         DescText.Text = string.IsNullOrEmpty(detail.Desc) ? "这个 UP 主很懒, 什么都没写~" : detail.Desc;
-        // ★ 换片 ⇒ 折叠态必须复位: 否则在 A 片点开简介, 换到 B 片时它是展开的,
-        //   而 B 片简介很短 —— 展开按钮又不显示, 用户会以为"按钮坏了"。
-        _descExpanded = false;
+        // ★ 换片 ⇒ 折叠态复位到**默认值(展开)**: 与构造时的默认一致。
+        //   不写成 false 是因为用户要求"简介默认展开" —— 换片后也应保持一致,
+        //   否则"第一条展开、第二条收起"会让人以为状态丢了。
+        _descExpanded = true;
         // 宽度可能还没变(信息栏固定 400px), SizeChanged 这次不会触发, 得主动判一次
         UpdateDescFold();
 
@@ -6816,6 +6838,20 @@ public partial class PlayerWindow : FluentWindow
         {
             LaterLabelOff.Opacity = _isInWatchLater ? 0 : 1;
             LaterLabelOn.Opacity = _isInWatchLater ? 1 : 0;
+        }
+        // ★ 2026-11-04: 顶部 bar 那颗「稍后再看」也要同步(用户要求它和「听视频」放一起)。
+        //   两处是**同一个状态**的两个视图, 必须一起刷 —— 否则点完上面那颗、下面那颗不亮,
+        //   用户会以为没生效又点一次, 结果把它取消了。
+        if (LaterTopLabelOff != null && LaterTopLabelOn != null)
+        {
+            LaterTopLabelOff.Opacity = _isInWatchLater ? 0 : 1;
+            LaterTopLabelOn.Opacity = _isInWatchLater ? 1 : 0;
+        }
+        if (LaterTopIcon != null)
+        {
+            LaterTopIcon.Stroke = _isInWatchLater
+                ? new SolidColorBrush(ActionSaveColor)
+                : (Brush)(TryFindResource("TextSecondaryBrush") ?? Brushes.Gray);
         }
         // 未点过的三个按钮也要走一次: 换片后要把上一次残留的色相清回灰。
         // ★ 下载的绿色终态由 _cacheDownloaded 决定(它只在换片时复位, 见 ResetForNewMedia)——

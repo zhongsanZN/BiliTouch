@@ -771,6 +771,45 @@
                            两个 TextBlock 叠在同一格里, 容器宽度自动取两者最大值, 切换只做透明度过渡。
                          ★ 直播 / 本地文件不给这个入口(见 UpdateListenButtonState): 直播是连续流、
                            本地文件没有独立音轨, 点了只会失败。 -->
+                    <!-- ★★★ 2026-11-04 用户要求: 「稍后再看」和「听视频」一样放在**上面这条 bar**,
+                         在线观看人数也放这里。理由: 它们都是"这个视频的即时状态/轻动作",
+                         混在简介下方的两行操作区里既不好找、又把那块挤得很满。 -->
+                    <Button x:Name="BtnWatchLaterTop" Style="{StaticResource ListenGhostBtn}"
+                            Margin="0,0,8,0" Padding="12,0"
+                            Click="OnWatchLaterClick" ToolTip="加入稍后再看"
+                            shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Grid Width="18" Height="18" VerticalAlignment="Center">
+                                <Path x:Name="LaterTopIcon" Width="16" Height="16" Stretch="Uniform"
+                                      HorizontalAlignment="Center"
+                                      Fill="Transparent"
+                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                      StrokeThickness="1.8" StrokeLineJoin="Round"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      Data="M3.4,12 A8.6,8.6 0 1 1 20.6,12 A8.6,8.6 0 1 1 3.4,12 Z M12,7.2 L12,12 L15.1,14" />
+                            </Grid>
+                            <!-- 双层叠放: 与简介区那颗「稍后再看 / 已添加」同步切换(见 UpdateWatchLaterVisual) -->
+                            <Grid Margin="6,0,0,0" VerticalAlignment="Center">
+                                <TextBlock x:Name="LaterTopLabelOff" Text="稍后再看" FontSize="12" />
+                                <TextBlock x:Name="LaterTopLabelOn" Text="已添加" FontSize="12" Opacity="0" />
+                            </Grid>
+                        </StackPanel>
+                    </Button>
+                    <!-- 在线观看人数(仅直播显示): 与「稍后再看」同一条 bar, 用户要求 -->
+                    <Border x:Name="LiveOnlineBox" Margin="0,0,8,0" Padding="10,5"
+                            VerticalAlignment="Center" CornerRadius="12"
+                            Background="{DynamicResource ControlFillHoverBrush}"
+                            Visibility="Collapsed"
+                            shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="&#xE7E8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                       FontSize="12" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource AccentTextBrush}" />
+                            <TextBlock x:Name="LiveOnlineText" Text="--" FontSize="12" Margin="6,0,0,0"
+                                       VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextPrimaryBrush}" />
+                        </StackPanel>
+                    </Border>
                     <Button x:Name="BtnListen" Style="{StaticResource ListenGhostBtn}"
                             Margin="0,0,8,0"
                             Click="OnListenToggleClick"
@@ -1444,31 +1483,24 @@
                     <ScrollViewer x:Name="InfoScroll" VerticalScrollBarVisibility="Auto"
                                   ScrollChanged="OnInfoScrollChanged">
                         <StackPanel Margin="20,18,20,24">
-                            <!-- 标题 + 数据 -->
-                            <TextBlock x:Name="VideoTitleText" FontSize="17" FontWeight="SemiBold"
-                                       TextWrapping="Wrap" Text="视频标题" LineHeight="24" />
-                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                <TextBlock x:Name="ViewCountText" Style="{StaticResource MetaTextStyle}" Text="--" />
-                                <TextBlock Text=" 播放" Style="{StaticResource MetaTextStyle}" />
-                                <TextBlock Text=" · " Style="{StaticResource MetaTextStyle}" Margin="6,0" />
-                                <TextBlock x:Name="DanmakuCountText" Style="{StaticResource MetaTextStyle}" Text="--" />
-                                <TextBlock Text=" 弹幕" Style="{StaticResource MetaTextStyle}" />
-                                <TextBlock Text=" · " Style="{StaticResource MetaTextStyle}" Margin="6,0" />
-                                <TextBlock x:Name="PubDateText" Style="{StaticResource MetaTextStyle}" Text="--" />
-                            </StackPanel>
-                            <!-- UP 主卡片 -->
-                            <Border Background="{DynamicResource CardBackgroundBrush}"
-                                    BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
-                                    CornerRadius="10" Padding="14,12" Margin="0,16,0,0">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <Border x:Name="UpAvatarBox" Grid.Column="0" Width="40" Height="40"
-                                            CornerRadius="20" Background="{DynamicResource AccentSoftFillBrush}"
+                            <!-- ★★★ 2026-11-04 用户要求: **UP 主在视频标题之上, 位于右上角**。
+                                 原来是"标题 → 数据 → UP 主卡片"的竖排, UP 主离标题隔着一整块数据行,
+                                 视觉上像"另一个模块"。官方 PC 客户端是右上角一个紧凑的作者条,
+                                 与标题同处一屏、一眼能对上"谁做的这条视频"。
+                                 ★ 数据行(播放/弹幕/日期)保持在标题下方 —— 它属于标题的注脚。 -->
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <!-- 右上角: UP 主(头像 + 名字 + 关注), 紧凑横排 -->
+                                <StackPanel Grid.Row="0" Orientation="Horizontal"
+                                            HorizontalAlignment="Right" Margin="0,0,0,10">
+                                    <Border x:Name="UpAvatarBox" Width="28" Height="28" CornerRadius="14"
+                                            Background="{DynamicResource AccentSoftFillBrush}"
                                             Cursor="Hand" ToolTip="进入 UP 主主页"
+                                            VerticalAlignment="Center"
                                             MouseLeftButtonUp="OnUpAvatarClick">
                                         <Border.ContextMenu>
                                             <ContextMenu>
@@ -1487,32 +1519,43 @@
                                             </ContextMenu>
                                         </Border.ContextMenu>
                                         <TextBlock x:Name="UpAvatarFallback" Text="&#xE77B;"
-                                                   FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="20"
+                                                   FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14"
                                                    Foreground="{DynamicResource AccentTextBrush}"
                                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                                     </Border>
-                                    <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
-                                        <TextBlock x:Name="UpNameText" FontSize="14" FontWeight="SemiBold" Text="UP 主"
+                                    <StackPanel Margin="8,0,0,0" VerticalAlignment="Center">
+                                        <TextBlock x:Name="UpNameText" FontSize="12.5" FontWeight="SemiBold" Text="UP 主"
                                                    Cursor="Hand" ToolTip="进入 UP 主主页"
                                                    MouseLeftButtonUp="OnUpAvatarClick" Background="Transparent" />
-                                        <TextBlock x:Name="UpDescText" Style="{StaticResource MetaTextStyle}" Text="" Margin="0,2,0,0"
+                                        <TextBlock x:Name="UpDescText" Style="{StaticResource MetaTextStyle}" Text="" Margin="0,1,0,0"
+                                                   FontSize="10.5" MaxWidth="150"
                                                    TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
-                                    <Button Grid.Column="2" x:Name="BtnFollow" Style="{StaticResource AccentButtonStyle}"
-                                            Click="OnFollowClick" Padding="12,5" VerticalAlignment="Center"
-                                            ToolTip="关注/取消关注">
+                                    <Button x:Name="BtnFollow" Style="{StaticResource AccentButtonStyle}"
+                                            Click="OnFollowClick" Padding="9,3" Margin="8,0,0,0"
+                                            VerticalAlignment="Center" ToolTip="关注/取消关注">
                                         <StackPanel Orientation="Horizontal">
-                                            <!-- 爱心图标(矢量, 不依赖字体)。
-                                                 Fill 用 DynamicResource 跟随强调色前景色, 不要写死 White:
-                                                 强调色偏浅时白心会糊在浅底上(和文字一样的坑) -->
-                                            <Path Width="12" Height="12" Stretch="Uniform"
+                                            <Path Width="10" Height="10" Stretch="Uniform"
                                                   Fill="{DynamicResource TextOnAccentBrush}"
                                                   Data="M 12,21 L 10.55,19.65 C 5.4,15.04 2,12.05 2,8.5 C 2,5.42 4.42,3 7.5,3 C 9.24,3 10.91,3.81 12,5.08 C 13.09,3.81 14.76,3 16.5,3 C 19.58,3 22,5.42 22,8.5 C 22,12.05 18.6,15.04 13.45,19.65 Z" />
-                                            <TextBlock x:Name="FollowLabel" Text="+ 关注" FontSize="12" Margin="5,0,0,0" />
+                                            <TextBlock x:Name="FollowLabel" Text="+ 关注" FontSize="11" Margin="4,0,0,0" />
                                         </StackPanel>
                                     </Button>
-                                </Grid>
-                            </Border>
+                                </StackPanel>
+
+                                <!-- 标题(在 UP 主下方) -->
+                                <TextBlock Grid.Row="1" x:Name="VideoTitleText" FontSize="17" FontWeight="SemiBold"
+                                           TextWrapping="Wrap" Text="视频标题" LineHeight="24" />
+                            </Grid>
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                <TextBlock x:Name="ViewCountText" Style="{StaticResource MetaTextStyle}" Text="--" />
+                                <TextBlock Text=" 播放" Style="{StaticResource MetaTextStyle}" />
+                                <TextBlock Text=" · " Style="{StaticResource MetaTextStyle}" Margin="6,0" />
+                                <TextBlock x:Name="DanmakuCountText" Style="{StaticResource MetaTextStyle}" Text="--" />
+                                <TextBlock Text=" 弹幕" Style="{StaticResource MetaTextStyle}" />
+                                <TextBlock Text=" · " Style="{StaticResource MetaTextStyle}" Margin="6,0" />
+                                <TextBlock x:Name="PubDateText" Style="{StaticResource MetaTextStyle}" Text="--" />
+                            </StackPanel>
                             <!-- 操作栏(2026-10-06 按设计稿「播放页_v4」重构): "图标 + 数量/文字"一行。
                                  计数来自 view 接口的 stat; 分享 = 复制链接; 离线缓存复用同一条下载链路。
 
@@ -1906,170 +1949,12 @@
                                         </TextBlock>
                                     </Button>
 
-                                    <!-- ============ 相关视频(2026-10-12 新增) ============
-                                         ★ 位置在简介**下方**(用户指定), 所以上面那段折叠
-                                           是为它腾位置的 —— 两者是配套改动, 不是两件独立的事。
-                                         ★ 与简介同属 IntroPanel: 切到「评论」tab 时整块一起隐藏
-                                           (相关视频是"这个视频的补充信息", 不是评论的一部分),
-                                           放在 IntroPanel 里就不必再单独写一遍可见性联动。
-                                         ★ 一行一个视频(用户指定): 卡片横排会挤在 400px 的信息栏里,
-                                           标题会被压成两三行, 反而看不清"这是哪个视频"。 -->
-                                    <StackPanel x:Name="RelatedPanel" Visibility="Collapsed" Margin="0,16,0,0">
-                                        <Border BorderBrush="{DynamicResource DividerBrush}"
-                                                BorderThickness="0,1,0,0" Padding="0,12,0,0">
-                                            <DockPanel>
-                                                <StackPanel DockPanel.Dock="Right"
-                                                            Orientation="Horizontal" VerticalAlignment="Center">
-                                                    <controls:LoadingRing x:Name="RelatedLoadingRing"
-                                                                          Width="12" Height="12"
-                                                                          Visibility="Collapsed" />
-                                                    <TextBlock x:Name="RelatedHint" FontSize="11"
-                                                               Style="{StaticResource MetaTextStyle}"
-                                                               Margin="6,0,0,0" Text="" />
-                                                </StackPanel>
-                                                <TextBlock Text="相关视频" FontSize="13" FontWeight="SemiBold"
-                                                           Style="{StaticResource MetaTextStyle}"
-                                                           Foreground="{DynamicResource TextPrimaryBrush}" />
-                                            </DockPanel>
-                                        </Border>
-
-                                        <!-- ★ 用 ItemsControl 而不是 ListBox: 这里**不需要选中态**
-                                             (不像合集要标"正在播的这一集"), 点击走按钮事件即可。
-                                             ListBox 那套 ItemContainerStyle 模板在这里纯属负担。 -->
-                                        <ItemsControl x:Name="RelatedList" Margin="0,10,0,0">
-                                            <ItemsControl.ItemContainerStyle>
-                                                <Style TargetType="ContentPresenter">
-                                                    <Setter Property="Margin" Value="0,0,0,8" />
-                                                </Style>
-                                            </ItemsControl.ItemContainerStyle>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <!-- ★ 用 Button 而不是 ListBoxItem/Border:
-                                                         点整行就换片, 这是这个列表唯一的交互,
-                                                         包一层 Button 才有悬停反馈与手型光标。
-                                                         ★ CommandParameter 传 bvid: 一次只能带一个值,
-                                                           而模板里拿得到的是整条 item, 拆不出"点了哪条"。
-                                                         ★ Command 是 Execute, 不用 Click 事件:
-                                                           Click 事件在 DataTemplate 里不好绑到父窗口,
-                                                           绑定相对源要多写一层 ElementName。 -->
-                                                    <!-- ★★ 命令必须绑**属性本身**, 不能写成
-                                                         `{Binding DataContext.PlayRelatedCommand, RelativeSource=...}` ——
-                                                         这是本轮修掉的"点不动"的真根因(2026-10-12):
-                                                         DataContext 绑到的是 `PlayerWindow` 这个**框架元素**,
-                                                         而框架元素的 DataContext 默认为 **null**,
-                                                         于是 `DataContext.PlayRelatedCommand` 一路走空,
-                                                         按钮拿到的 Command 是 null —— 命中测试全过(整行都能点到、
-                                                         光标也是手型), 点下去**什么都不发生**, 与"没绑命令"完全同形。
-                                                         ★ 正确写法: RelativeSource 找到窗口之后, 路径**直接从属性名起**
-                                                           (`PlayRelatedCommand`), 不经过 DataContext 那一层。
-                                                           —— 顺带也让这段不依赖"窗口有没有设 DataContext"这件事。 -->
-                                                    <Button Command="{Binding PlayRelatedCommand,
-                                                              RelativeSource={RelativeSource AncestorType=Window}}"
-                                                            CommandParameter="{Binding Bvid}"
-                                                            HorizontalContentAlignment="Stretch"
-                                                            Cursor="Hand" Focusable="False"
-                                                            Background="Transparent" BorderThickness="0"
-                                                            Padding="0">
-                                                        <Button.Template>
-                                                            <ControlTemplate TargetType="Button">
-                                                                <Border x:Name="Bd" CornerRadius="8"
-                                                                        Background="Transparent" Padding="6,6">
-                                                                    <ContentPresenter />
-                                                                </Border>
-                                                                <ControlTemplate.Triggers>
-                                                                    <Trigger Property="IsMouseOver" Value="True">
-                                                                        <Setter TargetName="Bd" Property="Background"
-                                                                                Value="{DynamicResource ControlFillHoverBrush}" />
-                                                                    </Trigger>
-                                                                </ControlTemplate.Triggers>
-                                                            </ControlTemplate>
-                                                        </Button.Template>
-                                                        <!-- 卡片: 16:9 封面 + 标题 + UP 主 + 播放/弹幕。
-                                                             ★★ 封面必须是**三层叠放**(封面 Border / 时长角标 / 无)而不是
-                                                               两个同尺寸 Border 并排 —— 这是本轮修掉的一个真 bug:
-                                                               我给时长角标也写了 Width=96 Height=54,
-                                                               而 DurationBadgeBackgroundBrush 是 **65% 黑**,
-                                                               于是那层半透明黑铺满了整张封面, 画面明显发暗。
-                                                               角标必须"有多大底就多大底", 由 Padding 撑出尺寸。 -->
-                                                        <Grid>
-                                                            <Grid.ColumnDefinitions>
-                                                                <ColumnDefinition Width="Auto" />
-                                                                <ColumnDefinition Width="*" />
-                                                            </Grid.ColumnDefinitions>
-                                                            <Grid Grid.Column="0" Width="96" Height="54">
-                                                                <!-- 封面: 圆角必须写在**它自己**身上 —— Border 的圆角只裁自己的
-                                                                     背景/边框, 不裁子元素; 图走 Cover 附加属性设在 Background 上,
-                                                                     角标是子元素, 不圆角就会把四角顶成直角(同 VideoCard 的说明)。 -->
-                                                                <Border CornerRadius="6" ClipToBounds="True"
-                                                                        Background="{DynamicResource PlaceholderBrush}"
-                                                                        behaviors:Cover.Source="{Binding Cover}" />
-                                                                <!-- 时长压在封面右下角(与全站卡片一致)。
-                                                                     ★ 不写 Width/Height: 尺寸由 Content + Padding 决定,
-                                                                       否则半透明黑底会铺满整个封面格子。 -->
-                                                                <Border HorizontalAlignment="Right"
-                                                                        VerticalAlignment="Bottom" Margin="0,0,4,4"
-                                                                        CornerRadius="3" Padding="4,1"
-                                                                        Background="{DynamicResource DurationBadgeBackgroundBrush}"
-                                                                        Visibility="{Binding Duration, Converter={StaticResource StrToVis}}">
-                                                                    <TextBlock Text="{Binding Duration}" FontSize="10"
-                                                                               Foreground="White" />
-                                                                </Border>
-                                                            </Grid>
-                                                            <StackPanel Grid.Column="1" Margin="10,0,0,0"
-                                                                        VerticalAlignment="Center">
-                                                                <TextBlock Text="{Binding Title}" FontSize="12.5"
-                                                                           TextWrapping="Wrap" MaxHeight="34"
-                                                                           TextTrimming="CharacterEllipsis"
-                                                                           Foreground="{DynamicResource TextPrimaryBrush}" />
-                                                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                                                    <!-- UP 主名前的 UP 角标: 与 B 站卡片一致的一眼辨识 -->
-                                                                    <TextBlock Text="UP" FontSize="9.5"
-                                                                               Margin="0,0,4,0"
-                                                                               VerticalAlignment="Center"
-                                                                               Foreground="{DynamicResource TextTertiaryBrush}" />
-                                                                    <TextBlock Text="{Binding Author}" FontSize="11"
-                                                                               MaxWidth="120"
-                                                                               TextTrimming="CharacterEllipsis"
-                                                                               Foreground="{DynamicResource TextSecondaryBrush}" />
-                                                                    <TextBlock Text=" · " FontSize="11" Margin="3,0"
-                                                                               Visibility="{Binding ViewCountText, Converter={StaticResource StrToVis}}"
-                                                                               Foreground="{DynamicResource TextTertiaryBrush}" />
-                                                                    <TextBlock Text="{Binding ViewCountText}" FontSize="11"
-                                                                               Foreground="{DynamicResource TextTertiaryBrush}" />
-                                                                    <TextBlock Text=" · " FontSize="11" Margin="3,0"
-                                                                               Visibility="{Binding DanmakuCountText, Converter={StaticResource StrToVis}}"
-                                                                               Foreground="{DynamicResource TextTertiaryBrush}" />
-                                                                    <TextBlock Text="{Binding DanmakuCountText}" FontSize="11"
-                                                                               Foreground="{DynamicResource TextTertiaryBrush}" />
-                                                                </StackPanel>
-                                                            </StackPanel>
-                                                        </Grid>
-                                                    </Button>
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                    </StackPanel>
-                    <!-- ============ 合集面板(点 tab 行右侧的「合集」滑出, 2026-10-02 新增) ============
-                                         ★ 为什么是"盖在信息栏上的浮层"而不是"信息栏里的第四个 tab":
-                                           合集列表和简介/评论是**互斥**的内容, 走 tab 要动 GroupName=ContentTab 那套结构,
-                                           还会让"合集"这一个动作入口获得一个自己的持久选中态(点了普通视频之后那个 tab
-                                           还亮着, 但面板是空的); 浮层则天然"跟着当前视频走", 换片清空即可。
-                                         ★ 用 Grid 而不是 Popup: Popup 是独立 HWND, 会盖在 VideoView 那个 airspace 之上,
-                                           窗口缩放/全屏切换时两者位置容易错开; 这里只需要盖住右侧 400px, 同窗口内最稳。
-                                         IsHitTestVisible 靠 Visibility 控制: 收起时整棵树既不渲染也不参与命中测试。
-                                         ★★★ 底色必须**不透明** —— 这是浮层, 底下就是简介/评论的内容。
-                                           ★★ 2026-10-05 修"亚克力下合集页背景几乎透明"(用户截图): 这个绑定原先写的是
-                                             FloatingFillBrush, 注释也假定它**永远不透明**(它现在是 #E8EAED/#2D2D2D 实色)。
-                                             但 ThemeService.ApplyAcrylicSurfaces 为了让**右下角工具列**也有亚克力质感,
-                                             在亚克力开启时把这个**全局共享键**覆盖成了 70% 半透明(#B3ECEDEF)。
-                                             FloatingFillBrush 不止工具列在用 —— 合集面板整块因此被改成半透明, 压在简介/
-                                             评论内容上, 文字整片透上来糊成一片, 正是上面这段注释当年要防的现象。
-                                             ★ 真凶在颜色覆盖层, 不在绑定本身: 所以"把 FloatingFillBrush 调不透明"
-                                               那种改法是治不好的 —— 工具列要半透明正是它自己的需求。
-                                           ★ 正确解法是**另立一个专用键**: 工具列浮在卡片封面上, 透出壁纸才叫亚克力质感;
-                                             合集面板底下是内容, 必须实。两者需求相反, 不能共用一个键。
-                                             OverlaySurfaceBrush 恒为不透明, 且刻意**不进** ApplyAcrylicSurfaces 的
-                                             覆盖清单(见 Colors.Light.xaml / Colors.Dark.xaml)。 -->
+                                    <!-- ★★★ 2026-11-04 用户要求: **合集放在相关视频之上**。
+                                         理由(用户原话): "符合观众兴趣权重, 且可以避免现在存在的,
+                                         键鼠操作用户在从评论点回简介时, 直接跳转到底部的问题" ——
+                                         合集本来就在简介面板里、切 tab 时会被一起隐藏, 把它放在
+                                         相关视频**之前**可以让用户回到简介时第一眼看到的是合集(强相关),
+                                         而不是被一长串推荐视频顶到最底部。 -->
                                     <Grid x:Name="SeasonPanel" Visibility="Collapsed"
                                           Background="Transparent" Margin="0,16,0,0" MaxHeight="420">
                                         <Grid.RowDefinitions>
@@ -2237,6 +2122,171 @@
                                             </StackPanel>
                                         </Border>
                                     </Grid>
+
+                                    <!-- ============ 相关视频(2026-10-12 新增) ============
+                                         ★ 位置在简介**下方**(用户指定), 所以上面那段折叠
+                                           是为它腾位置的 —— 两者是配套改动, 不是两件独立的事。
+                                         ★ 与简介同属 IntroPanel: 切到「评论」tab 时整块一起隐藏
+                                           (相关视频是"这个视频的补充信息", 不是评论的一部分),
+                                           放在 IntroPanel 里就不必再单独写一遍可见性联动。
+                                         ★ 一行一个视频(用户指定): 卡片横排会挤在 400px 的信息栏里,
+                                           标题会被压成两三行, 反而看不清"这是哪个视频"。 -->
+                                    <StackPanel x:Name="RelatedPanel" Visibility="Collapsed" Margin="0,16,0,0">
+                                        <Border BorderBrush="{DynamicResource DividerBrush}"
+                                                BorderThickness="0,1,0,0" Padding="0,12,0,0">
+                                            <DockPanel>
+                                                <StackPanel DockPanel.Dock="Right"
+                                                            Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <controls:LoadingRing x:Name="RelatedLoadingRing"
+                                                                          Width="12" Height="12"
+                                                                          Visibility="Collapsed" />
+                                                    <TextBlock x:Name="RelatedHint" FontSize="11"
+                                                               Style="{StaticResource MetaTextStyle}"
+                                                               Margin="6,0,0,0" Text="" />
+                                                </StackPanel>
+                                                <TextBlock Text="相关视频" FontSize="13" FontWeight="SemiBold"
+                                                           Style="{StaticResource MetaTextStyle}"
+                                                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                                            </DockPanel>
+                                        </Border>
+
+                                        <!-- ★ 用 ItemsControl 而不是 ListBox: 这里**不需要选中态**
+                                             (不像合集要标"正在播的这一集"), 点击走按钮事件即可。
+                                             ListBox 那套 ItemContainerStyle 模板在这里纯属负担。 -->
+                                        <ItemsControl x:Name="RelatedList" Margin="0,10,0,0">
+                                            <ItemsControl.ItemContainerStyle>
+                                                <Style TargetType="ContentPresenter">
+                                                    <Setter Property="Margin" Value="0,0,0,8" />
+                                                </Style>
+                                            </ItemsControl.ItemContainerStyle>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <!-- ★ 用 Button 而不是 ListBoxItem/Border:
+                                                         点整行就换片, 这是这个列表唯一的交互,
+                                                         包一层 Button 才有悬停反馈与手型光标。
+                                                         ★ CommandParameter 传 bvid: 一次只能带一个值,
+                                                           而模板里拿得到的是整条 item, 拆不出"点了哪条"。
+                                                         ★ Command 是 Execute, 不用 Click 事件:
+                                                           Click 事件在 DataTemplate 里不好绑到父窗口,
+                                                           绑定相对源要多写一层 ElementName。 -->
+                                                    <!-- ★★ 命令必须绑**属性本身**, 不能写成
+                                                         `{Binding DataContext.PlayRelatedCommand, RelativeSource=...}` ——
+                                                         这是本轮修掉的"点不动"的真根因(2026-10-12):
+                                                         DataContext 绑到的是 `PlayerWindow` 这个**框架元素**,
+                                                         而框架元素的 DataContext 默认为 **null**,
+                                                         于是 `DataContext.PlayRelatedCommand` 一路走空,
+                                                         按钮拿到的 Command 是 null —— 命中测试全过(整行都能点到、
+                                                         光标也是手型), 点下去**什么都不发生**, 与"没绑命令"完全同形。
+                                                         ★ 正确写法: RelativeSource 找到窗口之后, 路径**直接从属性名起**
+                                                           (`PlayRelatedCommand`), 不经过 DataContext 那一层。
+                                                           —— 顺带也让这段不依赖"窗口有没有设 DataContext"这件事。 -->
+                                                    <Button Command="{Binding PlayRelatedCommand,
+                                                              RelativeSource={RelativeSource AncestorType=Window}}"
+                                                            CommandParameter="{Binding Bvid}"
+                                                            HorizontalContentAlignment="Stretch"
+                                                            Cursor="Hand" Focusable="False"
+                                                            Background="Transparent" BorderThickness="0"
+                                                            Padding="0">
+                                                        <Button.Template>
+                                                            <ControlTemplate TargetType="Button">
+                                                                <Border x:Name="Bd" CornerRadius="8"
+                                                                        Background="Transparent" Padding="6,6">
+                                                                    <ContentPresenter />
+                                                                </Border>
+                                                                <ControlTemplate.Triggers>
+                                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                                        <Setter TargetName="Bd" Property="Background"
+                                                                                Value="{DynamicResource ControlFillHoverBrush}" />
+                                                                    </Trigger>
+                                                                </ControlTemplate.Triggers>
+                                                            </ControlTemplate>
+                                                        </Button.Template>
+                                                        <!-- 卡片: 16:9 封面 + 标题 + UP 主 + 播放/弹幕。
+                                                             ★★ 封面必须是**三层叠放**(封面 Border / 时长角标 / 无)而不是
+                                                               两个同尺寸 Border 并排 —— 这是本轮修掉的一个真 bug:
+                                                               我给时长角标也写了 Width=96 Height=54,
+                                                               而 DurationBadgeBackgroundBrush 是 **65% 黑**,
+                                                               于是那层半透明黑铺满了整张封面, 画面明显发暗。
+                                                               角标必须"有多大底就多大底", 由 Padding 撑出尺寸。 -->
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <Grid Grid.Column="0" Width="96" Height="54">
+                                                                <!-- 封面: 圆角必须写在**它自己**身上 —— Border 的圆角只裁自己的
+                                                                     背景/边框, 不裁子元素; 图走 Cover 附加属性设在 Background 上,
+                                                                     角标是子元素, 不圆角就会把四角顶成直角(同 VideoCard 的说明)。 -->
+                                                                <Border CornerRadius="6" ClipToBounds="True"
+                                                                        Background="{DynamicResource PlaceholderBrush}"
+                                                                        behaviors:Cover.Source="{Binding Cover}" />
+                                                                <!-- 时长压在封面右下角(与全站卡片一致)。
+                                                                     ★ 不写 Width/Height: 尺寸由 Content + Padding 决定,
+                                                                       否则半透明黑底会铺满整个封面格子。 -->
+                                                                <Border HorizontalAlignment="Right"
+                                                                        VerticalAlignment="Bottom" Margin="0,0,4,4"
+                                                                        CornerRadius="3" Padding="4,1"
+                                                                        Background="{DynamicResource DurationBadgeBackgroundBrush}"
+                                                                        Visibility="{Binding Duration, Converter={StaticResource StrToVis}}">
+                                                                    <TextBlock Text="{Binding Duration}" FontSize="10"
+                                                                               Foreground="White" />
+                                                                </Border>
+                                                            </Grid>
+                                                            <StackPanel Grid.Column="1" Margin="10,0,0,0"
+                                                                        VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding Title}" FontSize="12.5"
+                                                                           TextWrapping="Wrap" MaxHeight="34"
+                                                                           TextTrimming="CharacterEllipsis"
+                                                                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                                                    <!-- UP 主名前的 UP 角标: 与 B 站卡片一致的一眼辨识 -->
+                                                                    <TextBlock Text="UP" FontSize="9.5"
+                                                                               Margin="0,0,4,0"
+                                                                               VerticalAlignment="Center"
+                                                                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                                                                    <TextBlock Text="{Binding Author}" FontSize="11"
+                                                                               MaxWidth="120"
+                                                                               TextTrimming="CharacterEllipsis"
+                                                                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                                    <TextBlock Text=" · " FontSize="11" Margin="3,0"
+                                                                               Visibility="{Binding ViewCountText, Converter={StaticResource StrToVis}}"
+                                                                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                                                                    <TextBlock Text="{Binding ViewCountText}" FontSize="11"
+                                                                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                                                                    <TextBlock Text=" · " FontSize="11" Margin="3,0"
+                                                                               Visibility="{Binding DanmakuCountText, Converter={StaticResource StrToVis}}"
+                                                                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                                                                    <TextBlock Text="{Binding DanmakuCountText}" FontSize="11"
+                                                                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                                                                </StackPanel>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Button>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                    <!-- ============ 合集面板(点 tab 行右侧的「合集」滑出, 2026-10-02 新增) ============
+                                         ★ 为什么是"盖在信息栏上的浮层"而不是"信息栏里的第四个 tab":
+                                           合集列表和简介/评论是**互斥**的内容, 走 tab 要动 GroupName=ContentTab 那套结构,
+                                           还会让"合集"这一个动作入口获得一个自己的持久选中态(点了普通视频之后那个 tab
+                                           还亮着, 但面板是空的); 浮层则天然"跟着当前视频走", 换片清空即可。
+                                         ★ 用 Grid 而不是 Popup: Popup 是独立 HWND, 会盖在 VideoView 那个 airspace 之上,
+                                           窗口缩放/全屏切换时两者位置容易错开; 这里只需要盖住右侧 400px, 同窗口内最稳。
+                                         IsHitTestVisible 靠 Visibility 控制: 收起时整棵树既不渲染也不参与命中测试。
+                                         ★★★ 底色必须**不透明** —— 这是浮层, 底下就是简介/评论的内容。
+                                           ★★ 2026-10-05 修"亚克力下合集页背景几乎透明"(用户截图): 这个绑定原先写的是
+                                             FloatingFillBrush, 注释也假定它**永远不透明**(它现在是 #E8EAED/#2D2D2D 实色)。
+                                             但 ThemeService.ApplyAcrylicSurfaces 为了让**右下角工具列**也有亚克力质感,
+                                             在亚克力开启时把这个**全局共享键**覆盖成了 70% 半透明(#B3ECEDEF)。
+                                             FloatingFillBrush 不止工具列在用 —— 合集面板整块因此被改成半透明, 压在简介/
+                                             评论内容上, 文字整片透上来糊成一片, 正是上面这段注释当年要防的现象。
+                                             ★ 真凶在颜色覆盖层, 不在绑定本身: 所以"把 FloatingFillBrush 调不透明"
+                                               那种改法是治不好的 —— 工具列要半透明正是它自己的需求。
+                                           ★ 正确解法是**另立一个专用键**: 工具列浮在卡片封面上, 透出壁纸才叫亚克力质感;
+                                             合集面板底下是内容, 必须实。两者需求相反, 不能共用一个键。
+                                             OverlaySurfaceBrush 恒为不透明, 且刻意**不进** ApplyAcrylicSurfaces 的
+                                             覆盖清单(见 Colors.Light.xaml / Colors.Dark.xaml)。 -->
                                 </StackPanel>
                                 <StackPanel x:Name="CommentsPanel" Visibility="Collapsed">
                                     <!-- ★★ 2026-11-01 评论输入改为右下角悬浮按钮(FAB):

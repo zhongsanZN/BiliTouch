@@ -94,21 +94,21 @@ public partial class PlayerWindow
     private void SwitchInfoPageByWheel(int direction)
     {
         if (direction == 0) return;
-        if (_infoPageAnimating) return;
+        // ★★★ 2026-11-04 用户要求: 「触控板逻辑要和触屏对齐, 触屏做得很好但触控板是硬切」。
+        //
+        //   原来这里直接 `TabComments.IsChecked = true` + 一个 44px 入场动画 —— 那是硬切:
+        //   内容瞬间换掉、只有一点点横向滑入。而触屏走的是
+        //   BeginPageDrag → ApplyPageDrag → FinishPageDrag(两页并排、跟手、吸附)。
+        //   两者观感不同, 状态也不共享(触屏用 _infoDraggingPage / PageIndex,
+        //   触控板只动 RadioButton) —— 于是"先滚轮切、再手指切"就会打架。
+        //
+        //   ⇒ 现在触控板也走**同一个 FinishPageDrag**: 不跟手(触控板没有绝对坐标),
+        //     但用同一个切换函数、同一套动画、同一份 PageIndex。状态只有一个来源。
+        if (_infoDraggingPage || _infoPageAnimating) return;   // 触屏手势进行中不接管
+
         var target = PageIndex + direction;
         if (target is not (0 or 1)) return;
 
-        _infoPageSwitching = true;
-        try
-        {
-            if (target == 1) TabComments.IsChecked = true;
-            else TabIntro.IsChecked = true;
-        }
-        finally { _infoPageSwitching = false; }
-
-        // 复用切换 tab 时的入场动画(从侧面滑入 + 淡入), 避免"瞬间换页"。
-        // direction > 0(往右翻) ⇒ 新页从**右**侧滑入。
-        var panel = CurrentPagePanel();
-        if (panel != null) AnimatePageEntrance(panel, fromRight: direction > 0);
+        FinishPageDrag(switchPage: true, target);
     }
 }
