@@ -1,0 +1,392 @@
+<Project>
+  <PropertyGroup>
+    <AssemblyName>BiliDesk</AssemblyName>
+    <IntermediateOutputPath>obj\Release\</IntermediateOutputPath>
+    <BaseIntermediateOutputPath>obj\</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\</MSBuildProjectExtensionsPath>
+    <_TargetAssemblyProjectName>BiliDesk</_TargetAssemblyProjectName>
+    <RootNamespace>BiliDesk</RootNamespace>
+  </PropertyGroup>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- 鎵樼洏鍥炬爣鐢?WinForms 鐨?NotifyIcon: 杩欐槸鎵樼洏浜や簰(姘旀场/鍙屽嚮/鍙抽敭鑿滃崟)鏈€鐪佷簨涓旀渶绋崇殑鏂规,
+         姣旀墜鎼?Shell_NotifyIcon P/Invoke 灏戝嚑鐧捐marshalling浠ｇ爜 -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BiliDesk</RootNamespace>
+    <AssemblyTitle>BiliDesk</AssemblyTitle>
+    <Product>BiliDesk</Product>
+    <Version>1.5.3-touch.1</Version>
+    <PlatformTarget>x64</PlatformTarget>
+    <!--
+      RollForward=Major: 框架依赖版(安装器)在机器上没有 .NET 10 桌面运行时、
+      但装了更高大版本(如 .NET 11)时, 允许直接跑在上面, 不再强求用户装对应版本的
+      Desktop Runtime。(Major 语义是滚到*最低*的可用大版本), 不会一觉醒来换到没验证过的最新版本。
+      便携版自包含, 此属性对它无影响。安装器侧的检测逻辑同步放在 Publish\installer.iss。
+
+      ★ 2026-10-31 目标框架 net8.0-windows → net10.0-windows: .NET 8 桌面运行时
+        2026-11 停止支持, 依赖框架的安装器版从此要求 .NET 10+(检测下限同步改为 10)。
+    -->
+    <RollForward>Major</RollForward>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+    <!-- 涓嶈璺熺潃寮曠敤绋嬪簭闆嗕竴璧锋嫹 .xml/.pdb 绛?鏂囨。/绗﹀彿"绫绘枃浠?WebView2 閭?3 涓?XML 鏂囨。 ~0.8MB 灏辨槸瀹冨甫杩涙潵鐨? -->
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+    <!--
+      鈽?鍏虫帀 LibVLC 鐨?x86 閭ｄ竴浠?鍙戝竷鍖呴噷 126.7MB, 绾补鐧借)銆?
+      涓轰粈涔堜互鍓嶄細甯︿笂: VideoLAN.LibVLC.Windows 鐨?targets 鏄寜 **$(Platform)** 鍒ゆ柇鏋舵瀯鐨?鈥斺€?        VlcWindowsX86Enabled 榛樿鍦?'$(Platform)' == 'x86' **鎴?'AnyCPU'** 鏃朵负 true銆?      鑰屾湰宸ョ▼璁剧殑鏄?<PlatformTarget>x64</PlatformTarget>(閭ｆ槸**缂栬瘧鍣?*鐩爣),
+      $(Platform) 浠嶇劧鏄?AnyCPU, 浜庢槸鍖呮妸 x86 涓?x64 涓ゅ鍘熺敓搴撳叏鎷蜂簡杩涙潵銆?      鏈伐绋嬫槸 x64-only(PlatformTarget=x64), x86 閭ｅ姘歌繙涓嶄細琚姞杞?鈥斺€?鐩存帴鍏虫帀銆?    -->
+    <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
+    <!--
+      ★★★ 必须显式打开 x64 那一份, 不能再靠 targets 自己推导(2026-10-11 修的"视频无法播放")。
+      为什么: VideoLAN.LibVLC.Windows 的 targets 判据是
+          '$(Platform)' == 'x64' OR '$(Platform)' == 'AnyCPU'
+      注意它写的是 **AnyCPU(无空格)**。而本仓库的构建命令一直写
+          dotnet build ... -p:Platform="Any CPU"   ← 带空格
+      ⇒ $(Platform) 变成 'Any CPU', 与 'AnyCPU' 不相等, 两个开关都落空
+      ⇒ 原生库**一个都不复制**, 输出目录里没有 libvlc/, 程序一开视频就报
+         "Failed to load required native libraries"。
+      ★ 危害在于它**静默**: 构建成功(0 错误 0 警告), 只是产物少了一整个目录;
+        而且不同构建入口结果还不一样 —— 用 .sln 构建时 Platform 会被映射成 AnyCPU(正常),
+        直接构建 .csproj 或被别的工程 ProjectReference 带出来时才是 'Any CPU'(异常)。
+      所以这里把 x64 显式写死(本工程是 x64-only, PlatformTarget=x64),
+      无论外面怎么拼 Platform, 原生库都照常复制。
+      ★ 别把它"顺手"删掉改回依赖推导 —— 那就是把这个错误再种一遍。
+    -->
+    <VlcWindowsX64Enabled>true</VlcWindowsX64Enabled>
+    <!--
+      ★ 3.0.24 的 targets 新增了 ARM64 那一份, 默认判据与 x86 相同(AnyCPU 时自动开) ——
+      不显式关掉它, 90MB 的 arm64 原生库会被静默带进发布包(1.5.0 首发踩过:
+      setup 20.7MB → 46.4MB), 本工程 x64-only, 与上面的 x86 开关同款处理。    -->
+    <VlcWindowsArm64Enabled>false</VlcWindowsArm64Enabled>
+  </PropertyGroup>
+  <!--
+    UseWindowsForms 浼氬線姣忎釜鏂囦欢娉ㄥ叆 System.Windows.Forms / System.Drawing 鐨勫叏灞€ using,
+    鍜?WPF 鐨?KeyEventArgs / MouseEventArgs / Point 澶ч潰绉挒鍚嶃€傛湰椤圭洰鍙湁鎵樼洏鏈嶅姟纰?    WinForms, 涓斿畠鍏ㄩ儴鐢ㄥ叏闄愬畾鍚?鈥斺€?鎶婅繖涓ゆ潯鍏ㄥ眬 using 鎽樻帀, 鍏朵綑浠ｇ爜闆舵敼鍔ㄣ€?  -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+  <ItemGroup>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="LibVLCSharp" Version="3.8.0" />
+    <PackageReference Include="LibVLCSharp.WPF" Version="3.8.0" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+    <!-- ★ 3.0.20 → 3.0.24(2026-10-31 修"所有视频破音/爆音"): 3.0.21~3.0.24 累积了一整批
+         Windows 音频输出(mmdevice/WASAPI)修复 —— 线程模型重写、nonblocking play 重写、
+         缓冲 underrun 修复, 3.0.24 更新说明明确写有 "Fixes Windows audio crashes";
+         同时内置 FFmpeg 从 4.4 升到 8.1.2(AAC 解码三年的改进)。升级后必须实测
+         DASH 双流(input-slave)与短视频本地合流两条路(见 VlcCore.Get 的注释)。 -->
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.24" />
+  </ItemGroup>
+  <!--
+    ============================ LibVLC 鍘熺敓搴撴€庝箞閮ㄧ讲 ============================
+
+    VideoLAN.LibVLC.Windows 鑷繁浼氭妸鍘熺敓搴撴斁鍒?<OutDir>/libvlc/win-x64/锛堝惈 plugins/锛夛紝
+    杩欏氨澶熶簡 鈥斺€?VlcCore 璧扮殑鏄?Core.Initialize(<閭ｄ釜鐩綍鐨勭粷瀵硅矾寰?)锛屽畠浼氭樉寮?LoadLibrary
+    閭ｄ釜 libvlc.dll锛岃€?libvlccore 3.0.20 鐨勬彃浠舵壂鎻忔壘鐨勬鏄?libvlc.dll **鍚岀洰褰?*涓嬬殑 plugins/銆?
+    鈽?2026-09-26 鐦﹁韩锛堣瑙佹牴鐩綍 鐦﹁韩鏂规.md锛?
+      浠ュ墠杩欓噷棰濆鍐欎簡涓や釜 Target锛屾妸 libvlc.dll / libvlccore.dll / plugins 鍙堟嫹涓€浠藉埌杈撳嚭**鏍圭洰褰?*锛?      鐞嗙敱鏄?LibVLC 鍦?Windows 涓?P/Invoke 鍙湪 exe 鍚岀洰褰曟煡鎵? 鈥斺€?閭ｄ釜鐞嗙敱涓嶆垚绔嬶紙鎴戜滑涓嶆槸闈?      P/Invoke 榛樿鎼滅储锛屾槸 Core.Initialize 鎸囧畾缁濆璺緞锛夈€備簬鏄湪鍙戝竷鍖呴噷鍑虹幇浜嗕笁浠藉悓鏍风殑杩愯鏃?
+      x86 涓€浠?126.7MB) + libvlc/win-x64 涓€浠?92.8MB) + 鏍圭洰褰曚竴浠?90.8MB) = 308MB銆?      瀹炴祴(bd-probe-vlc 鎺㈤拡: 鍦ㄨ娴嬭緭鍑虹洰褰曢噷鐢?app 鑷繁鍚堟祦鍑烘潵鐨?MP4 鐪熸挱涓€閬?:
+        路 涓変唤閮藉湪      鈫?鍔犺浇 497 涓ā鍧楋紝姝ｅ父鎾斁
+        路 鍙暀宓屽閭ｄ唤  鈫?鍔犺浇 497 涓ā鍧楋紝姝ｅ父鎾斁锛圴LC_PLUGIN_PATH 鎸囧悜涓嶅瓨鍦ㄧ殑鐩綍涔熸病鍏崇郴锛?      缁撹: 鏍圭洰褰曢偅浠界函鍐椾綑锛屽凡鍒犻櫎锛泋86 閭ｄ唤鐢ㄤ笂闈㈢殑 <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
+      浠庢簮澶村叧鎺夈€傛敼鍔ㄨ繖涓€鍧椾箣鍚?*蹇呴』**澶嶈窇 bd-probe-vlc 鎺㈤拡銆?  -->
+  <!--
+    鍙戝竷鏃惰鍓帀鎾斁璺緞鐢ㄤ笉鍒扮殑鎻掍欢锛堢害 -30MB锛夈€傝鎺夌殑閮芥槸"B绔欏鎴风姘歌繙纰颁笉鍒?鐨勪笢瑗?
+      路 閲囬泦/澶栬: dshow(DirectShow 閲囬泦), cdda(CD 闊宠建), dtv(鏁板瓧鐢佃)
+      路 鍏夌洏/褰遍櫌: dvdnav/dvdread(DVD), libbluray(钃濆厜), dcp(鏁板瓧褰遍櫌鍖?
+      路 浼犺緭鍗忚: srt, vnc, sftp, nfs, rtp, live555(RTSP 鏈嶅姟鍣?
+      路 鐢ㄤ笉鍒扮殑闊充箰鏍煎紡: sid/gme/mod(娓告垙闊虫簮), schroedinger(Dirac), theora, zvbi(鍥炬枃鐢佃)
+      路 鍏冩暟鎹?婊ら暅: taglib(闊抽鏍囩), spatialaudio/mad(閲嶉噰鏍蜂笌绌洪棿闊抽)
+      路 绾紪鐮佸櫒: x264/x265/aom/twolame/shine 鈥斺€?鎴戜滑鍙В鐮侊紝缂栫爜璧拌嚜鐮斾笅杞界閬?      路 VLC 鑷甫鐣岄潰/鎺ㄦ祦/鑴氭湰: gui, visualization, stream_out, access_output, services_discovery, lua, mux
+    鈽?涓€寰?*淇濈暀**: 瑙ｇ爜(avcodec/dav1d)銆佽В灏佽(mp4/mkv/ts/adaptive)銆佽緭鍑?d3d11/d3d11va/dxva2/mmdevice/wasapi)銆?      璁块棶(http/https/file)銆佸瓧骞?libass/freetype)銆佺缉鏀?swscale)銆佹墦鍖?packetizer)銆?  -->
+  <Target Name="TrimLibVLCPlugins" AfterTargets="Publish">
+    <ItemGroup>
+      <_VlcTrimDir Include="$(PublishDir)libvlc\win-x64\plugins\gui;&#xA;                          $(PublishDir)libvlc\win-x64\plugins\visualization;&#xA;                          $(PublishDir)libvlc\win-x64\plugins\stream_out;&#xA;                          $(PublishDir)libvlc\win-x64\plugins\access_output;&#xA;                          $(PublishDir)libvlc\win-x64\plugins\services_discovery;&#xA;                          $(PublishDir)libvlc\win-x64\plugins\lua;&#xA;                          $(PublishDir)libvlc\win-x64\plugins\mux;&#xA;                          $(PublishDir)libvlc\win-x64\plugins\meta_engine;&#xA;                          $(PublishDir)libvlc\win-x64\lua;&#xA;                          $(PublishDir)libvlc\win-x64\hrtfs" />
+      <_VlcTrimFile Include="$(PublishDir)libvlc\win-x64\plugins\codec\libx264_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\codec\libx26410b_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\codec\libx265_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\codec\libaom_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\codec\libtwolame_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\codec\libshine_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\codec\libschroedinger_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\codec\libtheora_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\codec\libzvbi_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\codec\libaribsub_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\libaccess_srt_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\libvnc_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\libdcp_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\liblibbluray_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\libbluray-j2se-1.3.2.jar;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\libdshow_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\libdtv_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\libsftp_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\libcdda_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\librtp_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\liblive555_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\libnfs_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\libdvdnav_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\access\libdvdread_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\demux\libsid_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\demux\libgme_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\demux\libmod_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\audio_filter\libspatialaudio_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\audio_filter\libmad_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\video_output\libcaca_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\spu\libremoteosd_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\plugins\misc\libxml_plugin.dll;&#xA;                           $(PublishDir)libvlc\win-x64\libvlc.lib;&#xA;                           $(PublishDir)libvlc\win-x64\libvlccore.lib;&#xA;                           $(PublishDir)libvlc\win-x64\libvlc.exp;&#xA;                           $(PublishDir)libvlc\win-x64\libvlccore.exp;&#xA;                           $(PublishDir)BiliDesk.pdb" />
+    </ItemGroup>
+    <RemoveDir Directories="@(_VlcTrimDir)" />
+    <Delete Files="@(_VlcTrimFile)" />
+    <Message Text="LibVLC 鎻掍欢宸茶鍓? 鍙繚鐣欐挱鏀惧繀闇€妯″潡" Importance="high" />
+  </Target>
+  <ItemGroup>
+    <InternalsVisibleTo Include="TouchTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\Accessibility.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\nuget\libvlcsharp\3.8.0\lib\net6.0\LibVLCSharp.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\nuget\libvlcsharp.wpf\3.8.0\lib\net6.0-windows7.0\LibVLCSharp.WPF.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\Microsoft.CSharp.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\Microsoft.VisualBasic.Core.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\Microsoft.VisualBasic.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\Microsoft.VisualBasic.Forms.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\nuget\microsoft.web.webview2\1.0.4191.47\lib_manual\netcoreapp3.0\Microsoft.Web.WebView2.Core.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\nuget\microsoft.web.webview2\1.0.4191.47\lib_manual\netcoreapp3.0\Microsoft.Web.WebView2.WinForms.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\nuget\microsoft.web.webview2\1.0.4191.47\lib_manual\net5.0-windows10.0.17763.0\Microsoft.Web.WebView2.Wpf.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\Microsoft.Win32.Primitives.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\Microsoft.Win32.Registry.AccessControl.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\Microsoft.Win32.Registry.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\Microsoft.Win32.SystemEvents.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\mscorlib.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\netstandard.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\PresentationCore.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\PresentationFramework.Aero.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\PresentationFramework.Aero2.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\PresentationFramework.AeroLite.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\PresentationFramework.Classic.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\PresentationFramework.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\PresentationFramework.Luna.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\PresentationFramework.Royale.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\PresentationUI.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\ReachFramework.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.AppContext.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Buffers.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.CodeDom.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Collections.Concurrent.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Collections.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Collections.Immutable.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Collections.NonGeneric.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Collections.Specialized.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.ComponentModel.Annotations.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.ComponentModel.DataAnnotations.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.ComponentModel.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.ComponentModel.EventBasedAsync.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.ComponentModel.Primitives.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.ComponentModel.TypeConverter.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Configuration.ConfigurationManager.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Configuration.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Console.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Core.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Data.Common.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Data.DataSetExtensions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Data.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Design.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Diagnostics.Contracts.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Diagnostics.Debug.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Diagnostics.DiagnosticSource.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Diagnostics.EventLog.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Diagnostics.FileVersionInfo.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Diagnostics.PerformanceCounter.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Diagnostics.Process.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Diagnostics.StackTrace.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Diagnostics.TextWriterTraceListener.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Diagnostics.Tools.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Diagnostics.TraceSource.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Diagnostics.Tracing.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.DirectoryServices.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Drawing.Common.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Drawing.Design.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Drawing.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Drawing.Primitives.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Dynamic.Runtime.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Formats.Asn1.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Formats.Nrbf.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Formats.Tar.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Globalization.Calendars.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Globalization.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Globalization.Extensions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.Compression.Brotli.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.Compression.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.Compression.FileSystem.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.Compression.ZipFile.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.FileSystem.AccessControl.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.FileSystem.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.FileSystem.DriveInfo.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.FileSystem.Primitives.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.FileSystem.Watcher.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.IsolatedStorage.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.MemoryMappedFiles.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.IO.Packaging.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.Pipelines.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.Pipes.AccessControl.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.Pipes.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.IO.UnmanagedMemoryStream.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Linq.AsyncEnumerable.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Linq.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Linq.Expressions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Linq.Parallel.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Linq.Queryable.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Memory.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.Http.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.Http.Json.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.HttpListener.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.Mail.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.NameResolution.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.NetworkInformation.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.Ping.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.Primitives.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.Quic.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.Requests.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.Security.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.ServerSentEvents.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.ServicePoint.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.Sockets.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.WebClient.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.WebHeaderCollection.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.WebProxy.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.WebSockets.Client.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Net.WebSockets.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Numerics.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Numerics.Vectors.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.ObjectModel.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Printing.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Private.Windows.Core.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Private.Windows.GdiPlus.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Reflection.DispatchProxy.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Reflection.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Reflection.Emit.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Reflection.Emit.ILGeneration.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Reflection.Emit.Lightweight.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Reflection.Extensions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Reflection.Metadata.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Reflection.Primitives.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Reflection.TypeExtensions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Resources.Extensions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Resources.Reader.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Resources.ResourceManager.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Resources.Writer.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.CompilerServices.Unsafe.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.CompilerServices.VisualC.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.Extensions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.Handles.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.InteropServices.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.InteropServices.JavaScript.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.InteropServices.RuntimeInformation.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.Intrinsics.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.Loader.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.Numerics.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.Serialization.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.Serialization.Formatters.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.Serialization.Json.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.Serialization.Primitives.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Runtime.Serialization.Xml.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.AccessControl.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.Claims.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.Cryptography.Algorithms.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.Cryptography.Cng.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.Cryptography.Csp.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.Cryptography.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.Cryptography.Encoding.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.Cryptography.OpenSsl.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Security.Cryptography.Pkcs.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.Cryptography.Primitives.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Security.Cryptography.ProtectedData.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.Cryptography.X509Certificates.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Security.Cryptography.Xml.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Security.Permissions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.Principal.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.Principal.Windows.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Security.SecureString.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.ServiceModel.Web.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.ServiceProcess.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Text.Encoding.CodePages.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Text.Encoding.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Text.Encoding.Extensions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Text.Encodings.Web.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Text.Json.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Text.RegularExpressions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Threading.AccessControl.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Threading.Channels.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Threading.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Threading.Overlapped.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Threading.Tasks.Dataflow.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Threading.Tasks.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Threading.Tasks.Extensions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Threading.Tasks.Parallel.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Threading.Thread.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Threading.ThreadPool.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Threading.Timer.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Transactions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Transactions.Local.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.ValueTuple.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Web.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Web.HttpUtility.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Windows.Controls.Ribbon.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Windows.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Windows.Extensions.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Windows.Forms.Design.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Windows.Forms.Design.Editors.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Windows.Forms.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Windows.Forms.Primitives.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Windows.Input.Manipulations.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Windows.Presentation.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Windows.Primitives.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\System.Xaml.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Xml.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Xml.Linq.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Xml.ReaderWriter.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Xml.Serialization.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Xml.XDocument.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Xml.XmlDocument.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Xml.XmlSerializer.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Xml.XPath.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\ref\net10.0\System.Xml.XPath.XDocument.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\UIAutomationClient.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\UIAutomationClientSideProviders.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\UIAutomationProvider.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\UIAutomationTypes.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\WindowsBase.dll" />
+    <ReferencePath Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\ref\net10.0\WindowsFormsIntegration.dll" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\MainWindow.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Controls\BangumiCard.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Controls\ColorPalette.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Controls\DisclaimerView.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Controls\DynamicCard.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Controls\DynamicFeedCard.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Controls\LoadingRing.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Controls\UserCard.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Controls\VideoCard.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Controls\WindowButtons.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\BangumiPage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\CachePage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\FavoritesPage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\FollowPage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\HistoryPage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\HomePage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\MessagesPage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\MinePage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\RegionPage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\SearchPage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\SettingsPage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\UserSpacePage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Pages\WatchLaterPage.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Windows\BrowserWindow.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Windows\CoinWindow.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Windows\DisclaimerWindow.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Windows\FavFolderPickerWindow.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Windows\ImagePreviewWindow.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Windows\LoginWindow.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Windows\PlayerWindow.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\Views\Windows\UpdatePromptWindow.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\App.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\BiliDesk_Content.g.cs" />
+    <Compile Include="C:\Users\hjk00\Documents\项目\安装包去毒\BiliDesk-touch\BiliDesk\obj\Release\net10.0-windows\GeneratedInternalTypeHelper.g.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Analyzer Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\sdk\10.0.403\Sdks\Microsoft.NET.Sdk\targets\..\analyzers\Microsoft.CodeAnalysis.CSharp.NetAnalyzers.dll" />
+    <Analyzer Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\sdk\10.0.403\Sdks\Microsoft.NET.Sdk\targets\..\analyzers\Microsoft.CodeAnalysis.NetAnalyzers.dll" />
+    <Analyzer Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\analyzers/dotnet/cs/Microsoft.Interop.ComInterfaceGenerator.dll" />
+    <Analyzer Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\analyzers/dotnet/cs/Microsoft.Interop.JavaScript.JSImportGenerator.dll" />
+    <Analyzer Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\analyzers/dotnet/cs/Microsoft.Interop.LibraryImportGenerator.dll" />
+    <Analyzer Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\analyzers/dotnet/cs/Microsoft.Interop.SourceGeneration.dll" />
+    <Analyzer Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\analyzers/dotnet/cs/System.Text.Json.SourceGeneration.dll" />
+    <Analyzer Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.14\analyzers/dotnet/cs/System.Text.RegularExpressions.Generator.dll" />
+    <Analyzer Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\analyzers/dotnet/System.Windows.Forms.Analyzers.dll" />
+    <Analyzer Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\analyzers/dotnet/cs/System.Windows.Forms.Analyzers.CSharp.dll" />
+    <Analyzer Include="C:\Users\hjk00\Documents\项目\安装包去毒\.tools\dotnet\packs\Microsoft.WindowsDesktop.App.Ref\10.0.14\analyzers/dotnet/cs/System.Windows.Forms.Analyzers.CodeFixes.CSharp.dll" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+</Project>

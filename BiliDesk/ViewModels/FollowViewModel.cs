@@ -97,9 +97,13 @@ public class FollowViewModel : ObservableObject
     /// <summary>正在直播的关注主播(点一条直接进 TA 的直播间)。空 = 没人在播(看板整块收起)。</summary>
     public ObservableCollection<VideoItem> LiveNow { get; } = new();
 
-    private bool _liveBoardOpen = true;
+    // ★ 2026-11-04 合并上游 1.5.4: 默认**收起**。
+    //   理由(上游原话): 关注直播看板占着动态流首屏, 而它多数时候只有两三行 ——
+    //   先让动态内容露出来, 想看谁在播再点标题展开。标题行**常驻**(见 LiveBoardTitle),
+    //   人数一直可见, 不至于让人以为功能没了。
+    private bool _liveBoardOpen;
 
-    /// <summary>看板展开/收起(UI 状态, 不落盘 —— 动态页每次进来默认展开, 想收就收一下)</summary>
+    /// <summary>看板展开/收起(UI 状态, 不落盘 —— 每次进动态页默认收起, 想看再点)</summary>
     public bool LiveBoardOpen
     {
         get => _liveBoardOpen;

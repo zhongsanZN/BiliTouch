@@ -11,9 +11,9 @@
 ; ============================================================
 #define MyAppName "BiliDesk"
 ; 触控修复版: 程序内 App.AppVersion 也是 1.5.3-touch.1(带预发布后缀, 更新检查按 1.5.3 比较)
-#define MyAppVersion "1.5.3-touch.1"
+#define MyAppVersion "1.5.4-touch.1"
 ; VersionInfoVersion 必须是纯数字四段 (a.b.c.d), 不能带 -touch
-#define MyFileVersion "1.5.3.1"
+#define MyFileVersion "1.5.4.1"
 #define MyAppPublisher "ABing"
 #define MyAppExeName "BiliDesk.exe"
 ; 指向发布脚本生成的框架依赖目录(相对本 .iss 所在目录)

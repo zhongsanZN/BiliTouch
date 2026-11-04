@@ -109,7 +109,7 @@ internal static class Program
         Check(right.Action == PlayerTouchAction.Volume && right.VolumeTarget(20) == 70, "right vertical swipe adjusts volume");
         right.Move(703, -2000);
         Check(right.VolumeTarget(80) == 100, "volume clamps to 100");
-        Check(UpdateChecker.ParseVersion(BiliDesk.App.AppVersion) == new Version(1, 5, 3), "touch build version works with updater");
+        Check(UpdateChecker.ParseVersion(BiliDesk.App.AppVersion) == new Version(1, 5, 4), "touch build version works with updater");
     }
 
     private static void TestHome()

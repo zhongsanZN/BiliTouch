@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -417,8 +418,14 @@ public partial class PlayerWindow : FluentWindow
     /// <summary>长按快进的倍速</summary>
     private const float FastForwardRate = 2.0f;
 
-    /// <summary>当前是否处于"长按快进"中(即速率已被切成 <see cref="FastForwardRate"/>)。</summary>
+    /// <summary>当前是否处于"长按快进"中。</summary>
     private bool _isFastForwarding;
+
+    /// <summary>
+    /// 本次长按快进的**目标速率**(= max(2x, 按下时的速率), 上限 4x)。
+    /// ★ 提示文案要用它而不是常量 2x —— 用户在 3x 时长按, 屏幕该说"3x 快进中"而不是"2x"。
+    /// </summary>
+    private float _fastForwardTarget = FastForwardRate;
 
     /// <summary>
     /// 长按快进开始: 切到 <see cref="FastForwardRate"/>。
@@ -439,13 +446,19 @@ public partial class PlayerWindow : FluentWindow
         try { _rateBeforeFastForward = _mp.Rate; }
         catch { _rateBeforeFastForward = 1.0f; }
         if (_rateBeforeFastForward <= 0) _rateBeforeFastForward = 1.0f;
-        // 已经在快进速率上(理论上到不了): 别把"该恢复的速率"记成 2x
-        if (Math.Abs(_rateBeforeFastForward - FastForwardRate) < 0.01f) _rateBeforeFastForward = 1.0f;
+
+        // ★★ 2026-11-04 合并上游 1.5.4: 长按目标改成 **max(2x, 当前倍速)**。
+        //   原来固定切 2x, 于是用户本来在 3x 看视频时长按, 反而**变慢**到 2x ——
+        //   手势语义是"暂时再快一点", 比当前还慢就毫无意义。
+        //   ★ 上限跟倍速弹层一致(4.0x): 已经是 4x 时长按不再加速, 但也不降速。
+        var target = Math.Max(FastForwardRate, _rateBeforeFastForward);
+        if (target > MaxPlaybackRate) target = MaxPlaybackRate;
+        _fastForwardTarget = target;
 
         _isFastForwarding = true;
         // ★ 顺序: 先让弹幕时钟按新倍速落定当前值, 再真正 SetRate(同 OnSpeedClick 那条说明)
-        SyncDanmakuClockRate(FastForwardRate);
-        try { _mp.SetRate(FastForwardRate); } catch { StopFastForward(); }
+        SyncDanmakuClockRate(target);
+        try { _mp.SetRate(target); } catch { StopFastForward(); }
     }
 
     /// <summary>停止长按快进: 恢复按下前的速率。</summary>
@@ -3637,23 +3650,147 @@ public partial class PlayerWindow : FluentWindow
         _speedOsdTimer = null;
     }
 
+    /// <summary>允许的最低/最高倍速。范围写在这里一处, 输入夹取与预设列表都引用它。</summary>
+    private const float MinPlaybackRate = 0.25f;
+    private const float MaxPlaybackRate = 4.0f;
+
+    /// <summary>常用预设档位(顺序即弹层里的顺序)。</summary>
+    private static readonly float[] SpeedPresets =
+    {
+        0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f, 3.0f, 4.0f
+    };
+
+    /// <summary>填充倍速列表时抑制 SelectionChanged, 避免"打开弹层就自动改一次倍速"。</summary>
+    private bool _fillingSpeedMenu;
+
     private void OnSpeedClick(object sender, RoutedEventArgs e)
     {
         if (_mp == null) return;
-        var cur = _mp.Rate;
-        var next = cur switch
+        FillSpeedMenu();
+        SpeedPopup.IsOpen = true;
+    }
+
+    /// <summary>
+    /// 填充预设倍速列表并高亮当前倍速, 同时把当前值预填进自定义输入框。
+    /// </summary>
+    private void FillSpeedMenu()
+    {
+        if (SpeedList == null) return;
+        _fillingSpeedMenu = true;
+        try
         {
-            1.0f => 1.5f,
-            1.5f => 2.0f,
-            2.0f => 0.5f,
-            _ => 1.0f
-        };
-        // ★ 顺序: 先让弹幕时钟按新倍速落定当前值, 再真正 SetRate。
-        //   反过来先 SetRate 的话, SyncDanmakuClockRate 内部那句 DanmakuClock() 会
-        //   用**旧速率**外推(而媒体已经按新速率跑了) —— 那一下就是用户看到的"顿一下"。
-        SyncDanmakuClockRate(next);
-        _mp.SetRate(next);
-        if (SpeedText != null) SpeedText.Text = next.ToString("0.#") + "x";
+            SpeedList.Items.Clear();
+            foreach (var rate in SpeedPresets)
+                SpeedList.Items.Add(new ListBoxItem { Tag = rate, Content = FormatRate(rate) });
+
+            var cur = _mp?.Rate ?? 1.0f;
+            if (cur <= 0) cur = 1.0f;
+            if (SpeedCustomText != null) SpeedCustomText.Text = FormatRateValue(cur);
+            if (SpeedCustomHint != null) SpeedCustomHint.Text = "";
+
+            // 只有与某个预设一致才高亮; 自定义值(如 1.15x)保持无选中
+            var idx = Array.FindIndex(SpeedPresets, r => Math.Abs(r - cur) < 0.005f);
+            SpeedList.SelectedIndex = idx;
+        }
+        finally
+        {
+            _fillingSpeedMenu = false;
+        }
+    }
+
+    private void OnSpeedSelected(object sender, SelectionChangedEventArgs e)
+    {
+        if (_fillingSpeedMenu || SpeedPopup == null) return;
+        if (SpeedList.SelectedItem is not ListBoxItem li || li.Tag is not float rate) return;
+        ApplyPlaybackRate(rate, closePopup: true);
+    }
+
+    private void OnSpeedCustomApply(object sender, RoutedEventArgs e) => ApplyCustomSpeed();
+
+    /// <summary>自定义输入框: Enter 应用, Esc 关闭弹层(不改变当前倍速)。</summary>
+    private void OnSpeedCustomKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            ApplyCustomSpeed();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            SpeedPopup.IsOpen = false;
+            e.Handled = true;
+        }
+    }
+
+    private void ApplyCustomSpeed()
+    {
+        if (_mp == null) return;
+        if (!TryParseSpeed(SpeedCustomText?.Text, out var rate))
+        {
+            ShowSpeedCustomHint($"请输入 {FormatRate(MinPlaybackRate)} – {FormatRate(MaxPlaybackRate)} 之间的数字, 例如 1.25");
+            return;
+        }
+        // 超出范围自动夹到边界(而不是拒绝): 用户输入 10x 时给他 4x 比什么都不做更符合预期
+        ApplyPlaybackRate(Math.Clamp(rate, MinPlaybackRate, MaxPlaybackRate), closePopup: true);
+    }
+
+    /// <summary>
+    /// 唯一的倍速应用入口(预设 / 自定义共用)。
+    /// ★ 顺序: 先让弹幕时钟按新倍速落定当前值, 再真正 SetRate ——
+    ///   反过来先 SetRate 的话, SyncDanmakuClockRate 内部那句 DanmakuClock() 会
+    ///   用**旧速率**外推(而媒体已经按新速率跑了), 那一下就是用户看到的"顿一下"。
+    /// </summary>
+    private void ApplyPlaybackRate(float rate, bool closePopup)
+    {
+        if (_mp == null) return;
+        // 保留两位小数: 避免自定义输入留下 1.1499999 这种值, 显示与存储都不好看
+        rate = Math.Clamp(MathF.Round(rate, 2), MinPlaybackRate, MaxPlaybackRate);
+
+        SyncDanmakuClockRate(rate);
+        try { _mp.SetRate(rate); }
+        catch
+        {
+            ShowSpeedCustomHint("设置倍速失败, 播放器可能正在切换片源");
+            return;
+        }
+
+        UpdateSpeedText(rate);
+        if (SpeedCustomHint != null) SpeedCustomHint.Text = "";
+        if (closePopup && SpeedPopup != null) SpeedPopup.IsOpen = false;
+    }
+
+    /// <summary>把控制栏上的倍速文字同步成实际速率(不传 = 读播放器当前值)。</summary>
+    private void UpdateSpeedText(float? rate = null)
+    {
+        var r = rate ?? _mp?.Rate ?? 1.0f;
+        if (r <= 0) r = 1.0f;
+        if (SpeedText != null) SpeedText.Text = FormatRate(r);
+    }
+
+    /// <summary>带 x 后缀的显示文字, 如 1.0x / 1.25x / 4.0x。</summary>
+    private static string FormatRate(float rate)
+        => FormatRateValue(rate) + "x";
+
+    /// <summary>纯数字显示(用于自定义输入框预填), 如 1.0 / 1.25。</summary>
+    private static string FormatRateValue(float rate)
+        => rate.ToString("0.0##", CultureInfo.InvariantCulture);
+
+    /// <summary>解析用户输入的倍速: 允许 "1.25"、"1.25x"、逗号小数点。</summary>
+    private static bool TryParseSpeed(string? text, out float rate)
+    {
+        rate = 0;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        var s = text.Trim();
+        if (s.EndsWith("x", StringComparison.OrdinalIgnoreCase)) s = s[..^1].Trim();
+        s = s.Replace(',', '.');
+        return float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out rate)
+               && float.IsFinite(rate);
+    }
+
+    private void ShowSpeedCustomHint(string message)
+    {
+        if (SpeedCustomHint != null) SpeedCustomHint.Text = message;
     }
 
     /// <summary>把弹层的右缘与目标按钮的右缘对齐(放在按钮正上方)。</summary>
@@ -4338,7 +4475,7 @@ public partial class PlayerWindow : FluentWindow
             // ★ 浮出提示(2026-10-13 用户要求): 长按快进是**无入口手势**,
             //   不提示的话用户只看到画面变快, 不知道发生了什么、也不知道松手会恢复。
             //   hold=true: 整个长按期间一直挂着, 松手时由 Up 那边换成"已恢复"并淡出。
-            ShowSpeedHint(FastForwardRate.ToString("0.#") + "x 快进中", hold: true);
+            ShowSpeedHint(FormatRate(_fastForwardTarget) + " 快进中", hold: true);
             // 长按触发了, 不再触发单击
             _singleClickTimer?.Stop();
         };
@@ -4434,21 +4571,15 @@ public partial class PlayerWindow : FluentWindow
         _rightGestureActive = true;
         e.Handled = true;   // 别让它冒泡成系统菜单
 
-        // 长按判定: 与左键长按同一个阈值(500ms)、同一个收尾路径。
-        // _longPressFired 由这条计时器置位 —— Up 侧据此分"结束了快进"还是"切铺满"。
-        _longPressTimer?.Stop();
-        _longPressFired = false;
-        _longPressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(LongPressThresholdMs) };
-        _longPressTimer.Tick += (_, _) =>
-        {
-            _longPressTimer!.Stop();
-            // 左键长按可能已经起了(两只手同时按): 别重复起步, 也别覆盖提示
-            if (_isFastForwarding) return;
-            _longPressFired = true;
-            StartFastForward();
-            ShowSpeedHint(FastForwardRate.ToString("0.#") + "x 快进中", hold: true);
-        };
-        _longPressTimer.Start();
+        // ★★ 2026-11-04 合并上游 1.5.4: 右键**不再参与长按快进**。
+        //
+        //   原来是"短右键 = 铺满窗口 / 长右键 ≥500ms = 2x 快进"。问题在于右键的既定语义
+        //   是"收起右侧详情栏"(用户最常用的动作之一), 而按住时长本来就不固定 ——
+        //   一次正常的收起只要手慢一点(500ms 很容易超), 就会莫名变成 2 倍速,
+        //   而且松手才恢复, 用户完全不知道发生了什么。
+        //   ⇒ 长按快进只保留在**左键**上; 右键专注做"铺满/收起详情栏"这一件事。
+        //
+        //   ★ 这里不再挂任何计时器, 所以 Up 侧也不会再判 _longPressFired(见那边同款改动)。
     }
 
     /// <summary>左右键长按共用的判定时长(毫秒)。与左键长按原阈值保持一致。</summary>
@@ -4471,16 +4602,8 @@ public partial class PlayerWindow : FluentWindow
         if (!_rightGestureActive) { e.Handled = true; return; }
         _rightGestureActive = false;
         if (_closing) return;
-        // 长按快进已经起步: 这次右键是"快进手势", 收快进, 不再切铺满
-        if (_longPressFired)
-        {
-            _longPressFired = false;
-            StopFastForward();
-            ShowSpeedHint("已结束快进", hold: false);
-            e.Handled = true;
-            return;
-        }
-        // 短右键: 原有行为 —— 走**同一个开关**(与顶栏按钮共享 _isFillWindow, 不复制逻辑)
+        // ★ 2026-11-04: 右键不再有长按分支(见 OnVideoAreaMouseRightDown 的说明) ——
+        //   每一次右键都只做"铺满/收起详情栏"这一件事。
         ToggleFillWindow();
         e.Handled = true;
     }
@@ -8840,7 +8963,13 @@ public partial class PlayerWindow : FluentWindow
         //   那条链画出来的(与探针顶部的拓扑假设不同, 不同 vout/显卡组合不一样)。
         //   ⇒ 隐藏它风险太大, 不能作为产品行为的默认值。
         //   ⇒ 回到"刷父窗口类背景刷"这一条: 探针实测 242→0, 且画面不受影响。
-        VideoBackdropInterop.PaintClassBackgroundBlack(hwnd);
+        //
+        // ★★ 2026-11-04 合并上游 1.5.4: 白闪/白边的**根治**改成在原生层给宿主窗口
+        //    加 WS_CLIPCHILDREN + 子类化 WM_ERASEBKGND 填黑(见 VideoBackdropInterop)。
+        //    好处是**拖动窗口/最大化/全屏都不再需要 WPF 黑布** —— 那层黑布是"整块变黑"
+        //    和白闪反复横跳的根源。EnsureBlackVideoHost 内部已经包含"类背景刷设黑"这一步,
+        //    所以原来那行 PaintClassBackgroundBlack 不必再单独调(它仍是公开的兜底入口)。
+        VideoBackdropInterop.EnsureBlackVideoHost(hwnd);
     }
 
     // --- 起播后把视频区原生窗口底色刷黑(见 ApplyHwndHostBlackBackground) ---

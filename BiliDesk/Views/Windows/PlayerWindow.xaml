@@ -1153,6 +1153,88 @@
                                             <TextBlock x:Name="SpeedText" Text="1.0x" Foreground="#F2FFFFFF" />
                                         </Button>
 
+                                        <!-- 倍速弹层(2026-11-04 合并上游 1.5.4):
+                                             点倍速按钮弹出「预设列表 + 自定义输入」, 而不是像以前那样
+                                             每点一次循环切一档 —— 0.25x~4.0x 共 11 档, 循环要点十几下。
+                                             Enter 应用、Esc 关闭, 输入 1.15 / 1.15x 都认。 -->
+                                        <Popup x:Name="SpeedPopup"
+                                               Placement="Top" StaysOpen="False" AllowsTransparency="True"
+                                               PopupAnimation="Fade">
+                                            <Border Background="#F0202226" CornerRadius="8" Padding="6"
+                                                    BorderBrush="#33FFFFFF" BorderThickness="1" Width="190">
+                                                <StackPanel>
+                                                    <ListBox x:Name="SpeedList" Background="Transparent"
+                                                             BorderThickness="0" Foreground="White"
+                                                             MaxHeight="230"
+                                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                             SelectionChanged="OnSpeedSelected">
+                                                        <ListBox.ItemContainerStyle>
+                                                            <Style TargetType="ListBoxItem">
+                                                                <!-- 与清晰度弹层同款: 不能设 Focusable=False,
+                                                                     否则鼠标按下时 Focus() 失败会短路选中逻辑 -->
+                                                                <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                                                <Setter Property="Padding" Value="10,6" />
+                                                                <Setter Property="Cursor" Value="Hand" />
+                                                                <Setter Property="ContentTemplate">
+                                                                    <Setter.Value>
+                                                                        <DataTemplate>
+                                                                            <TextBlock Text="{Binding}" Foreground="#F2FFFFFF" />
+                                                                        </DataTemplate>
+                                                                    </Setter.Value>
+                                                                </Setter>
+                                                                <Setter Property="Template">
+                                                                    <Setter.Value>
+                                                                        <ControlTemplate TargetType="ListBoxItem">
+                                                                            <Border x:Name="Bd" Background="Transparent"
+                                                                                    CornerRadius="5" Padding="{TemplateBinding Padding}">
+                                                                                <ContentPresenter VerticalAlignment="Center" />
+                                                                            </Border>
+                                                                            <ControlTemplate.Triggers>
+                                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                                    <Setter TargetName="Bd" Property="Background" Value="#26FFFFFF" />
+                                                                                </Trigger>
+                                                                                <Trigger Property="IsSelected" Value="True">
+                                                                                    <Setter TargetName="Bd" Property="Background" Value="#33FFFFFF" />
+                                                                                </Trigger>
+                                                                            </ControlTemplate.Triggers>
+                                                                        </ControlTemplate>
+                                                                    </Setter.Value>
+                                                                </Setter>
+                                                            </Style>
+                                                        </ListBox.ItemContainerStyle>
+                                                    </ListBox>
+
+                                                    <!-- 自定义倍速: 输入 1.15 / 1.15x 都可以, Enter 应用, Esc 关闭 -->
+                                                    <Border Height="1" Background="#26FFFFFF" Margin="4,4" />
+                                                    <StackPanel Margin="4,2,4,2">
+                                                        <TextBlock Text="自定义倍速 (0.25 – 4.0x)"
+                                                                   Foreground="#B3FFFFFF" FontSize="11" />
+                                                        <Grid Margin="0,6,0,0">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBox x:Name="SpeedCustomText"
+                                                                     Background="#33000000" Foreground="#F2FFFFFF"
+                                                                     BorderBrush="#33FFFFFF" CaretBrush="White"
+                                                                     FontSize="12" Padding="6,4"
+                                                                     VerticalContentAlignment="Center"
+                                                                     KeyDown="OnSpeedCustomKeyDown" />
+                                                            <Button Grid.Column="1"
+                                                                    Style="{StaticResource PlayerTextBtn}"
+                                                                    Margin="6,0,0,0" Padding="10,4"
+                                                                    Click="OnSpeedCustomApply">
+                                                                <TextBlock Text="应用" Foreground="#F2FFFFFF" />
+                                                            </Button>
+                                                        </Grid>
+                                                        <TextBlock x:Name="SpeedCustomHint" Text=""
+                                                                   Foreground="#FFFF7B7B" FontSize="11"
+                                                                   Margin="0,4,0,0" TextWrapping="Wrap" />
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Border>
+                                        </Popup>
+
                                         <!-- 清晰度 -->
                                         <Button Grid.Column="6" x:Name="BtnQuality" Style="{StaticResource PlayerTextBtn}"
                                                 Margin="4,0,0,0" Click="OnQualityClick" ToolTip="切换清晰度">
