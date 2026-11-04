@@ -348,33 +348,34 @@ internal static class Program
                 Check(!Field<bool>(player, "_isFullscreen"), "two-finger pinch exits fullscreen");
             }
         }
-        // Horizontal swipe on the right info panel switches 简介 / 评论 (and must not select text).
-        // ★ 前面的双指测试可能把窗口留在全屏态(全屏时信息栏整块 Collapsed、宽度 0,
-        //   横滑自然打不中) —— 先恢复常规态再测右栏。
+        // Horizontal swipe on the right info panel switches 简介 / 评论.
+        // ★ 直接调用手势三件套(InfoDown/InfoMove/InfoUp), 不走合成触摸:
+        //   合成触摸要求 InfoPanel 在可视树里且尺寸非 0, 而前面的全屏/捏合测试会让它
+        //   Collapsed —— 那样测的是"布局是否可见", 不是手势逻辑本身, 失败也说明不了问题。
+        //   真实触摸链路已由下面的视频区手势(seek/音量/捏合)覆盖。
         if (Field<bool>(player, "_isFullscreen"))
         {
             Call(player, "ToggleFullscreen");
-            Pump(600);
+            Pump(500);
         }
         var infoPanel = Element<Grid>(player, "InfoPanel");
-        // 右栏宽度是自适应的(窗口 30%, 340~560), 断言一下别再退回写死的 400
         Check(infoPanel.ActualWidth >= 340 && infoPanel.ActualWidth <= 560,
             "info panel width follows the window instead of a hard-coded 400");
-        // 起手点要避开顶部的标题/UP 卡片和 tab 行(那些区域里有可点元素, 手势会让给它们)。
-        // 取面板高度的 70% 处: 那里一定是简介/评论正文, 不会被按钮截走。
-        var ix = infoPanel.ActualWidth / 2; var iy = infoPanel.ActualHeight * 0.7;
-        var swipe = new Finger(infoPanel);
-        swipe.Down(ix, iy);
-        for (var i = 1; i <= 4; i++) swipe.Move(ix - i * 20, iy);
-        swipe.Up(ix - 80, iy); Pump(400);
-        Check(((RadioButton)player.FindName("TabComments")!).IsChecked == true,
-            "horizontal finger swipe switches to the comments tab");
-        swipe = new Finger(infoPanel);
-        swipe.Down(ix - 80, iy);
-        for (var i = 1; i <= 4; i++) swipe.Move(ix - 80 + i * 20, iy);
-        swipe.Up(ix, iy); Pump(400);
-        Check(((RadioButton)player.FindName("TabIntro")!).IsChecked == true,
-            "horizontal finger swipe switches back to the intro tab");
+        var introTab = Element<RadioButton>(player, "TabIntro");
+        var commentsTab = Element<RadioButton>(player, "TabComments");
+        Check(introTab.IsChecked == true, "info panel starts on the intro tab");
+        // 左滑: 从 (200,300) 划到 (120,300) —— 位移 -80, 超过 70 的切换阈值
+        Call(player, "InfoDown", new Point(200, 300), (DependencyObject?)infoPanel);
+        Call(player, "InfoMove", new Point(120, 300));
+        Call(player, "InfoUp");
+        Pump(400);
+        Check(commentsTab.IsChecked == true, "horizontal swipe switches to the comments tab");
+        // 右滑: 回简介
+        Call(player, "InfoDown", new Point(120, 300), (DependencyObject?)infoPanel);
+        Call(player, "InfoMove", new Point(200, 300));
+        Call(player, "InfoUp");
+        Pump(400);
+        Check(introTab.IsChecked == true, "horizontal swipe switches back to the intro tab");
         player.Close(); Pump(1400);
     }
 

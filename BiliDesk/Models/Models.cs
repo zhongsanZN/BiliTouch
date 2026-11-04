@@ -1531,6 +1531,12 @@ public class AppSettings
     public int PreferredQualityQn { get; set; } = QualityPreference.DefaultQn;
 
     /// <summary>
+    /// 音轨偏好(2026-11-04)。Auto = 有 Hi-Res 用 Hi-Res, 否则最高 AAC。
+    /// ★ 与 PreferredQualityQn 分开: 画质 qn 与音质 id 是两套取值空间(见 AudioQuality)。
+    /// </summary>
+    public AudioQuality PreferredAudioQuality { get; set; } = AudioQuality.Auto;
+
+    /// <summary>
     /// 首页「推荐」tab 的算法来源。★ 2026-10-03 起固定为网页版(字段仅为兼容老配置保留,
     /// 读取时一律强制 Web, 见 SettingsStore.Load)。
     /// </summary>
@@ -1954,4 +1960,44 @@ public class DynamicItem
     /// <summary>卡片顶部的"作者 · 时间"那一行的第二部分</summary>
     public string AuthorTimeText =>
         string.IsNullOrEmpty(PubTimeText) ? AuthorName : AuthorName + " · " + PubTimeText;
+}
+/// <summary>
+/// 音轨档位(2026-11-04)。
+///
+/// B 站 DASH 里音频分三处, 不是一个数组:
+///   · dash.audio[]        → AAC, id 30216(64k) / 30232(132k) / 30280(192k)
+///   · dash.flac.audio[]   → Hi-Res 无损, id 30251(通常 1.4Mbps), **要大会员且 UP 上传了**
+///   · dash.dolby.audio[]  → 杜比全景声, id 30250, **要大会员**
+///
+/// 之前只读第一处并按带宽取最高, 于是永远拿不到 Hi-Res —— 用户在这台机器上
+/// 就算开了大会员也看不到无损选项。
+/// </summary>
+public enum AudioQuality
+{
+    /// <summary>跟随视频(默认): 有 Hi-Res 用 Hi-Res, 否则用最高 AAC</summary>
+    Auto = 0,
+    /// <summary>标准 AAC(30216, 64k)</summary>
+    Standard = 30216,
+    /// <summary>高品质 AAC(30280, 192k)</summary>
+    High = 30280,
+    /// <summary>Hi-Res 无损 FLAC(30251)</summary>
+    HiRes = 30251,
+    /// <summary>杜比全景声(30250)</summary>
+    Dolby = 30250,
+}
+
+/// <summary>一条可选音轨(界面上列出来的那种)</summary>
+public class AudioTrack
+{
+    public AudioQuality Quality { get; set; }
+    public string Label { get; set; } = "";
+    /// <summary>码率(kbps, 用于标签上显示"无损 1.4Mbps"这种)</summary>
+    public long Bandwidth { get; set; }
+    public string Codecs { get; set; } = "";
+    /// <summary>这条音轨的真实地址(已选好 CDN)</summary>
+    public string Url { get; set; } = "";
+
+    public string DisplayLabel => Bandwidth > 0
+        ? $"{Label} ({Bandwidth / 1000} kbps)"
+        : Label;
 }

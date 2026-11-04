@@ -1616,10 +1616,14 @@ public class ApiClient
     ///   现在与本类其它方法统一为 `(bool ok, string? err, ...)` 开头, 失败原因能直接透给用户。
     /// </summary>
     public async Task<(bool ok, string? err, string? url, List<string> backups, long durationMs,
-        List<(int qn, string label)> qualities, int actualQn, string? audioUrl, DashStreams? remux)>
-        GetPlayUrlAsync(string bvid, long cid, int qn = 80)
+        List<(int qn, string label)> qualities, int actualQn, string? audioUrl, DashStreams? remux,
+        List<AudioTrack> audioTracks, AudioQuality actualAudio)>
+        GetPlayUrlAsync(string bvid, long cid, int qn = 80, AudioQuality audioQuality = AudioQuality.Auto)
     {
         var qualities = new List<(int qn, string label)>();
+        // 音轨结果在所有分支上都要有值(调用方解构时不能少项)
+        var audioTracksOut = new List<AudioTrack>();
+        var actualAudioOut = AudioQuality.Auto;
         try
         {
             await EnsureBuvidAsync();
@@ -1651,18 +1655,22 @@ public class ApiClient
                 if (!string.IsNullOrEmpty(mUrl))
                 {
                     if (mQualities.Count > 0) qualities = mQualities;
-                    return (true, null, mUrl, mBackups, durMux, qualities, mQn, null, null);
+                    return (true, null, mUrl, mBackups, durMux, qualities, mQn, null, null, new List<AudioTrack>(), AudioQuality.Auto);
                 }
                 // durl 取不到(多段切片/大会员/该档无源) → 落到下面的 DASH, 行为与手术前一致
             }
 
-            // ---- DASH(fnval=16): 清晰度不受 html5 平台 720P 限制 ----
+            // ---- DASH: fnval=4048 = 全特性位 ----
+            // 16=DASH 64=HDR 128=4K 256=杜比音频 512=杜比视界 1024=8K 2048=AV1
+            // ★ 2026-11-04: 原来是 fnval=16, 只开 DASH —— 于是**杜比音轨和 Hi-Res 根本不会下发**,
+            //   前端再怎么解析也拿不到。改成 4048 全开, 服务端才会把 dash.dolby / dash.flac 填上
+            //   (当然最终还得看账号权限与 UP 是否上传)。
             var ps = new Dictionary<string, string>
             {
                 ["bvid"] = bvid,
                 ["cid"] = cid.ToString(),
                 ["qn"] = qn.ToString(),
-                ["fnval"] = "16",
+                ["fnval"] = "4048",
                 ["fnver"] = "0",
                 ["fourk"] = "1"
             };
@@ -1768,33 +1776,101 @@ public class ApiClient
                     }
                 }
 
+                // ---- 音轨: 三处都要看(2026-11-04) ----
+                //   dash.audio[]       AAC(30216/30232/30280)
+                //   dash.flac.audio[]  Hi-Res 无损(30251) —— 大会员且 UP 上传了才有
+                //   dash.dolby.audio[] 杜比全景声(30250) —— 大会员
+                // ★ 原来只读第一处并按带宽取最高, 于是 Hi-Res 永远拿不到。
+                //   现在把三处全收进 audioTracks, 再按用户选的档位挑一条。
+                var dashAudioTracks = new List<AudioTrack>();
+                var dashActualAudio = AudioQuality.Auto;
+                // AudioTrack → 原始 JsonElement: 短视频合流要用码率/编码写进容器
+                var audioElements = new Dictionary<AudioTrack, JsonElement>();
+                void AddAudioCandidates(JsonElement a, AudioQuality q, string label)
+                {
+                    var acands = new List<string>();
+                    var abase = GetStr(a, "baseUrl");
+                    if (abase.Length > 0) acands.Add(abase);
+                    if (a.TryGetProperty("backupUrl", out var abu) && abu.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var u in abu.EnumerateArray())
+                        {
+                            var s = u.GetString();
+                            if (!string.IsNullOrEmpty(s)) acands.Add(s);
+                        }
+                    }
+                    if (acands.Count == 0) return;
+                    var track = new AudioTrack
+                    {
+                        Quality = q,
+                        Label = label,
+                        Bandwidth = GetLong(a, "bandwidth"),
+                        Codecs = GetStr(a, "codecs"),
+                        // 音轨复用视频那次测速的结果, 不单独测速(见 SelectSecondaryUrl 的说明)
+                        Url = CdnService.Instance.SelectSecondaryUrl(acands[0], acands),
+                    };
+                    dashAudioTracks.Add(track);
+                    audioElements[track] = a.Clone();
+                }
+
                 if (dash.TryGetProperty("audio", out var audios) && audios.ValueKind == JsonValueKind.Array)
                 {
-                    // 选码率最高的音轨(码率高的那条通常带更好的编码参数), 线路同样避开 mcdn。
-                    // 音轨虽然只有 0.1~0.2Mbps, 但 DASH 是靠 input-slave 挂进来的: 它拉不动
-                    // 会连累整个 input 的起播与跳转(见 DashRemuxer 里"音轨 EOF 拖垮 input"那条)。
-                    long bestBw = -1;
                     foreach (var a in audios.EnumerateArray())
                     {
-                        var bw = GetLong(a, "bandwidth");
-                        if (bw <= bestBw) continue;
-                        var acands = new List<string>();
-                        var abase = GetStr(a, "baseUrl");
-                        if (abase.Length > 0) acands.Add(abase);
-                        if (a.TryGetProperty("backupUrl", out var abu) && abu.ValueKind == JsonValueKind.Array)
+                        var id = (int)GetLong(a, "id");
+                        var q = id switch
                         {
-                            foreach (var u in abu.EnumerateArray())
-                            {
-                                var s = u.GetString();
-                                if (!string.IsNullOrEmpty(s)) acands.Add(s);
-                            }
-                        }
-                        if (acands.Count == 0) continue;
-                        bestBw = bw;
-                        // 音轨复用视频那次测速的结果, 不单独测速(见 SelectSecondaryUrl 的说明)
-                        audioUrl = CdnService.Instance.SelectSecondaryUrl(acands[0], acands);
-                        chosenAudio = a;
+                            30216 => AudioQuality.Standard,
+                            30280 => AudioQuality.High,
+                            _ => AudioQuality.High,   // 30232 等归到"高品质"一档显示
+                        };
+                        var label = id switch
+                        {
+                            30216 => "标准音质",
+                            30280 => "高品质",
+                            30232 => "较高音质",
+                            _ => "音质 " + id,
+                        };
+                        AddAudioCandidates(a, q, label);
                     }
+                }
+
+                if (dash.TryGetProperty("flac", out var flac) && flac.ValueKind == JsonValueKind.Object &&
+                    flac.TryGetProperty("audio", out var flacAudios) &&
+                    flacAudios.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var a in flacAudios.EnumerateArray())
+                        AddAudioCandidates(a, AudioQuality.HiRes, "Hi-Res 无损");
+                }
+
+                if (dash.TryGetProperty("dolby", out var dolby) && dolby.ValueKind == JsonValueKind.Object &&
+                    dolby.TryGetProperty("audio", out var dolbyAudios) &&
+                    dolbyAudios.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var a in dolbyAudios.EnumerateArray())
+                        AddAudioCandidates(a, AudioQuality.Dolby, "杜比全景声");
+                }
+
+                // 按档位挑一条:
+                //   Auto  → Hi-Res > 杜比 > 最高 AAC(用户没选就给他最好的)
+                //   其它  → 先找完全匹配的档; 找不到就退到"该档位上最接近的"(见下)
+                AudioTrack? pick = null;
+                if (audioQuality == AudioQuality.Auto)
+                {
+                    pick = dashAudioTracks.FirstOrDefault(t => t.Quality == AudioQuality.HiRes)
+                        ?? dashAudioTracks.FirstOrDefault(t => t.Quality == AudioQuality.Dolby)
+                        ?? dashAudioTracks.OrderByDescending(t => t.Bandwidth).FirstOrDefault();
+                }
+                else
+                {
+                    pick = dashAudioTracks.FirstOrDefault(t => t.Quality == audioQuality)
+                        ?? dashAudioTracks.OrderByDescending(t => t.Bandwidth).FirstOrDefault();
+                }
+                if (pick != null)
+                {
+                    audioUrl = pick.Url;
+                    dashActualAudio = pick.Quality;
+                    if (audioElements.TryGetValue(pick, out var el)) chosenAudio = el;
                 }
 
                 if (!string.IsNullOrEmpty(videoUrl))
@@ -1821,7 +1897,7 @@ public class ApiClient
                             AudioCodecs = GetStr(au, "codecs")
                         };
                     }
-                    return (true, null, videoUrl, backups, dur, qualities, chosenQn, audioUrl, remux);
+                    return (true, null, videoUrl, backups, dur, qualities, chosenQn, audioUrl, remux, dashAudioTracks, dashActualAudio);
                 }
             }
 
@@ -1831,15 +1907,17 @@ public class ApiClient
             var (mUrl2, mBackups2, mQn2, mQualities2, dur2) = await FetchMuxedAsync(bvid, cid, qn);
             if (mUrl2 == null)
                 return (false, "DASH 与 durl 都没能取到可播放的地址(可能是大会员/付费专属, 或该清晰度无源)",
-                    null, new List<string>(), 0, qualities, 0, null, null);
+                    null, new List<string>(), 0, qualities, 0, null, null,
+                    new List<AudioTrack>(), AudioQuality.Auto);
             if (mQualities2.Count > 0) qualities = mQualities2;
-            return (true, null, mUrl2, mBackups2, dur2, qualities, mQn2, null, null);
+            return (true, null, mUrl2, mBackups2, dur2, qualities, mQn2, null, null, new List<AudioTrack>(), AudioQuality.Auto);
         }
         catch (Exception ex)
         {
             App.ReportError(ex);
             return (false, "获取播放地址失败: " + ex.Message,
-                null, new List<string>(), 0, qualities, 0, null, null);
+                null, new List<string>(), 0, qualities, 0, null, null,
+                new List<AudioTrack>(), AudioQuality.Auto);
         }
     }
 

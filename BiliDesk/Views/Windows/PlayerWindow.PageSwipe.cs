@@ -36,7 +36,7 @@ public partial class PlayerWindow
     private bool _infoPageAnimating, _infoGestureMoved, _infoPageSwitching;
     private double _infoDragDx;
 
-    private void InfoDown(Point p, DependencyObject? source)
+    internal void InfoDown(Point p, DependencyObject? source)
     {
         _infoSwipeStart = p;
         _infoSwipeStartTick = Environment.TickCount64;
@@ -48,7 +48,7 @@ public partial class PlayerWindow
     }
 
     /// <summary>Returns true when the move was consumed by the page drag.</summary>
-    private bool InfoMove(Point p)
+    internal bool InfoMove(Point p)
     {
         if (_infoPageAnimating) return false;
         var dx = p.X - _infoSwipeStart.X;
@@ -79,7 +79,7 @@ public partial class PlayerWindow
     }
 
     /// <summary>Returns true when the release was consumed (page animation or click suppression).</summary>
-    private bool InfoUp()
+    internal bool InfoUp()
     {
         // ★ 降级路径: 拖不起来(BeginPageDrag 失败)但方向已判定为横向 —— 按位移直接切 tab。
         //   这条保证"划了至少有反应", 不会因为布局还没出高度就整段失灵。

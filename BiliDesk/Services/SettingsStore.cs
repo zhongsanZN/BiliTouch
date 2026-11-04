@@ -190,6 +190,15 @@ public class SettingsStore
     public int PreferredQualityQn { get; set; } = QualityPreference.DefaultQn;
 
     /// <summary>
+    /// 音轨偏好(2026-11-04)。Auto = 有 Hi-Res 用 Hi-Res, 否则用最高 AAC。
+    ///
+    /// ★ 单独一个设置而不是塞进 PreferredQualityQn: 画质(qn)和音质是**两套完全不同的
+    ///   取值空间** —— qn 是 16/32/64/80/112/116/120, 音质是 30216/30280/30251/30250。
+    ///   混在一起会出现"选了 Hi-Res 结果画质掉到 480P"这种灾难。
+    /// </summary>
+    public Models.AudioQuality PreferredAudioQuality { get; set; } = Models.AudioQuality.Auto;
+
+    /// <summary>
     /// 首页「推荐」用哪套算法。★ 2026-10-03 起**固定为网页版**, 该字段仅为兼容老配置保留 ——
     /// 读取时丢弃、写入时固定写 Web, 代码里没有任何地方按它分支。
     ///
@@ -564,6 +573,7 @@ public class SettingsStore
         DanmakuFontScalePercent = DanmakuFontScalePercent,
         DanmakuSpeedLevel = DanmakuSpeedLevel,
         PreferredQualityQn = PreferredQualityQn,
+        PreferredAudioQuality = PreferredAudioQuality,
         RecommendSource = RecommendSource,
         AccentColor = AccentColor,
         SponsorBlockEnabled = SponsorBlockEnabled,

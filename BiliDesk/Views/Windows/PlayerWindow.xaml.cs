@@ -338,6 +338,11 @@ public partial class PlayerWindow : FluentWindow
     private int _liveQn;
     /// <summary>直播**实际**拿到的档位(服务端可能降级, 界面要按这个写)</summary>
     private int _liveActualQn;
+
+    /// <summary>当前视频可选的音轨(2026-11-04)。空 = 这条视频没有多档音质。</summary>
+    private List<Models.AudioTrack> _audioTracks = new();
+    /// <summary>当前**实际在播**的音质(服务端可能降级, 界面按这个打勾)</summary>
+    private Models.AudioQuality _actualAudio = Models.AudioQuality.Auto;
     // 切换清晰度后要恢复到的进度(>0 生效, 起播后清零)
     private long _resumeAfterSwitchMs;
 
@@ -1724,9 +1729,13 @@ public partial class PlayerWindow : FluentWindow
 
             SetLoadingText("正在获取播放地址…");
             // 默认请求 1080P(qn=80), B 站会按登录态/大会员返回实际可用的清晰度
-            var (playOk, playErr, main, backups, durMs, qualities, actualQn, audioUrl, remux) =
-                await Svc.Api.GetPlayUrlAsync(_currentBvid, _currentCid, _currentQn);
+            var (playOk, playErr, main, backups, durMs, qualities, actualQn, audioUrl, remux,
+                audioTracks, actualAudio) =
+                await Svc.Api.GetPlayUrlAsync(_currentBvid, _currentCid, _currentQn, Svc.Settings.PreferredAudioQuality);
             tPlayUrl = sw.ElapsedMilliseconds;
+            // 记下这条视频的音轨清单与实际在播的档位: 清晰度菜单里的"音质"分区靠它们渲染
+            _audioTracks = audioTracks;
+            _actualAudio = actualAudio;
             if (_closing || gen != _loadGen) return;
             // 以前这里不判成败, 直接拿 main 往下走 —— 取不到地址时 main 是 null, 一路走到
             // BuildMedia(null) 才炸, 用户看到的是一句语焉不详的"打开失败"。
@@ -3669,6 +3678,29 @@ public partial class PlayerWindow : FluentWindow
             QualityList.Items.Clear();
             foreach (var (qn, label) in _qualities)
                 QualityList.Items.Add(new ListBoxItem { Tag = qn, Content = label });
+
+            // ---- 音质分区(2026-11-04) ----
+            // ★ 为什么和画质放同一个弹出菜单: 播放器控制栏已经排满(播放/时间/音量/倍速/
+            //   清晰度/弹幕/全屏), 再塞一个"音质"按钮会把窄窗口挤爆。而"画质/音质"本就是
+            //   用户心里的同一件事(我想看得更好/听得更好), 同一个菜单里分区最自然。
+            if (_audioTracks.Count > 0)
+            {
+                QualityList.Items.Add(new ListBoxItem
+                {
+                    Content = "── 音质 ──",
+                    IsEnabled = false,          // 纯分隔, 不可选
+                    Focusable = false,
+                    Padding = new Thickness(6, 6, 6, 3),
+                });
+                foreach (var at in _audioTracks)
+                {
+                    QualityList.Items.Add(new ListBoxItem
+                    {
+                        Tag = at,               // Tag 是 AudioTrack 而不是 int, 靠类型区分
+                        Content = (at.Quality == _actualAudio ? "✓ " : "") + at.DisplayLabel,
+                    });
+                }
+            }
             if (actualQn > 0) _currentQn = actualQn;
             // ★★★ 按钮上的文字必须按"**接口实际给的**档位"或"用户的偏好"来取,
             //   **绝不能**对 _currentQn 直接调 QnToLabel(2026-10-04 修):
@@ -3748,10 +3780,86 @@ public partial class PlayerWindow : FluentWindow
     private void OnQualitySelected(object sender, SelectionChangedEventArgs e)
     {
         if (_fillingQualityMenu || QualityPopup == null) return;
-        if (QualityList.SelectedItem is not ListBoxItem li || li.Tag is not int qn) return;
+        if (QualityList.SelectedItem is not ListBoxItem li) return;
+        // 音质项: Tag 是 AudioTrack
+        if (li.Tag is Models.AudioTrack track)
+        {
+            QualityPopup.IsOpen = false;
+            if (_switchingQuality) return;
+            _ = SwitchAudioQualityAsync(track.Quality);
+            return;
+        }
+        if (li.Tag is not int qn) return;
         QualityPopup.IsOpen = false;
         if (qn == _currentQn || _switchingQuality) return;
         _ = SwitchQualityAsync(qn);
+    }
+
+    /// <summary>
+    /// 切换音质(2026-11-04)。只换音轨, **不动画面、不 seek**。
+    ///
+    /// 为什么要单独一条而不是复用 SwitchQualityAsync:
+    ///   换清晰度要重新取整个 playurl 并重建 input(画面会闪一下); 而换音质只要把
+    ///   播放中的音轨换掉。但 libvlc 的 input-slave 是**建 input 时**定的, 运行中换不了,
+    ///   所以实际上仍要重建 input —— 只是**保持同一个视频地址与进度**, 观感上只有极短的停顿。
+    ///
+    /// ★ 选不到用户要的档(没大会员/UP 没传 Hi-Res)时**不静默降级**:
+    ///   弹一句说明, 并把偏好落回 Auto, 免得用户以为选了 Hi-Res 就真在听无损。
+    /// </summary>
+    private async Task SwitchAudioQualityAsync(Models.AudioQuality quality)
+    {
+        if (_closing || _switchingQuality || _isLive || _currentCid <= 0) return;
+        _switchingQuality = true;
+        try
+        {
+            var resumeMs = Math.Max(0, _mp.Time);
+            ShowLoading("正在切换音质…");
+            var (ok, err, main, backups, durMs, qualities, actualQn, audioUrl, remux,
+                audioTracks, actualAudio) =
+                await Svc.Api.GetPlayUrlAsync(_currentBvid, _currentCid, _currentQn, quality);
+            if (_closing) return;
+            if (!ok || string.IsNullOrEmpty(main))
+            {
+                ShowFail(err ?? "切换音质失败");
+                return;
+            }
+            if (actualAudio != quality)
+            {
+                // 服务端没给这一档 —— 说清楚, 并把偏好退回 Auto(下次别再要一个拿不到的)
+                Svc.Toast.Show(quality switch
+                {
+                    Models.AudioQuality.HiRes => "这条视频没有 Hi-Res 音轨(需大会员且 UP 主上传)",
+                    Models.AudioQuality.Dolby => "这条视频没有杜比音轨(需大会员)",
+                    _ => "该音质档位不可用, 已回退到最佳可用音质",
+                });
+                Svc.Settings.PreferredAudioQuality = Models.AudioQuality.Auto;
+            }
+            else
+            {
+                Svc.Settings.PreferredAudioQuality = quality;
+            }
+            _audioTracks = audioTracks;
+            _actualAudio = actualAudio;
+
+            // 重建 input: 音轨是建 input 时挂上去的(input-slave), 运行中换不了。
+            // ★ 用与首次加载**同一个** BuildMedia, 免得两处选项慢慢漂移
+            //   (Referer/UA/缓存策略/音频挂载有一处不同就是"换完音质播不动")。
+            var media = BuildMedia(main, audioUrl);
+            if (!PlayMedia(media))
+            {
+                ShowFail("切换音质失败");
+                return;
+            }
+            FillQualityMenu(actualQn > 0 ? actualQn : _currentQn);
+        }
+        catch (Exception ex)
+        {
+            ShowFail("切换音质失败: " + ex.Message);
+        }
+        finally
+        {
+            _switchingQuality = false;
+        }
     }
 
     /// <summary>
@@ -3883,8 +3991,9 @@ public partial class PlayerWindow : FluentWindow
             // 换清晰度 = 换成另一路流: 上一档的合流立刻作废(缓存键里带 qn, 不会互相污染)
             CancelRemuxPrefetch();
 
-            var (_, playErr, main, backups, _, qualities, actualQn, audioUrl, remux) =
-                await Svc.Api.GetPlayUrlAsync(_currentBvid, _currentCid, qn);
+            var (_, playErr, main, backups, _, qualities, actualQn, audioUrl, remux,
+                audioTracks, actualAudio) =
+                await Svc.Api.GetPlayUrlAsync(_currentBvid, _currentCid, qn, Svc.Settings.PreferredAudioQuality);
             if (_closing) return;
 
             // 和首次加载同一套: 这一档已缓存就播本地, 没缓存就下完再播(单文件源: 跳转快、结尾完整)
