@@ -47,9 +47,12 @@ public partial class PlayerWindow
         VideoAreaRoot.Unloaded += (_, _) => CancelVideoTouch();
         Deactivated += OnTouchWindowDeactivated;
         // Horizontal swipe over the right-side info panel switches 简介 / 评论 (mobile-style).
-        InfoPanel.PreviewTouchDown += OnInfoTouchDown;
+        // ★ 2026-11-04: 按下走 OnInfoTouchDownCapture(它内部会先 CaptureTouch 再转给 OnInfoTouchDown)。
+        //   捕获是"手指滑出面板/滑到视频区仍能收尾"的关键, 见那个方法的说明。
+        InfoPanel.PreviewTouchDown += OnInfoTouchDownCapture;
         InfoPanel.PreviewTouchMove += OnInfoTouchMove;
         InfoPanel.PreviewTouchUp += OnInfoTouchUp;
+        InfoPanel.LostTouchCapture += OnInfoTouchLostCapture;
         InfoPanel.PreviewStylusDown += OnInfoStylusDown;
         InfoPanel.PreviewStylusMove += OnInfoStylusMove;
         InfoPanel.PreviewStylusUp += OnInfoStylusUp;
@@ -198,6 +201,22 @@ public partial class PlayerWindow
 
     private void OnVideoTouchMove(object? sender, TouchEventArgs e)
     {
+        // ★★★ 2026-11-04 兜底: 右栏翻页手势滑到**视频区**时, 事件会落到这里。
+        //   视频区是独立的 HWND(空气层浮窗), InfoPanel 收不到它的 Move。
+        //   如果此刻正有一个右栏翻页手势在进行, 就把它接过来继续算 ——
+        //   否则面板会停在简介/评论中间(用户报的那个现象)。
+        //
+        // ★★ 判据必须同时满足两条, 缺一不可:
+        //     ① `_infoDraggingPage` —— 确实有右栏手势在进行;
+        //     ② **这个 TouchDevice 不在 _videoTouches 里** —— 它属于右栏那次手势,
+        //        不是视频区自己按下的手指。
+        //   只判 ① 会把**视频区的双指手势**误吞(那两根手指正在捏合/全屏,
+        //   _videoTouches 里有它们) —— 那样双击、双指全屏、长按快进全都会失灵。
+        if (_infoDraggingPage && !_videoTouches.Contains(e.TouchDevice))
+        {
+            if (InfoMove(e.GetTouchPoint(InfoPanel).Position)) e.Handled = true;
+            return;
+        }
         if (!_videoTouches.Contains(e.TouchDevice)) return;
         e.Handled = true;
         // 双指: 只做捏合, 不做进度/音量/亮度(那些是单指手势)
@@ -265,6 +284,14 @@ public partial class PlayerWindow
 
     private void OnVideoTouchUp(object? sender, TouchEventArgs e)
     {
+        // 与 OnVideoTouchMove 同款兜底:**收尾必须执行**, 否则面板停在半路。
+        // 判据同 Move(两条都要满足), 否则会吞掉视频区自己的触摸抬起。
+        if (_infoDraggingPage && !_videoTouches.Contains(e.TouchDevice))
+        {
+            if (InfoUp()) e.Handled = true;
+            _infoHorizontalDecided = false;
+            return;
+        }
         if (!_videoTouches.Remove(e.TouchDevice)) return;
         e.Handled = true;
         _touchHoldTimer?.Stop();

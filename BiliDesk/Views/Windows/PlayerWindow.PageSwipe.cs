@@ -47,6 +47,29 @@ public partial class PlayerWindow
         _infoDragDx = 0;
     }
 
+    /// <summary>
+    /// 触摸在 InfoPanel 上的按下(2026-11-04 加入**捕获**)。
+    ///
+    /// ★★★ 修"手指向左滑到视频那边时滑动停掉, 右侧面板停在简介/评论中间":
+    ///
+    ///   根因: 视频区是 **另一个 HWND** —— LibVLC 的 VideoView 通过浮动子窗口渲染,
+    ///   它不在 InfoPanel 的可视树里。手指一旦移出 InfoPanel 边界落到那块原生窗口上,
+    ///   后续的 TouchMove/TouchUp **再也不会派发到 InfoPanel** ——
+    ///   于是 TranslateTransform 停在中途, `FinishPageDrag` 永不执行, 面板就卡在中间。
+    ///
+    ///   修法: 按下时立刻 `CaptureTouch`, 把这只手指的后续事件**锁定**在本元素上。
+    ///   捕获之后即便手指移到视频区、甚至移出窗口, Move/Up 仍然会送到这里,
+    ///   收尾逻辑得以正常执行(要么吸附过去, 要么弹回)。
+    ///
+    /// ★ 只在"够格起步"时才捕获(见 InfoSwipeAllowed): 落在滑块/输入框上的按下
+    ///   不该被我们抢走, 否则那些控件自己的拖动手势会失灵。
+    /// </summary>
+    private void OnInfoTouchDownCapture(object? sender, TouchEventArgs e)
+    {
+        if (_infoSwipeArmed) InfoPanel.CaptureTouch(e.TouchDevice);
+        OnInfoTouchDown(sender, e);
+    }
+
     /// <summary>Returns true when the move was consumed by the page drag.</summary>
     internal bool InfoMove(Point p)
     {
@@ -196,6 +219,12 @@ public partial class PlayerWindow
                 PageHost.Height = double.NaN;
                 _infoPageAnimating = false;
                 _infoHorizontalDecided = false;
+                // ★★★ 2026-11-04: 必须在这里清掉 _infoDraggingPage。
+                //   原来只有**手指抬起**(InfoUp 里)会清它; 而触控板翻页是**直接调**
+                //   FinishPageDrag 进来的, 没有经过 InfoUp ⇒ 这个标志永远留在 true。
+                //   后果: 下一次手势(无论触控板还是手指)都会被
+                //   `if (_infoDraggingPage) return` 这个守卫挡掉 —— 表现为"划了没反应"。
+                _infoDraggingPage = false;
             };
             c.BeginAnimation(TranslateTransform.XProperty, moveOut);
             o.BeginAnimation(TranslateTransform.XProperty, moveIn);
@@ -214,6 +243,7 @@ public partial class PlayerWindow
                 PageHost.Height = double.NaN;
                 _infoPageAnimating = false;
                 _infoHorizontalDecided = false;
+                _infoDraggingPage = false;   // 同上: 弹回也要清, 否则下次手势被挡
             };
             c.BeginAnimation(TranslateTransform.XProperty, back);
             o.BeginAnimation(TranslateTransform.XProperty, backSide);
@@ -306,6 +336,20 @@ public partial class PlayerWindow
     {
         if (InfoUp()) e.Handled = true;
         _infoHorizontalDecided = false;
+        // 与 OnInfoTouchDownCapture 对称: 收尾后主动放开捕获
+        try { InfoPanel.ReleaseTouchCapture(e.TouchDevice); } catch { }
+    }
+
+    /// <summary>
+    /// 触摸捕获被别处抢走(窗口失活、别的元素抢捕获等)。
+    /// ★ 必须在这里也做一次收尾: 否则面板会永远停在中途 —— 与"滑出面板卡住"同一个后果。
+    /// </summary>
+    private void OnInfoTouchLostCapture(object? sender, TouchEventArgs e)
+    {
+        if (_infoDraggingPage) FinishPageDrag(switchPage: false, PageIndex);
+        _infoDraggingPage = false;
+        _infoHorizontalDecided = false;
+        _infoDragDx = 0;
     }
 
     private void OnInfoStylusDown(object? sender, StylusEventArgs e) =>

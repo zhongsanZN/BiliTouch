@@ -429,6 +429,15 @@ internal static class Program
         player.SwitchInfoPageByWheelForTest(1); Pump(400);
         Check(commentsTab.IsChecked == true, "wheel right switches the info panel to comments");
         player.SwitchInfoPageByWheelForTest(-1); Pump(400);
+        // ★ 触控板翻页必须走完整生命周期(BeginPageDrag → FinishPageDrag), 否则就是硬切。
+        //   验证收尾后 _infoDraggingPage / _infoPageAnimating 都已归位 ——
+        //   这两个标志若留在 true, 下一次手势会被自己的"进行中"守卫挡掉(表现为没反应)。
+        Pump(400);
+        Check(!Field<bool>(player, "_infoDraggingPage"),
+            "wheel page switch completes instead of leaving a half-done drag");
+        Check(!Field<bool>(player, "_infoPageAnimating"),
+            "wheel page switch clears the animating flag so the next gesture works");
+
         Check(introTab.IsChecked == true, "wheel left switches the info panel back to the intro");
 
         // 右滑: 回简介

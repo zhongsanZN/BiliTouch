@@ -94,21 +94,35 @@ public partial class PlayerWindow
     private void SwitchInfoPageByWheel(int direction)
     {
         if (direction == 0) return;
-        // ★★★ 2026-11-04 用户要求: 「触控板逻辑要和触屏对齐, 触屏做得很好但触控板是硬切」。
-        //
-        //   原来这里直接 `TabComments.IsChecked = true` + 一个 44px 入场动画 —— 那是硬切:
-        //   内容瞬间换掉、只有一点点横向滑入。而触屏走的是
-        //   BeginPageDrag → ApplyPageDrag → FinishPageDrag(两页并排、跟手、吸附)。
-        //   两者观感不同, 状态也不共享(触屏用 _infoDraggingPage / PageIndex,
-        //   触控板只动 RadioButton) —— 于是"先滚轮切、再手指切"就会打架。
-        //
-        //   ⇒ 现在触控板也走**同一个 FinishPageDrag**: 不跟手(触控板没有绝对坐标),
-        //     但用同一个切换函数、同一套动画、同一份 PageIndex。状态只有一个来源。
         if (_infoDraggingPage || _infoPageAnimating) return;   // 触屏手势进行中不接管
+        if (PageHost == null || PageHost.ActualWidth <= 1) return;
 
         var target = PageIndex + direction;
         if (target is not (0 or 1)) return;
 
+        // ★★★ 2026-11-04 用户反馈"触控板还是硬切, 看不到另一边的内容":
+        //
+        //   上一版我只调 `FinishPageDrag`, **没有先 `BeginPageDrag`** ——
+        //   而 BeginPageDrag 正是"把另一页摆到侧面 + 锁高"的那一步。
+        //   少了它, 另一页的位移还停在 0, `FinishPageDrag` 里
+        //   "滑出去 + 滑进来"的动画就退化成"当前页滑走、另一页原地淡入" ⇒ 观感就是硬切。
+        //
+        //   ⇒ 现在先按触屏的方式把两页摆好(当前页居中、另一页在侧面),
+        //     FinishPageDrag 才有东西可滑 —— 与手指横滑看到的**完全同一条动画**。
+        var width = Math.Max(1, PageHost.ActualWidth);
+        _infoDragDx = direction > 0 ? -width : width;   // 符号决定另一页摆在哪侧
+        if (!BeginPageDrag())
+        {
+            // 布局还没出高度(刚切回面板): 退回直接切 tab, 至少不吞掉这次操作
+            _infoPageSwitching = true;
+            try
+            {
+                if (target == 1) TabComments.IsChecked = true;
+                else TabIntro.IsChecked = true;
+            }
+            finally { _infoPageSwitching = false; }
+            return;
+        }
         FinishPageDrag(switchPage: true, target);
     }
 }
