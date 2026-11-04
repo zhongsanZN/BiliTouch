@@ -226,9 +226,11 @@ public partial class PlayerWindow
         {
             if (_touchDoubleTap)
             {
+                // 双击 = 播放/暂停(手机端同款)。★ 不再切全屏 —— 用户明确要求。
                 _touchLastTapAt = 0;
+                _touchTapTimer?.Stop();
                 ShowControls();
-                ToggleFullscreen();
+                OnPlayPauseClick(this, new RoutedEventArgs());
             }
             else
             {

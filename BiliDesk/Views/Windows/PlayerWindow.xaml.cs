@@ -4061,7 +4061,8 @@ public partial class PlayerWindow : FluentWindow
         // 记下"这一下是我起的" —— Up 里靠它识别弹层余波
         _videoGestureActive = true;
 
-        // 双击: 立即全屏, 取消所有挂起的单击/长按动作, 并抑制后续 Up 的单击排队
+        // 双击: 播放/暂停(与手机端一致)。★ 不再切全屏 —— 用户明确要求"不需要双击全屏"。
+        // 立即执行, 取消所有挂起的单击/长按动作, 并抑制后续 Up 的单击排队。
         if (e.ClickCount >= 2)
         {
             _suppressSingleClick = true;
@@ -4069,7 +4070,7 @@ public partial class PlayerWindow : FluentWindow
             _singleClickTimer?.Stop();
             _longPressTimer?.Stop();
             _longPressFired = false;
-            ToggleFullscreen();
+            OnPlayPauseClick(this, new RoutedEventArgs());
             e.Handled = true;
             return;
         }
@@ -4117,7 +4118,7 @@ public partial class PlayerWindow : FluentWindow
 
         _longPressTimer?.Stop();
 
-        // 双击已被 Down 处理过(全屏), 这里直接吞掉, 绝不能再排一次播放/暂停
+        // 双击已被 Down 处理过(播放/暂停), 这里直接吞掉, 绝不能再排一次播放/暂停
         if (_suppressSingleClick)
         {
             _suppressSingleClick = false;

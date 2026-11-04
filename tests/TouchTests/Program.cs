@@ -240,6 +240,18 @@ internal static class Program
             player.PlayLocalFile(Path.GetFullPath(videoPath)); Pump(1800);
             var mp = Field<LibVLCSharp.Shared.MediaPlayer>(player, "_mp");
             Check(mp.IsPlaying && mp.Length > 10000, "real local video starts through packaged VLC libraries");
+            // 双击 = 播放/暂停, 且不能顺手把窗口切成全屏(用户明确不要双击全屏)
+            var wasFullscreen = Field<bool>(player, "_isFullscreen");
+            var playingBefore = mp.IsPlaying;
+            var dbl = new Finger(root);
+            dbl.Down(x, y); dbl.Up(x, y); Pump(60);
+            dbl.Down(x, y); dbl.Up(x, y); Pump(400);
+            Check(mp.IsPlaying != playingBefore, "double tap toggles playback");
+            Check(Field<bool>(player, "_isFullscreen") == wasFullscreen, "double tap does not toggle fullscreen");
+            dbl = new Finger(root);
+            dbl.Down(x, y); dbl.Up(x, y); Pump(60);
+            dbl.Down(x, y); dbl.Up(x, y); Pump(600);
+            Check(mp.IsPlaying == playingBefore, "second double tap restores playback state");
             // Long press only arms while playing: before playback 2x would be a no-op.
             finger = new Finger(root); finger.Down(x, y); Pump(800);
             Check(Field<bool>(player, "_isFastForwarding"), "long touch starts temporary fast forward");
@@ -261,7 +273,11 @@ internal static class Program
         }
         // Horizontal swipe on the right info panel switches 简介 / 评论 (and must not select text).
         var infoPanel = Element<Grid>(player, "InfoPanel");
-        var ix = infoPanel.ActualWidth / 2; var iy = 140;
+        // 右栏宽度是自适应的(窗口 30%, 340~560), 断言一下别再退回写死的 400
+        Check(infoPanel.ActualWidth >= 340 && infoPanel.ActualWidth <= 560,
+            "info panel width follows the window instead of a hard-coded 400");
+        // 起手点要避开顶部的标题/UP 卡片和 tab 行(那些区域里有可点元素, 手势会让给它们)
+        var ix = infoPanel.ActualWidth / 2; var iy = Math.Min(360, infoPanel.ActualHeight * 0.6);
         var swipe = new Finger(infoPanel);
         swipe.Down(ix, iy);
         for (var i = 1; i <= 4; i++) swipe.Move(ix - i * 20, iy);
