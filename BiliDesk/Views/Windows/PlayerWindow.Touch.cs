@@ -20,6 +20,15 @@ public partial class PlayerWindow
     private double _touchBrightness = 1, _touchStartBrightness;
     private bool _touchDoubleTap, _touchOwnsSeek;
     private bool _lastPlayerInputWasTouch;
+
+    // ---- 双指捏合 = 全屏 / 退出全屏 ----
+    // 手机/平板上这是最自然的"放大画面"手势: 两指张开 → 全屏, 捏合 → 退出。
+    // 判定用**两指距离的相对变化**而不是绝对距离: 屏幕大小、DPI、手指粗细都不影响手感。
+    private bool _pinchActive;
+    private double _pinchStartDistance;
+    private bool _pinchTriggered;
+    /// <summary>张开到 1.6 倍触发全屏; 捏合到 0.6 倍触发退出。留足余量, 轻微抖动不会误触发。</summary>
+    private const double PinchInScale = 1.6, PinchOutScale = 0.6;
     /// <summary>Next time the touch gesture may repaint the overlay (see TouchUiDue).</summary>
     private long _touchUiNextAt;
     private const int TouchUiIntervalMs = 45;
@@ -79,6 +88,13 @@ public partial class PlayerWindow
             e.Handled = true;
             if (e.TouchDevice.Capture(VideoAreaRoot)) _videoTouches.Add(e.TouchDevice);
             CancelTouchAction();
+            // 第二根手指落下 = 捏合手势的起点。记下两指初始间距(相对值判定, 见字段说明)
+            if (_videoTouches.Count == 2)
+            {
+                _pinchStartDistance = CurrentPinchDistance();
+                _pinchActive = _pinchStartDistance > 24;   // 两指几乎重合时不做捏合
+                _pinchTriggered = false;
+            }
             return;
         }
         // Use the routed source, never IsMouseOver: a finger does not need a mouse cursor.
@@ -121,11 +137,64 @@ public partial class PlayerWindow
         _touchHoldTimer.Start();
     }
 
+    /// <summary>当前两指间距(取前两根按下的手指)。拿不到就返回 0, 调用方会当成"没在捏"。</summary>
+    private double CurrentPinchDistance()
+    {
+        TouchDevice? first = null, second = null;
+        foreach (var d in _videoTouches)
+        {
+            if (first == null) first = d;
+            else if (second == null) { second = d; break; }
+        }
+        if (first == null || second == null) return 0;
+        var a = first.GetTouchPoint(VideoAreaRoot).Position;
+        var b = second.GetTouchPoint(VideoAreaRoot).Position;
+        return (a - b).Length;
+    }
+
+    /// <summary>
+    /// 双指捏合 → 全屏 / 退出全屏。
+    ///
+    /// ★ 为什么用**相对比例**而不是绝对距离: 手指间距在不同 DPI、不同屏幕、不同人手里差别很大,
+    ///   1.6 倍张开 / 0.6 倍捏合是比例判据, 谁做都触发得出来。
+    /// ★ 一次手势只触发一次(_pinchTriggered): 用户张开后常常还会继续挪一下, 不能连切两次。
+    /// ★ 全屏走 ToggleFullscreen 之外的分支: 已经是全屏就不再重复进, 捏合退出同理。
+    /// </summary>
+    private void CheckPinch()
+    {
+        if (!_pinchActive || _pinchTriggered || _pinchStartDistance <= 0) return;
+        var scale = CurrentPinchDistance() / _pinchStartDistance;
+        if (scale >= PinchInScale)
+        {
+            _pinchTriggered = true;
+            if (!_isFullscreen)
+            {
+                ToggleFullscreen();
+                ShowSpeedHint("双指张开 · 全屏", hold: false);
+            }
+        }
+        else if (scale <= PinchOutScale)
+        {
+            _pinchTriggered = true;
+            if (_isFullscreen)
+            {
+                ToggleFullscreen();
+                ShowSpeedHint("双指捏合 · 退出全屏", hold: false);
+            }
+        }
+    }
+
     private void OnVideoTouchMove(object? sender, TouchEventArgs e)
     {
         if (!_videoTouches.Contains(e.TouchDevice)) return;
         e.Handled = true;
-        if (_touchSession == null || _videoTouches.Count != 1) return;
+        // 双指: 只做捏合, 不做进度/音量/亮度(那些是单指手势)
+        if (_videoTouches.Count >= 2)
+        {
+            CheckPinch();
+            return;
+        }
+        if (_touchSession == null) return;
         var point = e.GetTouchPoint(VideoAreaRoot).Position;
         _touchSession.Move(point.X, point.Y);
         if (_touchSession.Action == PlayerTouchAction.Pending) return;
@@ -187,6 +256,8 @@ public partial class PlayerWindow
         if (!_videoTouches.Remove(e.TouchDevice)) return;
         e.Handled = true;
         _touchHoldTimer?.Stop();
+        // 双指手势收场: 少于两指就不再是捏合(剩下一根也不该接着做单指手势)
+        if (_videoTouches.Count < 2) _pinchActive = false;
         var action = _touchSession?.Action ?? PlayerTouchAction.Canceled;
         // Evaluate the final position too: some digitizers coalesce the last Move into Up.
         if (_touchSession != null && action != PlayerTouchAction.Canceled && _videoTouches.Count == 0)

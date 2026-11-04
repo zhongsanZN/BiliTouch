@@ -89,6 +89,11 @@ public class PlayerService
             if (ReferenceEquals(_window, win)) _window = null;
         };
         _window = win;
+        // ★ 进详情页默认最大化(用户要求): 平板/大屏上视频页本来就该占满可用空间。
+        //   这是**窗口最大化**, 不是视频全屏 —— 右栏、控制栏都还在, 用户随时可以还原。
+        //   ★ 必须放在 Show() 之前: Show 之后再改 WindowState 会先按 1280×760 布局一帧再跳,
+        //     那一下闪动正好落在视频起播的画面上。
+        win.WindowState = WindowState.Maximized;
         win.Show();
         return win;
     }

@@ -270,6 +270,22 @@ internal static class Program
             a = new Finger(root); b = new Finger(root);
             a.Down(x, y); a.Move(x + 150, y); b.Down(x + 40, y); b.Up(x + 40, y); a.Up(x + 150, y);
             Check(!Field<bool>(player, "_isSeeking"), "multi-touch cancels seek and unfreezes progress UI");
+            // 双指张开 = 全屏; 双指捏合 = 退出全屏
+            var fullscreenBefore = Field<bool>(player, "_isFullscreen");
+            a = new Finger(root); b = new Finger(root);
+            a.Down(x - 50, y); b.Down(x + 50, y);            // 初始间距 100
+            for (var i = 1; i <= 4; i++) { a.Move(x - 50 - i * 25, y); b.Move(x + 50 + i * 25, y); }
+            a.Up(x - 150, y); b.Up(x + 150, y); Pump(500);   // 张开到 300 = 3 倍
+            Check(Field<bool>(player, "_isFullscreen") != fullscreenBefore,
+                "two-finger spread toggles fullscreen");
+            if (Field<bool>(player, "_isFullscreen"))
+            {
+                a = new Finger(root); b = new Finger(root);
+                a.Down(x - 150, y); b.Down(x + 150, y);      // 初始间距 300
+                for (var i = 1; i <= 4; i++) { a.Move(x - 150 + i * 40, y); b.Move(x + 150 - i * 40, y); }
+                a.Up(x, y); b.Up(x, y); Pump(500);           // 捏到 60 = 0.2 倍
+                Check(!Field<bool>(player, "_isFullscreen"), "two-finger pinch exits fullscreen");
+            }
         }
         // Horizontal swipe on the right info panel switches 简介 / 评论 (and must not select text).
         var infoPanel = Element<Grid>(player, "InfoPanel");
