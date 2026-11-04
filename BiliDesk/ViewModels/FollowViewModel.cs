@@ -56,6 +56,13 @@ public class FollowViewModel : ObservableObject
     /// </summary>
     public bool ShowDynamics => SelectedUp == null;
 
+    /// <summary>
+    /// 混合流列表的可见性(2026-11-04): **两种模式下都显示** ——
+    /// 因为单 UP 视图现在也走 feed/space 动态流(Dynamics), 不再是投稿视频。
+    /// 唯一例外是用户把档位切到"卡片墙"(那时用 FeedItems 的视频墙)。
+    /// </summary>
+    public bool ShowDynamicFeed => !UseCardWall;
+
     /// <summary>单 UP 视图 + 动态卡档位(FeedItems, 单列)</summary>
     public bool ShowUpFeed => SelectedUp != null && !UseCardWall;
 
@@ -82,6 +89,7 @@ public class FollowViewModel : ObservableObject
             OnPropertyChanged(nameof(SelectionTitle));
             // 右栏三套列表按它切显隐(混合流 / 单UP动态卡 / 单UP卡片墙)
             OnPropertyChanged(nameof(ShowDynamics));
+            OnPropertyChanged(nameof(ShowDynamicFeed));
             OnPropertyChanged(nameof(ShowUpFeed));
             OnPropertyChanged(nameof(ShowUpFeedCardWall));
         }
@@ -211,7 +219,9 @@ public class FollowViewModel : ObservableObject
     // 分页游标(两种来源各自一套)。
     // "快速连点导致结果串台"用 LoadSelectionAsync 里的 forUp 快照 + SelectedUp 比对兜住。
     private string? _feedOffset;         // 全部动态: 游标
-    private int _upVideoPage = 1;        // 单 UP: 页码
+    private int _upVideoPage = 1;
+    /// <summary>单 UP 动态流的分页游标(feed/space 用 offset 而不是页码)</summary>
+    private string? _upDynOffset;        // 单 UP: 页码
 
     /// <summary>
     /// 动态流里同一视频会出现多次(转发 + 原投稿 + 多人合作视频各自的动态),
@@ -428,11 +438,15 @@ public class FollowViewModel : ObservableObject
             }
             else
             {
-                if (reset) _upVideoPage = 1;
-                var r = await Svc.Api.GetSpaceVideosAsync(forUp.Mid, _upVideoPage, 30);
-                ok = r.Item1; err = r.Item2; items = r.Item3;
-                hasMore = items != null && items.Count >= 30;
-                if (ok) _upVideoPage++;
+                // ★★★ 2026-11-04 修"点开 UP 主看到全是视频卡":
+                //   原来这里走 GetSpaceVideosAsync(空间**投稿视频**列表), 那条路只有视频 ——
+                //   图文/转发/专栏一条都不会出现。官方 PC 客户端点 UP 主看的是 TA 的
+                //   **动态时间线**, 所以换成 feed/space。
+                if (reset) _upDynOffset = null;
+                var r2 = await Svc.Api.GetSpaceDynamicsAsync(forUp.Mid, reset ? null : _upDynOffset);
+                ok = r2.ok; err = r2.err; dyns = r2.items;
+                hasMore = ok && !string.IsNullOrEmpty(r2.nextOffset) && r2.nextOffset != _upDynOffset;
+                if (ok) _upDynOffset = r2.nextOffset;
 
                 // ★ 单 UP 视图的**头像与名字要在这里盖章**(2026-10-15 用户截图: 卡片上一个头像
                 //   都没有、名字也是空的, 只剩"· 10-14 18:45"):
@@ -454,49 +468,30 @@ public class FollowViewModel : ObservableObject
                 Loading = false;
                 LoadingMore = false;
                 if (SelectedUp != forUp) return;   // 选择已变, 丢弃本次结果
-                // ★ 两条路分开灌: 全部动态 → Dynamics(混合流), 单 UP → FeedItems(投稿视频)
-                if (forUp == null)
+                // ★★★ 2026-11-04: **两条路现在都灌 Dynamics(混合流)**。
+                //   原来单 UP 走 FeedItems(投稿视频列表), 于是点开任何一个 UP 看到的
+                //   全是视频卡 —— 用户截图里就是这个现象("根本就没有动态")。
+                //   现在单 UP 也走 feed/space 动态流, 图文/转发/专栏一视同仁。
+                //   FeedItems 保留给"卡片墙"档位(那个档位本来就是按视频墙设计的)。
+                if (dyns == null)
                 {
-                    if (dyns == null)
-                    {
-                        if (Dynamics.Count == 0) Error = err ?? "加载失败";
-                        return;
-                    }
-                    foreach (var d in dyns)
-                    {
-                        // 按动态 id 去重: 翻页时同一条可能又给一遍
-                        if (d.Id.Length > 0 && !_seenDynamicIds.Add(d.Id)) continue;
-                        Dynamics.Add(d);
-                    }
-                    HasMore = hasMore;
-                    OnPropertyChanged(nameof(ShowFullLoading));
-                    if (Dynamics.Count == 0) Error = "关注的 UP 最近没有动态";
-                    UpdateUnreadBadges();
-                    // 拉前几条动态的热评(B 站 PC 客户端就是这样挂在卡片下面的)
-                    _ = LoadDynamicCommentsAsync(dyns);
+                    if (Dynamics.Count == 0) Error = err ?? "加载失败";
                     return;
                 }
-                if (items == null)
+                foreach (var d in dyns)
                 {
-                    if (FeedItems.Count == 0) Error = err ?? "加载失败";
-                    return;
+                    // 按动态 id 去重: 翻页时同一条可能又给一遍
+                    if (d.Id.Length > 0 && !_seenDynamicIds.Add(d.Id)) continue;
+                    Dynamics.Add(d);
                 }
-                var added = 0;
-                foreach (var it in items)
-                    if (!string.IsNullOrEmpty(it.Bvid) && _seenBvid.Add(it.Bvid))
-                    {
-                        FeedItems.Add(it);
-                        added++;
-                    }
                 HasMore = hasMore;
                 OnPropertyChanged(nameof(ShowFullLoading));
-                if (FeedItems.Count == 0)
-                    Error = forUp == null ? "关注的 UP 最近没有视频投稿" : "该 UP 暂时没有投稿视频";
-                // 未读角标: 看"全部动态"时刷新各 UP 的角标; 点开某个 UP 就清掉 TA 的角标。
-                // ★ 放在这里(而不是刷新入口)是因为**只有拿到这一页条目才能判断**:
-                //   角标靠"该 UP 最新一条"与本地基准比对, 没有列表就无从比。
+                if (Dynamics.Count == 0)
+                    Error = forUp == null ? "关注的 UP 最近没有动态" : "该 UP 最近没有动态";
                 if (forUp == null) UpdateUnreadBadges();
                 else ClearUnreadBadge(forUp);
+                // 拉前几条动态的热评(B 站 PC 客户端就是这样挂在卡片下面的)
+                _ = LoadDynamicCommentsAsync(dyns);
             });
         }
         catch (Exception ex)
@@ -528,6 +523,7 @@ public class FollowViewModel : ObservableObject
             Svc.Settings.FollowCardWall = value;
             Svc.Settings.Save();
             // 两个"单 UP 档位"可见性跟着档位走(见 ShowUpFeed 的说明)
+            OnPropertyChanged(nameof(ShowDynamicFeed));
             OnPropertyChanged(nameof(ShowUpFeed));
             OnPropertyChanged(nameof(ShowUpFeedCardWall));
         }

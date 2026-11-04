@@ -52,6 +52,10 @@ public class PlayerService
             win.Hide();
             win.Opacity = 1;
             win.ShowInTaskbar = true;
+            // ★ 把位置复位: 下次 Show 出来就在屏幕中央, 不用再靠 GetOrCreateWindow 兜底。
+            win.Left = double.NaN;
+            win.Top = double.NaN;
+            win.WindowStartupLocation = WindowStartupLocation.CenterScreen;
             _window = win;
         }
         catch
@@ -110,6 +114,19 @@ public class PlayerService
         // 刚打开的新视频一起关掉 —— 表现为"点了视频又立刻自动退出"。
         if (_window is { IsLoaded: true } reuse && !reuse.IsClosing)
         {
+            // ★★★ 2026-11-04 修"点了视频在播但看不见窗口":
+            //   预热(WarmUp)把窗口建在屏幕外 (-32000,-32000) 并 Hide() 掉了,
+            //   而这里原来只调 Activate() —— 对一个隐藏窗口 Activate 是**无效**的,
+            //   于是音频正常播、画面留在屏幕外, 用户完全看不到。
+            //   必须: 先 Show(若是隐藏态) → 拉回屏幕内 → 再 Activate。
+            if (!reuse.IsVisible) reuse.Show();
+            if (reuse.Left <= -30000 || reuse.Top <= -30000)
+            {
+                // 从预热位置挪回主屏中央(与原 WindowStartupLocation=CenterScreen 等价)
+                reuse.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                reuse.Left = double.NaN;
+                reuse.Top = double.NaN;
+            }
             if (reuse.WindowState == WindowState.Minimized)
                 reuse.WindowState = WindowState.Normal;
             reuse.Activate();

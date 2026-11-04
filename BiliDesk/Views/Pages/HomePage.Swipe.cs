@@ -123,11 +123,28 @@ public partial class HomePage
         }
         if (!_swipeHorizontal || _swipeConsumed) return false;
 
+        // ★★★ 2026-11-04 修"缓慢滑动时画面抽搐":
+        //   一旦判定为横向, 必须**立刻取消 ScrollViewer 的惯性滚动**并锁定翻译值。
+        //   否则: 手指慢慢横移时, ScrollViewer 的垂直平移仍在按微小的 dy 抖动调整
+        //   (每帧 ±1~2px 的来回), 而 TabHost 同时被我们左右平移 —— 两个位移叠加,
+        //   观感就是"画面在抽搐"。这里把纵向彻底钉住, 只让横向生效。
+        if (_swipeDx == 0 && dx != 0) FreezeVertical();
         _swipeDx = dx;
         // 到头(已经在第一个/最后一个 tab)还往那个方向拖: 橡皮筋
         var target = CurrentTabIndex + (dx < 0 ? 1 : -1);
         TabTrans.X = target is >= 0 and < 5 ? dx : dx * SwipeEdgeResist;
         return true;
+    }
+
+    /// <summary>
+    /// 横向手势一旦成立, 就把当前 tab 的纵向滚动**冻结**在原地。
+    /// ★ 只冻一次(靠 _swipeDx==0 判断首次): 每帧都动 ScrollViewer 反而会打断它的惯性。
+    /// </summary>
+    private void FreezeVertical()
+    {
+        var sv = ScrollOf(CurrentTabFromVm() ?? HomeTabKind.Recommend);
+        if (sv == null) return;
+        sv.ScrollToVerticalOffset(sv.VerticalOffset);   // 打断进行中的滚动动画
     }
 
     /// <summary>手指抬起: 按位移+速度决定翻页还是弹回。</summary>

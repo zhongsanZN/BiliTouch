@@ -1309,6 +1309,60 @@ public class ApiClient
     }
 
     /// <summary>
+    /// 单个 UP 主的动态流(`feed/space`, 2026-11-04)。
+    ///
+    /// ★ 为什么必须换成这个接口: 原来单 UP 视图走的是 `GetSpaceVideosAsync`
+    ///   (空间的**投稿视频**列表), 那条路**只有视频** —— 所以点开任何一个 UP,
+    ///   看到的全是视频卡, 图文/转发/专栏一条都没有。用户截图里就是这个现象。
+    ///   官方 PC 客户端点 UP 主看的是 TA 的**动态时间线**, 不是投稿列表。
+    ///
+    /// 与全部动态(feed/nav)的差别: 用 host_mid 指定对象, 分页靠 offset。
+    /// 返回结构与 feed/nav 完全一致, 所以复用 DynamicParser。
+    /// </summary>
+    public async Task<(bool ok, string? err, List<DynamicItem>? items, string? nextOffset, bool hasMore)>
+        GetSpaceDynamicsAsync(long mid, string? offset = null)
+    {
+        var items = new List<DynamicItem>();
+        try
+        {
+            if (mid <= 0) return (false, "缺少 UP 主 mid", null, null, false);
+            await EnsureBuvidAsync();
+
+            var ps = new Dictionary<string, string> { ["host_mid"] = mid.ToString() };
+            if (!string.IsNullOrEmpty(offset)) ps["offset"] = offset;
+
+            var (code, msg, data) = await GetJsonAsync(
+                "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space", ps,
+                sign: false,
+                referer: $"https://space.bilibili.com/{mid}/dynamic");
+            if (code != 0 || data == null)
+                return (false, code == -101 ? "请先登录后查看动态" : (msg ?? "动态加载失败"), null, null, false);
+
+            var d = data.Value;
+            var hasMore = d.TryGetProperty("has_more", out var hm) &&
+                          (hm.ValueKind == JsonValueKind.True ||
+                           (hm.ValueKind == JsonValueKind.Number && hm.GetInt32() == 1));
+            var next = d.TryGetProperty("offset", out var off) && off.ValueKind == JsonValueKind.String
+                ? off.GetString() : null;
+
+            if (d.TryGetProperty("items", out var list) && list.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var e in list.EnumerateArray())
+                {
+                    var item = DynamicParser.Parse(e);
+                    if (item != null) items.Add(item);
+                }
+            }
+            return (true, null, items, next, hasMore);
+        }
+        catch (Exception ex)
+        {
+            App.ReportError(ex);
+            return (false, ex.Message, null, null, false);
+        }
+    }
+
+    /// <summary>
     /// 拉一条动态下的热门评论(2026-11-04)。
     ///
     /// B 站 PC 客户端的动态卡下面直接挂 1~2 条热评, 不用点进去就能看到别人怎么说 ——

@@ -419,7 +419,7 @@
                                  对标官方手机端: 视频/图文/纯文字/转发/专栏/直播混排。
                                  单 UP 视图不走这里(那一路是"TA 的投稿视频", 只有视频)。 -->
                             <ItemsControl ItemsSource="{Binding Dynamics}" Margin="4,0,8,0"
-                                          Visibility="{Binding ShowDynamics, Converter={StaticResource BoolToVis}}">
+                                          Visibility="{Binding ShowDynamicFeed, Converter={StaticResource BoolToVis}}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <controls:DynamicFeedCard />
