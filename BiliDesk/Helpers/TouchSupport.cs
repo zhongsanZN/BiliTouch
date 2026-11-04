@@ -69,10 +69,19 @@ public static class TouchSupport
     /// True while a finger is down on this ScrollViewer (1.5s safety timeout for a lost up event).
     /// Pages use it to defer work that changes the scrollable content — the WPF equivalent of
     /// Chromium's compositor-thread scrolling, which never appends content mid-scroll.
+    ///
+    /// ★★★ 2026-11-04: 超时后**主动把残留清掉**, 不只返回 false。
+    ///   否则 _touchViewer 会一直指着一个早已不可见的 viewer, 每次询问都走一遍超时判断,
+    ///   而任何依赖"它现在是不是 null"的逻辑(例如 IsTouchPanning 之外的新调用点)都会误判。
+    ///   这条与 Up/LostCapture 里的无条件清空是同一套自愈: 宁可放过一次"其实还在滚",
+    ///   也不要让一个残留标记永久污染后续所有手势。
     /// </summary>
-    public static bool IsTouchPanning(ScrollViewer viewer) =>
-        ReferenceEquals(_touchViewer, viewer) &&
-        Environment.TickCount64 - _touchViewerAt < 1500;
+    public static bool IsTouchPanning(ScrollViewer viewer)
+    {
+        if (_touchViewer == null) return false;
+        if (Environment.TickCount64 - _touchViewerAt >= 1500) { _touchViewer = null; return false; }
+        return ReferenceEquals(_touchViewer, viewer);
+    }
 
     [DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int index);
@@ -140,7 +149,22 @@ public static class TouchSupport
             new EventHandler<TouchEventArgs>((sender, e) =>
             {
                 if (sender is not ScrollViewer viewer) return;
-                if (ReferenceEquals(_touchViewer, viewer)) ClearTouchPanning();
+                // ★★★ 2026-11-04 修"点进评论详情再返回后触屏拖不动":
+                //
+                //   原来是 `if (ReferenceEquals(_touchViewer, viewer)) ClearTouchPanning();`
+                //   —— 只清**记录的那个** viewer。而 _touchViewer 记的是**最内层**
+                //   (MarkTouchPanning 在预览阶段被每个祖先写一遍, 最后写的是最内层)。
+                //
+                //   页面一切换(进详情时 CommentList 被 Collapsed), 那个内层 viewer 就
+                //   **再也收不到 TouchUp** —— 它的位置已经不在这棵可视树的有效路径上。
+                //   于是 _touchViewer 永久残留, IsTouchPanning(...) 一直为 true:
+                //   页面据此认为"手指还在滚动", 于是推迟所有会改变滚动内容的工作,
+                //   表现就是"手指怎么拖都不动"。
+                //
+                //   修法: 手指抬起这件事是**全局**的, 任何一个 ScrollViewer 收到 Up 都说明
+                //   这一次触摸结束了, 应当无条件清空。_touchViewer 只是"最近一次触摸落在
+                //   哪个 viewer 上"的提示, 不是需要精确匹配的所有权。
+                ClearTouchPanning();
                 // ★ 不看 _tapViewer: 嵌套 ScrollViewer 里最内层的 Up 先到, 它清空后外层就再没有
                 //   机会补发点击了。只要这次按下记过来源, 就由**第一个**收到 Up 的处理器消费。
                 var moved = _tapMoved;
@@ -155,7 +179,8 @@ public static class TouchSupport
         EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.LostTouchCaptureEvent,
             new EventHandler<TouchEventArgs>((sender, _) =>
             {
-                if (sender is ScrollViewer viewer && ReferenceEquals(_touchViewer, viewer)) ClearTouchPanning();
+                // 同上: 任何一个 viewer 丢捕获都代表这次触摸已经不由我们掌握, 无条件清
+                ClearTouchPanning();
             }), true);
         // Suppress window bounce at the end of a list, while retaining native pan inertia.
         EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.ManipulationBoundaryFeedbackEvent,

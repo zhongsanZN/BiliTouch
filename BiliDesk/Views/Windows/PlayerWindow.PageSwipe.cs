@@ -64,11 +64,38 @@ public partial class PlayerWindow
     /// ★ 只在"够格起步"时才捕获(见 InfoSwipeAllowed): 落在滑块/输入框上的按下
     ///   不该被我们抢走, 否则那些控件自己的拖动手势会失灵。
     /// </summary>
+    /// <summary>
+    /// 触摸在 InfoPanel 上的按下。
+    ///
+    /// ★★★ 2026-11-04 修"点进评论详情再返回后触屏拖不动"(用户实测复现):
+    ///
+    ///   原来这里**一按下就 `InfoPanel.CaptureTouch`**。触摸捕获是排他的 ——
+    ///   面板一旦抓住这只手指, 内层 ScrollViewer 就**再也收不到 Manipulation**,
+    ///   于是 PanningMode 完全失效: 手指竖着滑, 列表纹丝不动。
+    ///
+    ///   为什么"平时好像能滚"? 因为绝大多数竖滑的起手点落在别的地方(视频卡片、按钮),
+    ///   那条路径没被捕获; 而"从评论详情返回"之后, 起手点很容易落在刚恢复的
+    ///   CommentList 区域的空白/文字上, 于是**每次都被捕获**, 表现为"整块拖不动了"。
+    ///   (探针对照: 基线一次竖滑 0→2085 正常; 返回后同一次竖滑 Δ0。见
+    ///    tests/TouchTests/CommentTouchChainProbe.cs 与 artifacts/chain*.log。)
+    ///
+    ///   修法: 按下时**不抢捕获**, 等 InfoMove 判出"这是横向翻页"之后再抢。
+    ///   竖滑从一开始就留给 ScrollViewer 的原生平移, 互不干扰。
+    ///   横滑仍然要捕获 —— 因为手指会滑出 InfoPanel 落到视频那块独立 HWND 上,
+    ///   不捕获就收不到后续 Move/Up(见下面 InfoMove 里的说明)。
+    /// </summary>
     private void OnInfoTouchDownCapture(object? sender, TouchEventArgs e)
     {
-        if (_infoSwipeArmed) InfoPanel.CaptureTouch(e.TouchDevice);
+        // 注意: 这里刻意**不做** CaptureTouch, 捕获推迟到 InfoMove 判定为横向之后。
+        _pendingCaptureDevice = e.TouchDevice;
         OnInfoTouchDown(sender, e);
     }
+
+    /// <summary>
+    /// 还没决定要不要捕获的那只手指。判定为横向时立刻捕获(见 InfoMove),
+    /// 竖向/抬手就丢弃 —— 后者交给 ScrollViewer 自己处理。
+    /// </summary>
+    private TouchDevice? _pendingCaptureDevice;
 
     /// <summary>Returns true when the move was consumed by the page drag.</summary>
     internal bool InfoMove(Point p)
@@ -89,6 +116,15 @@ public partial class PlayerWindow
             _infoHorizontalDecided = true;
             if (!_infoSwipeArmed) return false;
             _infoDragDx = dx;
+            // ★★★ 2026-11-04: 判定为**横向**了才抢捕获。
+            //   抢早了会把竖滑一起吃掉(见 OnInfoTouchDownCapture 的说明);
+            //   抢晚了手指可能已经划出 InfoPanel 落到视频那块独立 HWND 上, Move/Up 再也收不到。
+            //   判定点(超过 PageDragSlop 且横向大于纵向 1.2 倍)正好在"还没离开面板"之前。
+            if (_pendingCaptureDevice != null)
+            {
+                try { InfoPanel.CaptureTouch(_pendingCaptureDevice); } catch { /* 已被别处捕获 */ }
+                _pendingCaptureDevice = null;
+            }
             // ★ BeginPageDrag 失败(内容还没布局出高度, 例如面板刚切回来)时**不能就此放弃**:
             //   原来这里 return false, 但 _infoHorizontalDecided 已经是 true, 后续移动全被
             //   挡在 `!_infoDraggingPage` 那一行 —— 整个手势彻底失效, 用户划了没反应。
@@ -336,7 +372,9 @@ public partial class PlayerWindow
     {
         if (InfoUp()) e.Handled = true;
         _infoHorizontalDecided = false;
-        // 与 OnInfoTouchDownCapture 对称: 收尾后主动放开捕获
+        // 与 InfoMove 里"判定横向才捕获"对称: 收尾时无论有没有抢过都放一次
+        // (没抢过的 Release 是无害的空操作 —— WPF 对未持有的捕获直接忽略)
+        _pendingCaptureDevice = null;
         try { InfoPanel.ReleaseTouchCapture(e.TouchDevice); } catch { }
     }
 

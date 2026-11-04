@@ -311,6 +311,21 @@ internal static class Program
     {
         var player = new PlayerWindow { Title = "BiliDesk touch verification" };
         player.Show(); Pump(300);
+
+        // ★ 2026-11-04 用户报"点进评论详情再返回后触屏拖不动评论列表"。
+        //   这个探针只跑数字断言(布局约束 / PanningMode / 可滚动高度), 不需要真实媒体。
+        if (Environment.GetEnvironmentVariable("BD_PROBE_COMMENT_SWIPE") == "1")
+        {
+            CommentSwipeProbe.Run(player, Artifacts);
+            player.Close(); Pump(400);
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("BD_PROBE_COMMENT_CHAIN") == "1")
+        {
+            CommentTouchChainProbe.Run(player, Artifacts);
+            player.Close(); Pump(400);
+            return;
+        }
         var root = Element<Grid>(player, "VideoAreaRoot");
         var controls = Element<Border>(player, "ControlBar");
         var help = Element<Border>(player, "TouchHelp");
