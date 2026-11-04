@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
@@ -24,10 +24,21 @@ public class DynamicContentSelector : DataTemplateSelector
     public DataTemplate? ForwardTemplate { get; set; }
     public DataTemplate? ArticleTemplate { get; set; }
     public DataTemplate? LiveTemplate { get; set; }
+    /// <summary>投票(2026-11-04): major.vote, 与正文/图片并存</summary>
+    public DataTemplate? VoteTemplate { get; set; }
+    /// <summary>附加卡片(2026-11-04): major.common(活动/商品/番剧/课程)</summary>
+    public DataTemplate? CommonTemplate { get; set; }
 
     public override DataTemplate? SelectTemplate(object item, DependencyObject container)
     {
         if (item is not DynamicItem d) return null;
+        // ★ 优先级(2026-11-04): 投票与附加卡片**先于** Kind 判断。
+        //   理由: 它们挂在 module_dynamic 上, 与动态类型正交 —— 一条 DYNAMIC_TYPE_ARTICLE
+        //   的专栏动态也可能带投票(实测样本就是这样), 若先按 Kind 走 ArticleTemplate
+        //   就永远看不到投票。官方客户端的顺序也是"正文 → 主内容 → 附加控件"。
+        //   注意判据是 Vote/Common **节点存在**, 不是"选项已加载" —— 卡片节点不带 options。
+        if (d.HasVote) return VoteTemplate;
+        if (d.HasCommon) return CommonTemplate;
         return d.Kind switch
         {
             DynamicKind.Video => VideoTemplate,

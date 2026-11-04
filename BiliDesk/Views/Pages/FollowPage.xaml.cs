@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -102,6 +102,44 @@ public partial class FollowPage : UserControl
         {
             vm.ApplyNewDynamics();
             if (vm.Dynamics.Count > 0) DynamicList.ScrollIntoView(vm.Dynamics[0]);
+        }
+    }
+
+    /// <summary>
+    /// 点「发布动态」(2026-11-04): 开原生发布窗, 发完把新动态直接插到时间线最前面。
+    /// ★ 为什么不整页刷新: 刷新会把当前滚动位置和已加载的几页全部丢掉,
+    ///   用户刚发完一条就被弹回顶部, 是很差的体验。插一条进去, 位置不动。
+    /// ★ 拿不到 id 时退化成刷新(至少让用户看见自己发的), 而不是什么都不做。
+    /// </summary>
+    private async void OnPublishClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not FollowViewModel vm) return;
+        if (!Svc.Session.HasLogin) { Svc.Toast.Show("发布动态需要先登录"); return; }
+
+        var window = new DynamicPublishWindow { Owner = Window.GetWindow(this) };
+        var accepted = window.ShowDialog();
+        if (accepted != true) return;
+
+        var id = window.PublishedId;
+        if (id.Length == 0)
+        {
+            // 服务端没回 id: 只能整页刷新, 但先滚回顶部, 免得用户在中间找不到自己那条
+            await vm.RefreshAsync();
+            DynamicList.ScrollIntoView(vm.Dynamics.FirstOrDefault());
+            return;
+        }
+
+        // 拉一次刚发出去的动态, 拿到服务端版(头像/时间/统计都是真值)再插进列表
+        var detail = await Svc.Api.GetDynamicDetailAsync(id);
+        if (detail.ok && detail.item is { } item)
+        {
+            vm.Dynamics.Insert(0, item);
+            DynamicList.ScrollIntoView(item);
+        }
+        else
+        {
+            // 拉不到就先把列表刷新一遍, 下一轮轮询会补上
+            await vm.RefreshAsync();
         }
     }
 

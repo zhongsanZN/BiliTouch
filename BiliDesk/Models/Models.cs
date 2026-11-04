@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -1882,6 +1882,176 @@ public class DynamicPicture
 }
 
 /// <summary>
+/// 动态正文里的一段富文本(2026-11-04)。
+///
+/// 为什么不能只留 <see cref="DynamicItem.Text"/>:
+///   B 站动态的 desc 同时给两个字段 —— `text` 是**纯文本**(话题、@、表情全部退化成普通字),
+///   `rich_text_nodes[]` 才带类型。官方客户端里 #话题# 是蓝色可点、@某人 是蓝色可点、
+///   表情是图。只读 text 的话这三样全都变成死字, 而且 # 号还会跟着显示出来。
+///   所以解析时把 nodes 一并留下, 渲染层按 Type 上色 / 挂点击。
+///
+/// 字段含义(照接口原文):
+///   · Type = RICH_TEXT_NODE_TYPE_TEXT     普通文字
+///   · Type = RICH_TEXT_NODE_TYPE_TOPIC    话题, 带 Rid(话题 id) 与 JumpUrl
+///   · Type = RICH_TEXT_NODE_TYPE_AT       提及某人, 带 Rid(被 @ 的 mid)
+///   · Type = RICH_TEXT_NODE_TYPE_WEB      网页链接
+///   · Type = RICH_TEXT_NODE_TYPE_BV       BV 号
+///   · Type = RICH_TEXT_NODE_TYPE_EMOJI    小表情, 带 Emoji(图片地址)
+/// </summary>
+public class DynamicRichNode
+{
+    /// <summary>接口原文类型(RICH_TEXT_NODE_TYPE_*), 保留原文便于以后加类型不用改解析</summary>
+    public string Type { get; set; } = "";
+    /// <summary>显示文本。话题含两侧的 #, @ 含 @ 号 —— 与官方一致</summary>
+    public string Text { get; set; } = "";
+    /// <summary>不带装饰的原文(话题去掉 #, @ 去掉 @), 用来做搜索词/主页跳转</summary>
+    public string OrigText { get; set; } = "";
+    /// <summary>话题 id / 被 @ 的 mid / 视频 aid, 按类型解释</summary>
+    public string Rid { get; set; } = "";
+    /// <summary>跳转地址(接口给的 jump_url, 只用于判断类型, 不在客户端直接打开网页)</summary>
+    public string JumpUrl { get; set; } = "";
+    /// <summary>小表情图片地址(仅 EMOJI 有值)</summary>
+    public string Emoji { get; set; } = "";
+
+    public bool IsTopic => Type.EndsWith("_TOPIC", StringComparison.Ordinal);
+    public bool IsMention => Type.EndsWith("_AT", StringComparison.Ordinal);
+    public bool IsEmoji => Type.EndsWith("_EMOJI", StringComparison.Ordinal) && Emoji.Length > 0;
+    public bool IsLink => Type.EndsWith("_WEB", StringComparison.Ordinal) || Type.EndsWith("_BV", StringComparison.Ordinal);
+}
+
+/// <summary>
+/// 动态投票(2026-11-04, 按实测结构重写)。
+///
+/// ★★★ 位置纠正(只读探针实测, 扫 160 条动态 0 条命中 major.vote):
+///   投票节点在 <c>modules.module_dynamic.additional.vote</c>, 且
+///   <c>additional.type == "ADDITIONAL_TYPE_VOTE"</c>。major.vote **不存在**。
+///
+/// ★★★ 结构纠正 —— 卡片节点**不含选项数组**:
+///   卡片上只有 vote_id / title / desc / join_num / status / end_time / choice_cnt,
+///   要拿到 options[{opt_idx, opt_desc, cnt}] 必须再调一次
+///   <c>GET /x/vote/vote_info?vote_id=&lt;id&gt;</c>(匿名可读)。
+///   所以 <see cref="Options"/> 在卡片首次出现时是空的, 由界面滚动到可见时再拉 ——
+///   这也是本类要有 <see cref="OptionsLoaded"/> 的原因。
+///
+/// 字段语义(实测, 与原猜测有出入, 逐条标注):
+///   · <c>vote_id</c>  → Id          (不是 id)
+///   · <c>desc</c>     → 是"N人参与"**文案**, 不是投票描述 ← 原实现当成描述, 会显示成
+///                        "投票说明: 167人参与" 这种自相矛盾的文字
+///   · <c>join_num</c> → TotalCount  (参与人数, 直接给, 不需要自己求和)
+///   · <c>status</c>   → '1' 进行中 / '4' 已结束(**不是**"我投过没有")
+///   · <c>choice_cnt</c> → MaxChoices (可选几项; '1' = 单选)
+///   · <c>end_time</c> → EndTime     (unix 秒)
+///   · <c>options[].opt_idx</c> 从 **1** 开始(不是 0) —— 传 0 会被服务端拒
+///   · <c>options[].opt_desc</c> 是选项文字(不是 desc)
+///
+/// ★ 「我投过没有」两个读接口都**不下发**(vote_my_status / my_vote_info 均无),
+///   本轮未取到可靠判据。所以界面只在**本次会话里自己投成功之后**标记已投,
+///   不假装知道服务端状态 —— 比猜错让用户点两次强。
+/// </summary>
+public class DynamicVote
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    /// <summary>接口原文的 desc —— 实测是"N人参与"文案, 只在没有 join_num 时兜底显示</summary>
+    public string Desc { get; set; } = "";
+    /// <summary>参与人数(join_num)。0 表示接口没给</summary>
+    public long TotalCount { get; set; }
+    /// <summary>可选几项(choice_cnt)。1 = 单选, &gt;1 = 多选</summary>
+    public int MaxChoices { get; set; } = 1;
+    /// <summary>'1' 进行中 / '4' 已结束</summary>
+    public string Status { get; set; } = "";
+    public long EndTime { get; set; }
+    /// <summary>跳转地址(实测指向 /h5/vote), 只用于判断, 不在客户端直接开网页</summary>
+    public string JumpUrl { get; set; } = "";
+
+    public List<DynamicVoteOption> Options { get; set; } = new();
+    /// <summary>选项是否已经从 /x/vote/vote_info 拉过(卡片节点本身不带选项)</summary>
+    public bool OptionsLoaded { get; set; }
+    public bool OptionsLoading { get; set; }
+    public bool OptionsFailed { get; set; }
+    public string OptionsError { get; set; } = "";
+
+    /// <summary>本次会话里我自己投票成功过(服务端不下发这个状态, 只能本地记)</summary>
+    public bool VotedThisSession { get; set; }
+    /// <summary>我自己投中的选项编号(用于高亮)</summary>
+    public HashSet<int> MyChoices { get; set; } = new();
+
+    public bool IsMulti => MaxChoices > 1;
+    public bool HasOptions => Options.Count > 0;
+    /// <summary>投票已结束(status=4)。注意: status=4 也可能是"投票不存在", 接口区分不了</summary>
+    public bool IsClosed => Status == "4";
+    public bool CanVote => !IsClosed && !VotedThisSession;
+
+    /// <summary>
+    /// 底部那行参与数。
+    /// ★ 优先用 join_num(接口直接给), 没有再退回 desc(实测 desc 就是"N人参与"文案),
+    ///   两者都没有才说"还没有人参与" —— 不要凭空造一个数字。
+    /// </summary>
+    public string TotalText =>
+        TotalCount > 0 ? TotalCount.ToString("N0") + " 人参与"
+        : Desc.Length > 0 ? Desc
+        : "还没有人参与";
+
+    public string StateText => IsClosed ? "已结束" : IsMulti ? $"可多选({MaxChoices} 项)" : "单选";
+}
+
+/// <summary>投票里的一项</summary>
+public class DynamicVoteOption
+{
+    public int Index { get; set; }
+    public string Text { get; set; } = "";
+    public long Count { get; set; }
+    public string ImageUrl { get; set; } = "";
+    /// <summary>列表里显示成"42%"——分母为 0 时给空串, 避免出现 NaN%</summary>
+    public string PercentText { get; set; } = "";
+    /// <summary>票数的展示串("13"), 没票时也不显示 0 更干净</summary>
+    public string CountText => Count > 0 ? Count.ToString("N0") + " 票" : "";
+    /// <summary>
+    /// 百分比条的宽度比例 0~1。
+    /// ★ 为什么给比例而不是像素: 卡片宽度随窗口/列数变化, 像素值一写死就错。
+    ///   界面用 RenderTransform 的 ScaleX 接这个值(横向缩放一条满宽色带),
+    ///   父容器多宽都不会算错, 也不需要监听 SizeChanged。
+    /// </summary>
+    public double Fraction { get; set; }
+}
+
+/// <summary>
+/// 动态附加卡片(2026-11-04), 对应接口的 modules.module_dynamic.major.common。
+///
+/// 什么时候会出现: 活动页、带货商品、番剧 / 影视 / 课程 / 直播预告这类"外部内容"。
+/// 官方客户端把它画成一张"左封面右文字 + 右上角来源标签 + 右下角行动按钮"的卡。
+/// 之前完全没解析 ⇒ 这类动态在时间线上只剩一句正文, 用户以为内容丢了。
+///
+/// 字段都可能是空串(接口有时只给 title 不给 cover), 所以 HasContent 以
+/// "有标题或有封面"为准 —— 两者都空就没有画的必要。
+/// </summary>
+public class DynamicCommonCard
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    /// <summary>合成后的描述(desc1 · desc2 或老结构的 desc), 界面显示这个</summary>
+    public string Desc { get; set; } = "";
+    /// <summary>新结构的两段描述原文(实测 additional.common 用 desc1/desc2 拆开给)</summary>
+    public string Desc1 { get; set; } = "";
+    public string Desc2 { get; set; } = "";
+    public string Cover { get; set; } = "";
+    public string JumpUrl { get; set; } = "";
+    /// <summary>来源标签(接口 badge.text, 例如"活动""番剧"), 没有就是空串</summary>
+    public string Badge { get; set; } = "";
+    /// <summary>右上角的来源名(接口 head_text / source_name)</summary>
+    public string SourceName { get; set; } = "";
+    /// <summary>子类型(实测 sub_type, 例如 "game"), 用来把"游戏卡"和"活动卡"画得不一样</summary>
+    public string SubType { get; set; } = "";
+    /// <summary>行动按钮文案(实测在 button.jump_style.text, 老结构在 button.text)</summary>
+    public string ButtonText { get; set; } = "";
+
+    public bool HasContent => Title.Length > 0 || Cover.Length > 0 || Desc.Length > 0;
+    public bool HasCover => Cover.Length > 0;
+    public bool HasButton => ButtonText.Length > 0;
+    public bool IsGame => SubType == "game";
+}
+
+/// <summary>
 /// 动态混合流里的一条。与 <see cref="VideoItem"/> **并列**而不是替代:
 /// 视频动态仍然要能点开播放, 所以内部持有一个 VideoItem(可空)。
 ///
@@ -1933,6 +2103,38 @@ public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
     /// <summary>直播: 房间号</summary>
     public long LiveRoomId { get; set; }
 
+    /// <summary>
+    /// 投票(2026-11-04)。null = 这条不是投票动态。
+    /// vote 挂在 major.vote 上, 与正文/图片并存 —— 所以不能靠 Kind 判定,
+    /// 必须是"有没有这个对象"。
+    /// </summary>
+    public DynamicVote? Vote { get; set; }
+
+    /// <summary>
+    /// 附加卡片(major.common, 2026-11-04)。
+    /// 官方把"活动 / 商品 / 番剧 / 课程 / 小站内链"这类东西统一塞进 common,
+    /// 结构: { id, title, desc, cover, jump_url, button{...}, badge{...} }。
+    /// 之前没读 ⇒ 这类动态在时间线上只剩一句正文, 看起来像"内容丢了"。
+    /// </summary>
+    public DynamicCommonCard? Common { get; set; }
+
+    /// <summary>
+    /// 正文的富文本节点(话题 / @ / 表情 / 链接)。空 = 接口没给(或纯文字动态)。
+    /// 渲染层优先用它上色, 拿不到就退回 <see cref="Text"/>。
+    /// </summary>
+    public List<DynamicRichNode> RichNodes { get; set; } = new();
+    public bool HasRichNodes => RichNodes.Count > 0;
+
+    /// <summary>
+    /// 话题(2026-11-04)。来自 <c>module_dynamic.topic{ id, name, jump_url }</c>。
+    /// ★ 这是话题的**权威来源**: rich_text_nodes 里的 TOPIC 节点 rid 恒为空串(实测),
+    ///   拿不到 topic_id; 只有这里给真 id。有它才能"点话题进话题页"而不是退化成搜索。
+    /// </summary>
+    public string TopicId { get; set; } = "";
+    public string TopicName { get; set; } = "";
+    public string TopicJumpUrl { get; set; } = "";
+    public bool HasTopic => TopicId.Length > 0 || TopicName.Length > 0;
+
     /// <summary>转发: 被转发的原动态(可能为 null = 原动态已删除)</summary>
     public DynamicItem? Original { get; set; }
     /// <summary>原动态已删除时的提示</summary>
@@ -1954,8 +2156,18 @@ public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
     /// <summary>是不是转发(要画引用框)</summary>
     public bool IsForward => Kind == DynamicKind.Forward;
 
-    /// <summary>视频/专栏/直播这类"有独立内容卡"的类型</summary>
-    public bool HasAttachedCard => HasPictures || IsForward || Kind is DynamicKind.Video or DynamicKind.Article or DynamicKind.Live;
+    /// <summary>视频/专栏/直播/投票/附加卡片这类"有独立内容卡"的类型</summary>
+    public bool HasAttachedCard => HasPictures || IsForward || Vote != null || Common != null
+        || Kind is DynamicKind.Video or DynamicKind.Article or DynamicKind.Live;
+
+    /// <summary>
+    /// 这条动态带投票。
+    /// ★ 判据是**有没有 vote 节点**, 不是"有没有选项":
+    ///   实测卡片节点压根不带 options, 选项要额外查 /x/vote/vote_info。
+    ///   若按 HasOptions 判, 卡片会一直显示成"没有投票", 直到详情页把选项补回来。
+    /// </summary>
+    public bool HasVote => Vote != null;
+    public bool HasCommon => Common != null && Common.HasContent;
 
     public string LikeText => LikeCount > 0 ? "赞 " + FormatCount(LikeCount) : "赞";
     public string CommentText => CommentCount > 0 ? "评论 " + FormatCount(CommentCount) : "评论";
@@ -1993,12 +2205,16 @@ public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
     public void NotifyContentChanged() => Notify("");
     public void RefreshFrom(DynamicItem d)
     {
-        Kind=d.Kind;AuthorMid=d.AuthorMid;AuthorName=d.AuthorName;AuthorFace=d.AuthorFace;
-        PubTs=d.PubTs;PubTimeText=d.PubTimeText;Text=d.Text;Pictures=d.Pictures;Video=d.Video;
-        ContentTitle=d.ContentTitle;ArticleTitle=d.ArticleTitle;ArticleCover=d.ArticleCover;ArticleId=d.ArticleId;
-        LiveRoomId=d.LiveRoomId;Original=d.Original;OriginalDeleted=d.OriginalDeleted;
-        LikeCount=d.LikeCount;CommentCount=d.CommentCount;ForwardCount=d.ForwardCount;
-        IsLiked=d.IsLiked;LikeForbidden=d.LikeForbidden;CommentOid=d.CommentOid;CommentType=d.CommentType;
+        Kind = d.Kind; AuthorMid = d.AuthorMid; AuthorName = d.AuthorName; AuthorFace = d.AuthorFace;
+        PubTs = d.PubTs; PubTimeText = d.PubTimeText; Text = d.Text; Pictures = d.Pictures; Video = d.Video;
+        ContentTitle = d.ContentTitle; ArticleTitle = d.ArticleTitle; ArticleCover = d.ArticleCover; ArticleId = d.ArticleId;
+        LiveRoomId = d.LiveRoomId; Original = d.Original; OriginalDeleted = d.OriginalDeleted;
+        // ★ 2026-11-04: 投票 / 附加卡片 / 富文本节点也必须跟着刷新, 否则详情页拉回完整数据后
+        //   卡片上还是列表接口那份旧快照(投票参与人数不更新、话题不上色)。
+        Vote = d.Vote; Common = d.Common; RichNodes = d.RichNodes;
+        TopicId = d.TopicId; TopicName = d.TopicName; TopicJumpUrl = d.TopicJumpUrl;
+        LikeCount = d.LikeCount; CommentCount = d.CommentCount; ForwardCount = d.ForwardCount;
+        IsLiked = d.IsLiked; LikeForbidden = d.LikeForbidden; CommentOid = d.CommentOid; CommentType = d.CommentType;
         NotifyContentChanged();
     }
     public void SetLiked(bool liked)

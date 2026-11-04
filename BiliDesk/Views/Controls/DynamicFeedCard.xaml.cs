@@ -1,7 +1,8 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using BiliDesk.Models;
+using BiliDesk.Services;
 
 namespace BiliDesk.Views.Controls;
 
@@ -14,8 +15,8 @@ public partial class DynamicFeedCard : UserControl
     public DynamicFeedCard()
     {
         InitializeComponent();
-        Loaded+=(_,_)=>_ = LoadVisiblePreviewAsync();
-        DataContextChanged+=(_,_)=> {if(IsLoaded)_ = LoadVisiblePreviewAsync();};
+        Loaded+=(_,_)=>{ _ = LoadVisiblePreviewAsync(); _ = LoadVoteIfNeededAsync(); };
+        DataContextChanged+=(_,_)=> {if(IsLoaded){ _ = LoadVisiblePreviewAsync(); _ = LoadVoteIfNeededAsync(); }};
         Unloaded+=(_,_)=>_previewCancellation?.Cancel();
         PreviewMouseLeftButtonDown+=(_,e)=>_pressPoint=e.GetPosition(this);
         PreviewKeyDown+=(_,e)=>
@@ -66,6 +67,29 @@ public partial class DynamicFeedCard : UserControl
         e.Handled = true;
     }
 
+    /// <summary>
+    /// 点正文里的话题 / @提及(2026-11-04)。
+    ///
+    /// 话题与 @ 都走**客户端内**的落地页, 不弹网页:
+    ///   · @某人 → Rid 就是被 @ 的 mid, 直接开原生个人主页(与点头像同一条路);
+    ///   · #话题# → 走原生搜索页(话题在客户端里没有独立详情页, 搜索是最接近官方的行为)。
+    /// 表情/普通文字/链接不响应 —— 链接若也走"复制地址"会和附加卡按钮重复, 留给右键菜单。
+    /// </summary>
+    private void OnRichNodeActivated(object? sender, DynamicRichNode node)
+    {
+        if (node.IsMention && long.TryParse(node.Rid, out var mid) && mid > 0)
+        {
+            Svc.Navigate?.OpenUserSpace(mid.ToString());
+            return;
+        }
+        if (node.IsTopic)
+        {
+            // 话题文本带两侧 #, 搜索词要去掉; orig_text 有就直接用
+            var keyword = node.OrigText.Length > 0 ? node.OrigText : node.Text.Trim('#', ' ');
+            if (keyword.Length > 0) Svc.Navigate?.OpenSearch(keyword);
+        }
+    }
+
     private void OnContentClick(object sender, MouseButtonEventArgs e)
     {
         if (!IsClick(e)) return;
@@ -86,6 +110,119 @@ public partial class DynamicFeedCard : UserControl
                 break;
         }
         e.Handled = true;
+    }
+
+    /// <summary>
+    /// 点投票的某一项(2026-11-04, 按实测端点与缺口重写)。
+    ///
+    /// ★ 三个"实测决定"的取舍:
+    ///   1. 卡片节点**不带 options**, 所以选项压根没渲染出来时先要把 vote_info 拉回来
+    ///      (见 DynamicFeedCard 的 LoadVoteIfNeededAsync)。这里只处理"已经有选项"的情况。
+    ///   2. 服务端**不下发**"我投过没有", 所以已投状态只认 <see cref="DynamicVote.VotedThisSession"/>,
+    ///      不拿 status 判(status 是 '1' 进行中 / '4' 已结束, 与参与状态无关)。
+    ///   3. 投票不可撤销: 请求失败只还原本地状态, 绝不自动重试 —— 避免"重试一次变成投两票"。
+    /// </summary>
+    private async void OnVoteOptionClick(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (DataContext is not DynamicItem d || d.Vote is not { HasOptions: true } vote) return;
+        if (!vote.CanVote) { Svc.Toast.Show(vote.IsClosed ? "投票已结束" : "你已经投过票了"); return; }
+        if (sender is not FrameworkElement { DataContext: DynamicVoteOption option }) return;
+        if (vote.Id.Length == 0) { Svc.Toast.Show("这条投票暂时不能参与"); return; }
+        if (!Svc.Session.HasLogin) { Svc.Toast.Show("投票需要先登录"); return; }
+
+        var busyKey = d.Id + "#" + vote.Id;
+        if (!_voting.Add(busyKey)) return;   // 连点保护: 同一张投票同时只放一个请求过去
+        try
+        {
+            var (ok, err) = await Svc.Api.VoteDynamicAsync(vote.Id, option.Index);
+            if (!ok) { Svc.Toast.Show(err ?? "投票失败，请重试"); return; }
+
+            // 本地记票(服务端不告诉我们结果, 只能自己记), 然后拉一次 vote_info 对账
+            vote.VotedThisSession = true;
+            vote.MyChoices.Add(option.Index);
+            option.Count += 1;
+            vote.TotalCount += 1;
+            DynamicParser.RecomputeVoteOptions(vote);
+            d.NotifyContentChanged();
+            Svc.Toast.Show("投票成功");
+
+            var refreshed = await Svc.Api.GetVoteInfoAsync(vote.Id);
+            if (refreshed.ok && refreshed.vote is { } server)
+            {
+                server.VotedThisSession = true;
+                server.MyChoices = vote.MyChoices;
+                server.OptionsLoaded = true;
+                d.Vote = server;
+                d.NotifyContentChanged();
+            }
+        }
+        catch (Exception ex) { Svc.Toast.Show("投票失败：" + ex.Message); }
+        finally { _voting.Remove(busyKey); }
+    }
+
+    /// <summary>同一张投票的请求去重(连点两次不能投两次 —— 服务端也只认一次, 但会报错)</summary>
+    private static readonly HashSet<string> _voting = new();
+
+    /// <summary>
+    /// 卡片上的投票**卡片节点没有选项**, 得按 vote_id 再查一次 /x/vote/vote_info。
+    /// 只在卡片真正可见时调(见构造函数里的 Loaded), 并发上限 2 —— 与热评预览同一套理由:
+    /// 一屏几十张卡同时打接口会把风控和线程池一起打满。
+    /// </summary>
+    private static readonly SemaphoreSlim VoteGate = new(2);
+
+    private async Task LoadVoteIfNeededAsync()
+    {
+        if (DataContext is not DynamicItem d || d.Vote is not { } vote) return;
+        if (vote.OptionsLoaded || vote.OptionsLoading) return;
+        if (vote.Id.Length == 0) return;
+
+        vote.OptionsLoading = true;
+        var entered = false;
+        try
+        {
+            await VoteGate.WaitAsync(); entered = true;
+            var result = await Svc.Api.GetVoteInfoAsync(vote.Id);
+            if (result.ok && result.vote is { } loaded)
+            {
+                // 保留卡片节点上的 title / 人数(接口两处都有, 以详情为准)
+                loaded.MyChoices = vote.MyChoices;
+                loaded.VotedThisSession = vote.VotedThisSession;
+                d.Vote = loaded;
+            }
+            else
+            {
+                vote.OptionsFailed = true;
+                vote.OptionsError = result.err ?? "投票选项加载失败";
+            }
+        }
+        catch (Exception ex)
+        {
+            vote.OptionsFailed = true;
+            vote.OptionsError = ex.Message;
+        }
+        finally
+        {
+            vote.OptionsLoading = false;
+            vote.OptionsLoaded = vote.Options.Count > 0;
+            if (entered) VoteGate.Release();
+            d.NotifyContentChanged();
+        }
+    }
+
+    /// <summary>
+    /// 附加卡片的行动按钮(2026-11-04)。
+    /// 卡片本身点哪儿都进动态详情; 这个按钮代表"去活动页/商品页" ——
+    /// 但那类落地页在客户端里没有原生实现, 所以这里只把链接复制给用户,
+    /// 并**明说**为什么, 而不是悄悄什么都不做。
+    /// </summary>
+    private void OnCommonButtonClick(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (DataContext is not DynamicItem { Common: { } common }) return;
+        if (common.JumpUrl.Length == 0) { Svc.Toast.Show("这个活动暂时没有可用链接"); return; }
+        try { Clipboard.SetText(common.JumpUrl); Svc.Toast.Show("活动链接已复制，可在浏览器打开"); }
+        catch { Svc.Toast.Show("剪贴板暂不可用，请重试"); }
     }
 
     /// <summary>

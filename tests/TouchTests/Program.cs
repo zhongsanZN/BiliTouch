@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
@@ -46,6 +46,9 @@ internal static class Program
         try
         {
             if(args.Contains("--live-mine")) LiveDynamicProbe.Run(Artifacts,false,true);
+            else if(args.Contains("--card-hang")) CardHangProbe.Run(Artifacts);
+            else if(args.Contains("--cover-hang")) CoverHangProbe.Run(Artifacts);
+            else if(args.Contains("--live-hang")) FeedHangProbe.Run(Artifacts);
             else if(args.Contains("--live-feed")) LiveDynamicProbe.Run(Artifacts,true);
             else if(args.Contains("--live-dynamic")) LiveDynamicProbe.Run(Artifacts);
             else if (args.Contains("--dynamic")) DynamicTests.Run(Check, Artifacts);

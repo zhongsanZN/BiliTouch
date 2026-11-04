@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
@@ -450,14 +450,51 @@ public static class Cover
             if (decoded <= 0) return;   // 首次解码还没落地, 那次本来就会按当前宽度算
             var dpi = VisualTreeHelper.GetDpi(border).DpiScaleX;
             if (dpi <= 0) dpi = 1.0;
-            if (NeedsRedecode(border.ActualWidth * dpi, decoded))
-                _ = LoadAsync(border, url);
+            if (!NeedsRedecode(border.ActualWidth * dpi, decoded)) return;
+
+            // ★★★ 2026-11-04 修"动态页打开就卡死": 重解码必须**限流**, 否则会形成自旋闭环。
+            //
+            //   闭环长这样(在宽度由内容决定的容器里, 例如 StackPanel 里只写了 Height 的 Border):
+            //     贴图 → 期望宽度随位图变大 → SizeChanged → 显示需求 > 已解码宽 → 再解码
+            //          → 再贴图 → 期望宽度又变 → …
+            //   UI 线程始终在 Measure/解码调度里打转, 页面永远出不来(实测单核 67%、无网络等待)。
+            //
+            //   三道闸门, 任一命中都不再重解码:
+            //   ① 宽度没有真的变化(±1px): 这是"贴图导致尺寸抖动"的典型特征, 不是窗口变宽;
+            //   ② 已经到解码上限(1280): 再解也是同一档, 没有任何收益;
+            //   ③ 距上次重解码不足 400ms: 连续抖动时把重解码压成"最多 2.5 次/秒"。
+            var lastWidth = (double)border.GetValue(LastRedecodeWidthProperty);
+            if (Math.Abs(lastWidth - e.NewSize.Width) < 1) return;
+            if (decoded >= MaxDecodeWidth) return;
+            var now = Environment.TickCount64;
+            var lastAt = (long)border.GetValue(LastRedecodeAtProperty);
+            if (now - lastAt < RedecodeCooldownMs) return;
+
+            border.SetValue(LastRedecodeWidthProperty, e.NewSize.Width);
+            border.SetValue(LastRedecodeAtProperty, now);
+            _ = LoadAsync(border, url);
         }
         catch (Exception ex)
         {
             App.ReportError(ex);
         }
     }
+
+    /// <summary>重解码的上限宽度(与 LoadAsync 里的 Math.Min(1280, ...) 保持一致)</summary>
+    private const int MaxDecodeWidth = 1280;
+
+    /// <summary>两次重解码之间的最小间隔, 见 OnCoverSizeChanged 的三道闸门</summary>
+    private const int RedecodeCooldownMs = 400;
+
+    /// <summary>上一次触发重解码时的元素宽度(用于判断"宽度是不是真的变了")</summary>
+    private static readonly DependencyProperty LastRedecodeWidthProperty =
+        DependencyProperty.RegisterAttached("LastRedecodeWidth", typeof(double), typeof(Cover),
+            new PropertyMetadata(0.0));
+
+    /// <summary>上一次重解码的时间戳(TickCount64)</summary>
+    private static readonly DependencyProperty LastRedecodeAtProperty =
+        DependencyProperty.RegisterAttached("LastRedecodeAt", typeof(long), typeof(Cover),
+            new PropertyMetadata(0L));
 
     private static async Task LoadAsync(Border border, string url)
     {
@@ -557,12 +594,21 @@ public static class Cover
             // 解码期间卡片又变宽了(渐进重排/最大化): 立刻补一轮, 别等下一次 SizeChanged。
             // ★ img.PixelWidth < w 说明**源图本身**比请求档位还小 —— 没有更多像素可取了,
             //   上面记录的 0 会让 SizeChanged 的重解码判断直接放行, 不会陷入无意义的循环。
-            if (img.PixelWidth >= requestedWidth)
+            // ★★ 2026-11-04 加三道闸门, 与 OnCoverSizeChanged 同一套理由(防自旋):
+            //   已到上限 / 宽度没真变 / 冷却期内 —— 任一命中就不再补这一轮。
+            if (img.PixelWidth >= requestedWidth && img.PixelWidth < MaxDecodeWidth)
             {
                 var dpiNow = VisualTreeHelper.GetDpi(border).DpiScaleX;
                 if (dpiNow <= 0) dpiNow = 1.0;
-                if (NeedsRedecode(border.ActualWidth * dpiNow, img.PixelWidth))
+                var now = Environment.TickCount64;
+                var lastAt = (long)border.GetValue(LastRedecodeAtProperty);
+                if (now - lastAt >= RedecodeCooldownMs &&
+                    NeedsRedecode(border.ActualWidth * dpiNow, img.PixelWidth))
+                {
+                    border.SetValue(LastRedecodeWidthProperty, border.ActualWidth);
+                    border.SetValue(LastRedecodeAtProperty, now);
                     _ = LoadAsync(border, url);
+                }
             }
         }
 

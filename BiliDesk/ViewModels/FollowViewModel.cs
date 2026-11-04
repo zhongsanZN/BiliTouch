@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
@@ -118,6 +118,13 @@ public class FollowViewModel : ObservableObject
     public string Error { get => _error; private set => SetProperty(ref _error, value); }
     public int Count => Users.Count;
     public bool NotLoggedIn => !Svc.Session.HasLogin;
+
+    /// <summary>
+    /// 发布按钮的可用性(2026-11-04)。
+    /// 与 <see cref="NotLoggedIn"/> 分开是因为语义不同: 未登录时"发布"要**禁用**而不是
+    /// 跟着整页藏起来 —— 用户得先看见这个功能, 才可能去登录。
+    /// </summary>
+    public bool IsLoggedInForPublish => Svc.Session.HasLogin;
 
     // ------------------------------------------------------------ 关注直播看板(2026-10-31)
 

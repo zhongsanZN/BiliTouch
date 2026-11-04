@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
@@ -18,8 +18,88 @@ using BiliDesk.Views.Pages;
 internal static class DynamicTests
 {
     static DynamicItem Parse(string json) { using var doc = JsonDocument.Parse(json); return DynamicParser.Parse(doc.RootElement)!; }
+
+    /// <summary>
+    /// 解析 /x/vote/vote_info 的返回体(2026-11-04)。
+    /// 走的是生产代码同一个入口 —— 不做平行实现, 否则测试能过而线上失效。
+    /// </summary>
+    static DynamicVote ParseVoteInfo(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var info = doc.RootElement.GetProperty("data").GetProperty("vote_info");
+        var vote = new DynamicVote
+        {
+            Id = info.GetProperty("vote_id").ToString(),
+            Title = info.GetProperty("title").GetString() ?? "",
+            Status = info.GetProperty("status").ToString(),
+            TotalCount = info.GetProperty("join_num").GetInt64(),
+            MaxChoices = info.GetProperty("choice_cnt").GetInt32(),
+            EndTime = info.GetProperty("end_time").GetInt64(),
+        };
+        DynamicParser.ReadVoteOptions(info, vote);
+        vote.OptionsLoaded = vote.Options.Count > 0;
+        return vote;
+    }
     const string Draw = """
     {"id_str":"9001","type":"DYNAMIC_TYPE_DRAW","basic":{"comment_id_str":"7001","comment_type":11},"modules":{"module_author":{"mid":"42","name":"示例 UP","pub_time":"刚刚"},"module_dynamic":{"major":{"opus":{"title":"今天的记录","summary":{"text":"正文不会因为图片字段缺失而消失。"},"pics":[{"url":"","width":800,"height":600}]}}},"module_stat":{"comment":{"count":2},"like":{"count":3,"status":true}}}}
+    """;
+
+    /// <summary>
+    /// 投票动态(2026-11-04, 按**只读探针实测结构**写的夹具)。
+    ///
+    /// ★ 关键差异(与上一版猜测不同, 这里必须钉住, 否则解析器一改就悄悄失效):
+    ///   节点在 <c>modules.module_dynamic.additional.vote</c>, 不是 major.vote;
+    ///   卡片节点**不含 options** —— 只有 vote_id/title/desc/join_num/status/choice_cnt/end_time。
+    ///   desc 是"N人参与"文案, status 是 '1' 进行中 / '4' 已结束。
+    /// </summary>
+    const string Vote = """
+    {"id_str":"9101","type":"DYNAMIC_TYPE_WORD","text":"投一下","basic":{"comment_id_str":"7101","comment_type":17},"modules":{"module_author":{"mid":"42","name":"投票 UP","pub_time":"刚刚"},"module_dynamic":{"desc":{"text":"划水，大家觉得【几点更新】专栏比较好？？"},"additional":{"type":"ADDITIONAL_TYPE_VOTE","vote":{"vote_id":"22043414","choice_cnt":"1","default_share":"1","title":"划水，大家觉得【几点更新】专栏比较好？？","desc":"167人参与","end_time":"1793861094","join_num":"167","status":"1","type":"0","uid":"1643718","jump_url":"","upower_action_state":0,"upower_level":"0"}}}},"module_stat":{"comment":{"count":9},"like":{"count":12}}}
+    """;
+
+    /// <summary>
+    /// 投票详情接口(/x/vote/vote_info)的返回体夹具。
+    /// ★ 字段名实测是 <c>opt_desc</c>(不是 desc), <c>opt_idx</c> 从 **1** 开始。
+    /// </summary>
+    const string VoteInfo = """
+    {"code":0,"message":"0","ttl":1,"data":{"vote_info":{"vote_id":22043414,"title":"划水，大家觉得【几点更新】专栏比较好？？","join_num":167,"choice_cnt":1,"end_time":1793861094,"status":1,"default_share":1,"ctime":1793000000,"options":[{"opt_idx":1,"opt_desc":"早上！6-9点","cnt":13},{"opt_idx":2,"opt_desc":"中午！11-13点","cnt":24},{"opt_idx":3,"opt_desc":"傍晚！16-19点","cnt":70},{"opt_idx":4,"opt_desc":"晚上！20-23点","cnt":60}],"options_cnt":4,"voter_level":0,"face":"","name":""}}}
+    """;
+
+    /// <summary>已结束的投票(status='4')—— 用来验证 IsClosed/CanVote。</summary>
+    const string VoteClosed = """
+    {"id_str":"9102","type":"DYNAMIC_TYPE_WORD","text":"结束了的投票","modules":{"module_author":{"mid":"42","name":"投票 UP"},"module_dynamic":{"additional":{"type":"ADDITIONAL_TYPE_VOTE","vote":{"vote_id":"22043415","title":"已经结束的投票","desc":"9人参与","join_num":"9","status":"4","choice_cnt":"1","end_time":"1700000000"}}}}}
+    """;
+
+    /// <summary>"投票没有任何选项"的退化夹具: 解析器不能把它当成可投的投票。</summary>
+    const string VoteOptionBlock = """[{"opt_idx":0,"desc":"A 版","cnt":60},{"opt_idx":1,"desc":"B 版","cnt":60},{"opt_idx":2,"desc":"C 版","cnt":0},{"opt_idx":3,"desc":"D 版","cnt":0}]""";
+
+    /// <summary>附加卡片夹具: major.common(活动) —— 带封面/标题/徽章/按钮。</summary>
+    const string Common = """
+    {"id_str":"9201","type":"DYNAMIC_TYPE_WORD","text":"活动来了","modules":{"module_author":{"mid":"42","name":"活动 UP"},"module_dynamic":{"major":{"common":{"id":"88001","title":"活动标题","desc":"活动说明文字","cover":"https://example.invalid/c.png","jump_url":"https://example.invalid/a","badge":{"text":"活动"},"button":{"text":"去看看","jump_style":1}}}}}}
+    """;
+
+    /// <summary>
+    /// 附加卡片的新结构(2026-11-04 只读探针实测): additional.common 用
+    /// id_str / desc1 / desc2 / sub_type / head_text, button 文字在 button.jump_style.text。
+    /// 老结构(major.common)则是 id / desc / badge —— 两套都要认。
+    /// </summary>
+    const string AdditionalCommon = """
+    {"id_str":"9202","type":"DYNAMIC_TYPE_AV","modules":{"module_author":{"mid":"42","name":"游戏 UP"},"module_dynamic":{"additional":{"type":"ADDITIONAL_TYPE_COMMON","common":{"button":{"type":1,"jump_style":{"text":"下载游戏","interactive":null}},"sub_type":"game","head_text":"相关游戏","jump_url":"https://www.biligame.com/detail?id=107079","id_str":"107079","cover":"https://i0.hdslb.com/bfs/game/x.png","style":1,"title":"洛克王国：世界","desc1":"角色扮演/宠物/回合制","desc2":"现已正式上线"}}}}}
+    """;
+
+    /// <summary>
+    /// 话题夹具(2026-11-04 实测): 权威来源是 module_dynamic.topic{id,name,jump_url}。
+    /// ★ rich_text_nodes 里的 TOPIC 节点 rid 恒为空, 只有这里给真 topic_id。
+    /// </summary>
+    const string Topic = """
+    {"id_str":"9401","type":"DYNAMIC_TYPE_WORD","modules":{"module_author":{"mid":"42","name":"话题 UP"},"module_dynamic":{"topic":{"id":"492306","name":"phigros投票","jump_url":"//m.bilibili.com/topic-detail?topic_id=492306"},"desc":{"text":"#phigros投票# 一起来","rich_text_nodes":[{"type":"RICH_TEXT_NODE_TYPE_TOPIC","text":"#phigros投票#","rid":"","jump_url":"//search?keyword=phigros投票"}]}}}}
+    """;
+
+    /// <summary>
+    /// 富文本夹具: desc 同时给 text(纯文本) 与 rich_text_nodes[](带类型)。
+    /// 顺序: 文字 → 话题 → 文字 → @提及 → 表情。前两段文字 + 话题 + @ + 表情 = 5 个节点。
+    /// </summary>
+    const string Rich = """
+    {"id_str":"9301","type":"DYNAMIC_TYPE_WORD","modules":{"module_author":{"mid":"42","name":"话题 UP"},"module_dynamic":{"desc":{"text":"今天聊聊 #测试话题# 顺便 @示例用户 [微笑]","rich_text_nodes":[{"type":"RICH_TEXT_NODE_TYPE_TEXT","text":"今天聊聊 ","orig_text":"今天聊聊 "},{"type":"RICH_TEXT_NODE_TYPE_TOPIC","text":"#测试话题#","orig_text":"测试话题","rid":"9001","jump_url":"//search?keyword=测试话题"},{"type":"RICH_TEXT_NODE_TYPE_TEXT","text":" 顺便 ","orig_text":" 顺便 "},{"type":"RICH_TEXT_NODE_TYPE_AT","text":"@示例用户","orig_text":"示例用户","rid":"42","jump_url":"//space.bilibili.com/42"},{"type":"RICH_TEXT_NODE_TYPE_EMOJI","text":"[微笑]","emoji":{"icon_url":"https://example.invalid/emoji/smile.png"}}]}}}}
     """;
     public static void Run(Action<bool,string> check, string output)
     {
@@ -81,6 +161,82 @@ internal static class DynamicTests
         var texts = Descendants<TextBlock>(card).Select(t=>t.Text).ToList();
         check(texts.Contains("今天的记录") && texts.Contains("热评测试"), "rendered title and hot comment");
         check(!texts.Any(t=>t=="BiliDesk.Models.DynamicItem"), "no fallback type name");
+
+        // ============ 2026-11-04 新增: 投票 / 附加卡片 / 富文本节点 ============
+        // 这三块此前完全没解析 —— 投票动态只剩一句正文、活动卡只剩标题、
+        // 话题与 @ 是死字。下面每条都钉住"真实接口形状 → 模型字段"的映射。
+
+        // ---- 投票: 节点位置、字段语义、缺 options ----
+        var voteItem = Parse(Vote);
+        check(voteItem.Vote is {Id:"22043414"}, "vote found under additional.vote (not major.vote)");
+        check(voteItem.Vote!.Title.Length>0 && voteItem.Vote.TotalCount==167, "vote title and join_num parsed");
+        check(voteItem.Vote.MaxChoices==1 && !voteItem.Vote.IsMulti, "vote choice_cnt means single select");
+        check(!voteItem.Vote.HasOptions && !voteItem.Vote.OptionsLoaded, "card node carries no options");
+        check(voteItem.Vote.Status=="1" && !voteItem.Vote.IsClosed && voteItem.Vote.CanVote, "vote status 1 means open");
+        check(voteItem.Vote.TotalText=="167 人参与", "vote total text prefers join_num");
+        var closedItem = Parse(VoteClosed);
+        check(closedItem.Vote!.IsClosed && !closedItem.Vote.CanVote, "vote status 4 means closed");
+        check(voteItem.HasAttachedCard && voteItem.HasVote, "vote counts as attached content");
+
+        // ---- 投票详情: /x/vote/vote_info 的 opt_desc / opt_idx 从 1 开始 ----
+        var voteInfo = ParseVoteInfo(VoteInfo);
+        check(voteInfo.Options.Count==4, "vote_info options parsed");
+        check(voteInfo.Options[0].Index==1 && voteInfo.Options[0].Text=="早上！6-9点", "opt_idx starts at 1 and opt_desc is the label");
+        check(voteInfo.Options[0].Count==13, "opt cnt parsed");
+        var sum = voteInfo.Options.Sum(o=>o.Count);
+        check(sum==167, $"option counts sum to join_num ({sum})");
+        check(voteInfo.Options[2].Fraction>0.4 && voteInfo.Options[2].Fraction<0.43, "percent fraction computed from option sum");
+
+        // ---- 投票渲染: 选项按 vote_info 拉回来之后才能渲染 ----
+        var voteCard = new DynamicFeedCard { DataContext=voteItem };
+        window.Content=voteCard; Pump();
+        // 卡片节点没有 options, 所以此刻应显示"正在读取投票选项…"而不是选项按钮
+        check(Descendants<Button>(voteCard).Count(b=>b.DataContext is DynamicVoteOption)==0, "no options rendered before vote_info arrives");
+
+        // ---- 附加卡片 ----
+        var commonItem = Parse(Common);
+        check(commonItem.Common is {Title:"活动标题",Badge:"活动",ButtonText:"去看看"}, "common card fields parsed");
+        check(commonItem.Common!.HasCover && commonItem.Common.HasContent, "common card usable");
+        check(commonItem.HasAttachedCard, "common card counts as attached content");
+        var barecommon = Parse(Common.Replace("\"cover\":\"https://example.invalid/c.png\",",""));
+        check(barecommon.Common is {HasCover:false,HasContent:true}, "common card without cover still renders");
+
+        // 新结构 additional.common: id_str / desc1+desc2 / sub_type / head_text / button.jump_style.text
+        var additionalCommon = Parse(AdditionalCommon);
+        check(additionalCommon.HasCommon, "common card also read from additional node");
+        check(additionalCommon.Common is {Title:"洛克王国：世界",Id:"107079"}, "additional common uses id_str");
+        check(additionalCommon.Common!.Desc=="角色扮演/宠物/回合制 · 现已正式上线", "additional common joins desc1 and desc2");
+        check(additionalCommon.Common.ButtonText=="下载游戏", "additional common reads button.jump_style.text");
+        check(additionalCommon.Common.SourceName=="相关游戏", "additional common reads head_text");
+        check(additionalCommon.Common.IsGame, "additional common keeps sub_type");
+
+        // ---- 话题: 权威来源是 module_dynamic.topic, rich 节点 rid 为空 ----
+        var topicItem = Parse(Topic);
+        check(topicItem.TopicId=="492306" && topicItem.TopicName=="phigros投票", "topic node gives real topic id");
+        check(topicItem.HasTopic, "topic counts as present");
+        check(topicItem.RichNodes.Count==1 && topicItem.RichNodes[0].IsTopic, "rich topic node still parsed");
+        check(topicItem.RichNodes[0].Rid=="", "rich topic node carries no rid (matches probe)");
+
+        // ---- 富文本节点 ----
+        var rich = Parse(Rich);
+        check(rich.RichNodes.Count==5, "rich text nodes parsed");
+        check(rich.RichNodes.Count(n=>n.IsTopic)==1 && rich.RichNodes.First(n=>n.IsTopic).Rid=="9001", "topic node keeps rid");
+        check(rich.RichNodes.Count(n=>n.IsMention)==1 && rich.RichNodes.First(n=>n.IsMention).Rid=="42", "mention node keeps mid");
+        check(rich.RichNodes.First(n=>n.IsEmoji).Emoji.Contains("emoji"), "emoji node keeps icon url");
+        check(rich.RichNodes.Count(n=>n.Type=="RICH_TEXT_NODE_TYPE_TEXT")==2, "plain text nodes kept in order");
+
+        // ---- 附加卡片渲染 ----
+        var commonCard = new DynamicFeedCard { DataContext=commonItem };
+        window.Content=commonCard; Pump();
+        var commonTexts=Descendants<TextBlock>(commonCard).Select(t=>t.Text).ToList();
+        check(commonTexts.Contains("活动标题") && commonTexts.Contains("去看看"), "common card rendered");
+
+        // ---- 富文本: 话题与 @ 必须变成 Hyperlink(可点), 而不是整段纯文本 ----
+        var richCard = new DynamicFeedCard { DataContext=rich };
+        window.Content=richCard; Pump();
+        var richBlock=Descendants<DynamicRichText>(richCard).FirstOrDefault();
+        var links=richBlock==null?0:richBlock.Inlines.OfType<System.Windows.Documents.Hyperlink>().Count();
+        check(links==2, $"topic and mention render as clickable links ({links})");
         card.Measure(new Size(640,double.PositiveInfinity));
         card.Arrange(new Rect(new Point(),card.DesiredSize)); card.UpdateLayout();
         var bitmap = new RenderTargetBitmap(640,(int)Math.Ceiling(card.DesiredSize.Height),96,96,PixelFormats.Pbgra32); bitmap.Render(card);
