@@ -33,6 +33,21 @@ public static class CardWall
     public const double MinItemWidth = 220;
 
     /// <summary>
+    /// 平板/大屏档位: 窗口宽到这个数, 单卡最小宽度提到 <see cref="MinItemWidthLarge"/>。
+    ///
+    /// 手机端是"永远 2 列"(一屏正好一张卡宽的两倍), 平板端不是"列数越多越好" ——
+    /// 卡片缩到 220 以下, 标题只能挤一行、UP 主名和播放量开始互相压。安卓平板的做法是
+    /// **把卡片放大、列数封顶**, 让一屏的信息密度保持和手机接近。
+    ///
+    /// 1600 DIP 是"13 寸笔记本全屏 / 平板横屏"的典型宽度; 3K@225% 的实际可用宽度约 1386,
+    /// 所以正常窗口仍走 220 档, 只有最大化到超宽屏才会进这一档 —— 不会影响小窗。
+    /// </summary>
+    public const double LargeScreenWidth = 1600;
+
+    /// <summary>大屏档位下单卡的最小宽度(比 220 大一档, 封面/标题更舒展)</summary>
+    public const double MinItemWidthLarge = 300;
+
+    /// <summary>
     /// 用户指定的**固定列数**(0 = 自动, 按宽度算)。设置页"首页显示列数"写这里。
     ///
     /// ★ 语义: 指定了就**不按宽度算**(也不再走迟滞) —— 用户要的是"就是这几列",
@@ -327,15 +342,18 @@ public static class CardWall
     {
         if (FixedColumns > 0) return FixedColumns;
 
+        // 平板/大屏档: 卡片跟着放大, 列数封顶, 保持和手机接近的信息密度
+        var minItem = avail >= LargeScreenWidth ? MinItemWidthLarge : MinItemWidth;
+
         var n = current > 0
             ? current
-            : (int)Math.Floor((avail + Gap) / (MinItemWidth + Gap));
+            : (int)Math.Floor((avail + Gap) / (minItem + Gap));
         if (n < 1) n = 1;
 
         // 挤不下就逐列减
-        while (n > 1 && (avail + Gap) / n - Gap < MinItemWidth - Dead) n--;
+        while (n > 1 && (avail + Gap) / n - Gap < minItem - Dead) n--;
         // 还有富余就逐列加
-        while ((avail + Gap) / (n + 1) - Gap >= MinItemWidth + Dead) n++;
+        while ((avail + Gap) / (n + 1) - Gap >= minItem + Dead) n++;
         return n;
     }
 }

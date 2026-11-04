@@ -37,6 +37,7 @@ public partial class HomePage : UserControl
         RankingTab.Checked += OnRankingChecked;
         LiveTab.Checked += OnLiveChecked;
         BangumiTab.Checked += OnBangumiChecked;
+        HookTabSwipe();
         // 页面被重新挂载到可视树时刷新问候语(应用长时间挂在后台再切回来, 文案要跟着时段变)
         Loaded += (_, _) =>
         {

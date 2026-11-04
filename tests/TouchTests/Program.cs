@@ -9,8 +9,11 @@ using System.Windows.Threading;
 using System.Windows.Markup;
 using System.Xml.Linq;
 using BiliDesk.Helpers;
+using BiliDesk.Models;
 using BiliDesk.Services;
+using BiliDesk.ViewModels;
 using BiliDesk.Views;
+using BiliDesk.Views.Pages;
 
 internal static class Program
 {
@@ -42,6 +45,7 @@ internal static class Program
         {
             TestSessions();
             TestWpfControls();
+            TestHome();
             TestPlayer(args.FirstOrDefault());
             Console.WriteLine($"PASS: {_checks} checks");
             File.WriteAllText(Path.Combine(Artifacts, "result.txt"), $"PASS: {_checks} checks\n{DateTimeOffset.Now:O}\n");
@@ -103,6 +107,45 @@ internal static class Program
         right.Move(703, -2000);
         Check(right.VolumeTarget(80) == 100, "volume clamps to 100");
         Check(UpdateChecker.ParseVersion(BiliDesk.App.AppVersion) == new Version(1, 5, 3), "touch build version works with updater");
+    }
+
+    private static void TestHome()
+    {
+        var vm = new HomeViewModel();
+        for (var i = 0; i < 8; i++)
+            vm.RecommendItems.Add(new VideoItem { Title = "首页测试 " + i, Author = "UP" + i, Duration = "1:00" });
+        var page = new HomePage { DataContext = vm };
+        var window = new Window { Content = page, Width = 1280, Height = 800 };
+        window.Show(); Pump(600);
+
+        var host = (Grid)page.FindName("TabHost")!;
+        var recommend = (RadioButton)page.FindName("RecommendTab")!;
+        var popular = (RadioButton)page.FindName("PopularTab")!;
+        Check(recommend.IsChecked == true, "home starts on the recommend tab");
+
+        // 左滑 → 下一个 tab
+        var finger = new Finger(host);
+        var x = host.ActualWidth / 2; var y = host.ActualHeight / 2;
+        finger.Down(x, y);
+        for (var i = 1; i <= 5; i++) finger.Move(x - i * 20, y);
+        finger.Up(x - 100, y); Pump(200);
+        Check(popular.IsChecked == true, "horizontal finger swipe moves to the next home tab");
+
+        // 右滑 → 回到上一个 tab
+        finger = new Finger(host);
+        finger.Down(x - 100, y);
+        for (var i = 1; i <= 5; i++) finger.Move(x - 100 + i * 20, y);
+        finger.Up(x, y); Pump(200);
+        Check(recommend.IsChecked == true, "horizontal finger swipe moves back to the previous home tab");
+
+        // 竖滑不切 tab
+        finger = new Finger(host);
+        finger.Down(x, y);
+        for (var i = 1; i <= 5; i++) finger.Move(x, y - i * 20);
+        finger.Up(x, y - 100); Pump(200);
+        Check(recommend.IsChecked == true, "vertical finger swipe does not switch home tabs");
+
+        window.Close(); Pump(120);
     }
 
     private static void TestWpfControls()

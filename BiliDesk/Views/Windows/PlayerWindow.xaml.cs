@@ -486,6 +486,7 @@ public partial class PlayerWindow : FluentWindow
         InitializeTouch();
         Closed += OnClosed;
         Loaded += OnLoaded;
+        SizeChanged += OnWindowSizeChangedForInfoPanel;
         PreviewKeyDown += OnPreviewKeyDown;
         // 鼠标侧键返回: 挂在窗口上, 也挂在视频区那层浮动覆盖窗口上(见 HookOverlayKeyboard)
         PreviewMouseDown += OnPreviewMouseDown;
@@ -5803,7 +5804,7 @@ public partial class PlayerWindow : FluentWindow
         // ★ 列宽必须跟着一起给回去: 只把 Visibility 改回 Visible 而列宽还停在 0,
         //   面板会量成 0 宽(用户看到的是"信息栏没回来")。
         if (RightColumn != null)
-            RightColumn.Width = new GridLength(hide ? 0 : 400);
+            RightColumn.Width = new GridLength(hide ? 0 : InfoPanelWidthFor(ActualWidth));
 
         // ★ 最小尺寸必须跟着状态走(2026-10-05 修"铺满窗口后缩到某个程度就被卡住"):
         //   常规的 840×600 是按"视频列 320 + 信息栏 400"的布局定的下限(2026-11-03 从
@@ -5815,6 +5816,38 @@ public partial class PlayerWindow : FluentWindow
             VideoColumn.MinWidth = hide ? 0 : VideoColumnNormalMinWidth;
         MinWidth = hide ? FillWindowMinWidth : NormalWindowMinWidth;
         MinHeight = hide ? FillWindowMinHeight : NormalWindowMinHeight;
+    }
+
+    // ------------------------------------------------------------ 信息栏宽度(平板式自适应)
+
+    /// <summary>信息栏最窄/最宽。窄于 340 评论区的昵称和操作行就开始互相挤; 宽于 560 视频区白让。</summary>
+    private const double InfoPanelMinWidth = 340;
+    private const double InfoPanelMaxWidth = 560;
+
+    /// <summary>
+    /// 按窗口宽度算信息栏宽度 —— 安卓平板是"主内容 + 侧栏"按比例分, 不是写死一个像素。
+    ///
+    /// 手机/窄窗: 侧栏收到 340, 把宽度让给视频;
+    /// 平板/宽窗: 侧栏跟着长(30%), 简介、评论、合集都能多显示内容, 不用一直滚。
+    ///
+    /// 为什么不是"越宽越好": 右栏是文字流, 超过 560 之后一行 40+ 个字, 阅读时眼睛要横跳,
+    /// 安卓平板的详情页也是把侧栏限制在一个阅读舒适宽度、而不是铺满。
+    /// </summary>
+    private static double InfoPanelWidthFor(double windowWidth)
+    {
+        if (double.IsNaN(windowWidth) || windowWidth <= 0) return 400;
+        var w = Math.Round(windowWidth * 0.30);
+        return Math.Clamp(w, InfoPanelMinWidth, InfoPanelMaxWidth);
+    }
+
+    /// <summary>窗口宽度变了就重算右栏(全屏/铺满时列宽是 0, 由 ApplyInfoPanelState 管, 这里跳过)</summary>
+    private void OnWindowSizeChangedForInfoPanel(object sender, SizeChangedEventArgs e)
+    {
+        if (_closing || RightColumn == null) return;
+        if (_isFullscreen || _isFillWindow) return;
+        var w = InfoPanelWidthFor(e.NewSize.Width);
+        if (Math.Abs(RightColumn.Width.Value - w) > 0.5)
+            RightColumn.Width = new GridLength(w);
     }
 
     // ------------------------------------------------------------ 窄视频区控制栏
