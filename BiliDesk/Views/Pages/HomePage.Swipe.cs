@@ -55,6 +55,8 @@ public partial class HomePage
     private HomeTabKind? _frozenKind;
     /// <summary>冻结前的 PanningMode, 解冻时原样还回去</summary>
     private PanningMode _frozenPanMode = PanningMode.VerticalFirst;
+    /// <summary>冻结时钉住的纵向偏移(常量): 每帧都回到它, 画面就完全不会上下动</summary>
+    private double _frozenOffset;
 
     /// <summary>吸附动画时长。</summary>
     private const int SwipeSnapMs = 180;
@@ -138,7 +140,9 @@ public partial class HomePage
         //   否则: 手指慢慢横移时, ScrollViewer 的垂直平移仍在按微小的 dy 抖动调整
         //   (每帧 ±1~2px 的来回), 而 TabHost 同时被我们左右平移 —— 两个位移叠加,
         //   观感就是"画面在抽搐"。这里把纵向彻底钉住, 只让横向生效。
-        if (_swipeDx == 0 && dx != 0) FreezeVertical();
+        // ★ 每帧都调 FreezeVertical: 它内部把偏移钉回按下时的常量。
+        //   (不能只在首帧调 —— 平移期间 WPF 会持续改动 VerticalOffset)
+        FreezeVertical();
         _swipeDx = dx;
         // 到头(已经在第一个/最后一个 tab)还往那个方向拖: 橡皮筋
         var target = CurrentTabIndex + (dx < 0 ? 1 : -1);
@@ -147,26 +151,39 @@ public partial class HomePage
     }
 
     /// <summary>
-    /// 横向手势一旦成立, 就把当前 tab 的纵向滚动**彻底关掉**。
+    /// 横向手势一旦成立, 就把当前 tab 的纵向滚动**钉死在按下那一刻的位置**。
     ///
-    /// ★★★ 2026-11-04 修"缓慢滑动时画面抽搐"(第二版):
-    ///   上一版是每帧调一次 `ScrollToVerticalOffset(当前值)` —— 那只是把偏移写回原处,
-    ///   但 ScrollViewer 的**物理惯性/触摸平移依然活着**: 手指仍有微小的 dy, WPF 的
-    ///   PanningMode 会照常把它变成"几像素的纵向位移", 而本方法每帧又把它抹平
-    ///   ⇒ 两者拉锯, 观感就是画面在**上下抽搐**。
+    /// ★★★ 2026-11-04 修"缓慢滑动时画面抽搐"(第三版, 找到真因):
     ///
-    ///   正确做法是把 PanningMode 临时设成 None(彻底不参与), 手势结束后再恢复。
-    ///   同时把偏移钉死一次(打断已经在跑的惯性动画)。
+    ///   第一版: 每帧 `ScrollToVerticalOffset(sv.VerticalOffset)` —— 把**当前值**写回去。
+    ///           没用: 当前值本身就在被 WPF 的平移改来改去, 等于"抹平一个正在动的量"。
+    ///   第二版: 把 PanningMode 设 None —— 也没用: PanningMode 是在**触摸按下那一刻**
+    ///           被读取来决定要不要挂 Manipulation 的, 手势中途改成 None **不会取消
+    ///           已经在跑的那次平移**。
+    ///
+    ///   所以两版都还抽搐。真正的做法是:
+    ///     **在按下时记住偏移(_frozenOffset), 之后每帧强制回到这个常量。**
+    ///   常量不动 ⇒ 画面纵向完全静止; 而横向由 TabHost 的 TranslateTransform 负责。
+    ///   两个方向的驱动彻底分离, 不会再互相拉扯。
+    ///
+    ///   PanningMode=None 仍然设上 —— 它能让**后续**的平移不再启动, 是有益的补充。
     /// </summary>
     private void FreezeVertical()
     {
         var kind = CurrentTabFromVm() ?? HomeTabKind.Recommend;
         var sv = ScrollOf(kind);
         if (sv == null) return;
-        _frozenKind = kind;
-        _frozenPanMode = sv.PanningMode;
-        sv.SetCurrentValue(ScrollViewer.PanningModeProperty, PanningMode.None);
-        sv.ScrollToVerticalOffset(sv.VerticalOffset);
+        if (_frozenKind == null)
+        {
+            // 首次冻结: 记下此刻的偏移作为"常量", 并关掉后续平移
+            _frozenKind = kind;
+            _frozenPanMode = sv.PanningMode;
+            _frozenOffset = sv.VerticalOffset;
+            sv.SetCurrentValue(ScrollViewer.PanningModeProperty, PanningMode.None);
+        }
+        // 每帧都钉回那个常量(平移期间 WPF 仍可能改动它)
+        if (Math.Abs(sv.VerticalOffset - _frozenOffset) > 0.5)
+            sv.ScrollToVerticalOffset(_frozenOffset);
     }
 
     /// <summary>恢复上一次 <see cref="FreezeVertical"/> 关掉的触摸平移</summary>

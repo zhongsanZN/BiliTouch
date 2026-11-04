@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Windows;
@@ -78,44 +78,71 @@ public partial class MainWindow : FluentWindow
         if (delta == 0) return;
         if (_vm.Current != PageKey.Home) return;
 
-        // ★★★ 2026-11-04 修"触控板双指滑动没有单次限位 + 左右反了":
+        // ★★★ 2026-11-04 第三次修触控板横滑。前两次错在哪, 记清楚别重犯:
         //
-        //   ① **单次限位**: 一次滚动手势会连续发几十个 delta, 而每个 delta 都可能
-        //      凑满一格 ⇒ 原来那个 while 循环会在一次手势里连切好几页。
-        //      现在改成"**一次手势只切一页**": 切完进入冷却(HandWheelCooldownMs),
-        //      冷却期内所有 delta 只累计余量、不切页; 手指停下超过冷却期才允许下一次。
-        //   ② **方向**: WM_MOUSEHWHEEL 的 delta > 0 表示"向右滚"(手指向右滑),
-        //      此时内容应向右跟手 ⇒ 露出**左**边那一页 ⇒ tab 下标 -1。
-        //      上一版传 -dir 正好反了。
+        //   ① **方向错了两次**: 两版都写 `-dir`, 你两次都说反。所以正确值就是 `+dir`。
+        //      (WM_MOUSEHWHEEL 正 delta 在本机对应"向左滑", 与文档约定相反 ——
+        //       系统反向滚动开着/驱动约定不同, 不必纠结原因, 以实测为准。)
+        //
+        //   ② **"划快一下跳好几页"**: 前两版用"时间冷却"挡连切 —— 这个思路是错的。
+        //      快速手势的 delta 派发极密, 450ms 冷却一过马上又凑满一格, 于是照样连跳。
+        //      ⇒ 正确做法是按**手势边界**限位: 一次"连续滚动"(delta 之间间隔很短)
+        //        只允许切**一页**; 必须出现一次"明显停顿"才算新手势, 才允许再切。
+        //        这跟触屏的"一次手势只翻一页"是同一个语义。
         var now = Environment.TickCount64;
-        if (now < _hWheelReadyAt) { _hWheelAccum = 0; return; }   // 冷却中, 不累计也不切
 
+        // 与上一次 delta 的间隔够大 ⇒ 这是**新手势**, 重置本手势的切页许可
+        if (now - _hWheelLastAt > HandWheelGestureGapMs)
+        {
+            _hWheelAccum = 0;
+            _hWheelConsumed = false;
+        }
+        _hWheelLastAt = now;
+
+        // 本手势已经切过一页 ⇒ 后续 delta 全部丢弃, 直到手指停下再开始
+        if (_hWheelConsumed) return;
+
+        // 反向时清掉余量(与纵向滚轮同款约定)
         if (Math.Sign(delta) != Math.Sign(_hWheelAccum)) _hWheelAccum = 0;
         _hWheelAccum += delta;
 
-        const int Notch = 120;
-        if (Math.Abs(_hWheelAccum) < Notch) return;   // 没攒够一格, 继续等
+        // 门槛: 一格(120)。慢划要攒够一格; 快划的 delta 本来就大, 同样要够一格 ——
+        // 关键是 **consumed 标志** 保证一次手势只切一页, 与快慢无关。
+        if (Math.Abs(_hWheelAccum) < Notch) return;
 
         var dir = Math.Sign(_hWheelAccum);
-        _hWheelAccum = 0;                            // 清空: 一次手势只用一格
-        _hWheelReadyAt = now + HandWheelCooldownMs;  // 进入冷却, 挡住本次手势的剩余 delta
+        _hWheelAccum = 0;
+        _hWheelConsumed = true;      // ★ 本手势到此为止, 后续 delta 一律忽略
 
-        // delta > 0(向右滑) ⇒ 切到左边那一页 ⇒ -1
+        // ★ 方向: delta > 0 ⇒ 手指向左滑 ⇒ 内容向左跟手 ⇒ 露出**右**边那页 ⇒ +1
         if (PageOf(PageKey.Home) is HomePage home)
-            home.HandleHorizontalWheel(-dir);
+            home.HandleHorizontalWheel(_hWheelInvert ? -dir : dir);
     }
 
+    /// <summary>一格滚轮的标准 delta</summary>
+    private const int Notch = 120;
+
     /// <summary>
-    /// 触控板横向手势的冷却时长(毫秒)。
-    /// 一次两指横滑通常持续 200~500ms、发几十个 delta; 取 450ms 既挡得住同一次手势的
-    /// 后续 delta, 又不会让"连续划两下"中的第二下被吃掉。
+    /// 两次横向 delta 之间超过这个间隔, 就认为是**两次不同的手势**。
+    /// 触控板一次连续滚动的 delta 间隔通常 5~30ms; 手指抬起再落下至少几十上百毫秒。
+    /// 取 220ms 能可靠分开"连续划两下"与"一次划动的后续事件"。
     /// </summary>
-    private const int HandWheelCooldownMs = 450;
+    private const int HandWheelGestureGapMs = 220;
 
-    /// <summary>冷却结束时刻(TickCount64)。在此之前收到的横向 delta 一律忽略。</summary>
-    private long _hWheelReadyAt;
+    /// <summary>
+    /// 方向开关: true = 把 delta 符号取反后再用。
+    /// ★ 前两版都是"取反"且你两次都说反, 所以这里默认 **false**(不取反)。
+    ///   若换一台机器发现又反了, 只改这一个常量 —— 不要再往别处加方向修正。
+    /// </summary>
+    private const bool _hWheelInvert = false;
 
-    /// <summary>触控板横向滚动的余量(攒够一格才切一次 tab)</summary>
+    /// <summary>上一次收到横向 delta 的时刻</summary>
+    private long _hWheelLastAt;
+
+    /// <summary>本次手势是否已经切过一页(切过就置位, 直到出现手势间隔才清)</summary>
+    private bool _hWheelConsumed;
+
+    /// <summary>本次手势累计的 delta 余量</summary>
     private int _hWheelAccum;
 
     private FrameworkElement PageOf(PageKey key)

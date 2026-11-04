@@ -40,22 +40,32 @@ public class PlayerService
         try
         {
             var win = new PlayerWindow();
-            // 屏幕外 + 全透明: 用户看不见, 但布局/原生窗口照样会建出来。
+            // ★★★ 2026-11-04 修"点开视频详情页一直不出现"的**真根因**:
+            //
+            //   预热原来是: Left/Top = -32000 → Show() → Hide() → Left/Top = NaN。
+            //   实测日志(player-show.log)打下起播那一刻的真实状态:
+            //       vis=True state=Normal left=-14563.55 top=-14563.55
+            //   也就是说 **NaN 没能把位置复位** —— WPF 对已经过布局的窗口,
+            //   Left/Top 设 NaN 只表示"没显式设过", 并不会重新居中; 而
+            //   WindowStartupLocation=CenterScreen 只在**首次** Show 时生效一次,
+            //   这个窗口已经 Show 过了 ⇒ 两者都不起作用, 窗口永远停在屏幕外。
+            //   (另外 DWM 会把它夹到 -14563 这种"虚拟桌面边界"值, 于是连我原来
+            //    `Left <= -30000` 的兜底判断都永远不成立 —— 双重失效。)
+            //
+            //   现在改成: **预热也用真实屏幕坐标**, 只是靠 Opacity=0 + 移出可视区一点点
+            //   来保证用户看不见。位置从一开始就在屏幕内, 不存在"要不要复位"的问题。
+            var wa = SystemParameters.WorkArea;
             win.WindowStartupLocation = WindowStartupLocation.Manual;
-            win.Left = -32000;
-            win.Top = -32000;
-            win.Opacity = 0;
+            win.Left = wa.Left + Math.Max(0, (wa.Width - 1280) / 2);
+            win.Top = wa.Top + Math.Max(0, (wa.Height - 760) / 2);
+            win.Opacity = 0;          // 全透明: 用户看不见, 但布局/原生窗口照样建出来
             win.ShowInTaskbar = false;
             win.ShowActivated = false;
             win.Show();
-            // 建完立刻藏起来: 留在屏幕外会被 DWM 当成可见窗口持续合成, 白耗 GPU。
+            // 建完立刻藏起来: 留在屏幕上会被 DWM 当成可见窗口持续合成, 白耗 GPU。
             win.Hide();
             win.Opacity = 1;
             win.ShowInTaskbar = true;
-            // ★ 把位置复位: 下次 Show 出来就在屏幕中央, 不用再靠 GetOrCreateWindow 兜底。
-            win.Left = double.NaN;
-            win.Top = double.NaN;
-            win.WindowStartupLocation = WindowStartupLocation.CenterScreen;
             _window = win;
         }
         catch
@@ -105,16 +115,14 @@ public class PlayerService
         start(win);
         if (!string.IsNullOrEmpty(title)) win.Title = title + " - BiliDesk";
 
-        // ★★★ 2026-11-04 修"点了视频详情页还是不出现"(第二版):
-        //   上面 GetOrCreateWindow 里已经 Show/Activate 过一次, 但那次调用发生在
-        //   **起播之前** —— 而起播路径(PlayVideo → 取 playurl → 建 Media → PlayMedia)
-        //   中间有 await, 且 PlayerWindow 在 Loaded 里还会设 WindowState=Maximized。
-        //   实测下来的效果是: 窗口在起播期间又被藏回去(或从未真正完成 Show),
-        //   用户看到的是"有声音、没窗口"。
+        // ★★★ 2026-11-04 修"点了视频详情页还是不出现"(第三版, 按实测日志定案):
         //
-        //   这里在 start() **之后**再做一次强制显形: 与起播无关, 纯 UI 兜底。
-        //   ★ 用 Dispatcher.BeginInvoke 而不是直接调: 让起播先把同步部分跑完,
-        //     避免和 Loaded 里的 Maximized 抢同一帧。
+        //   日志给出的那一刻状态是 vis=True / state=Normal / left=-14563 / top=-14563 ——
+        //   窗口**可见、状态正常**, 只是位置在屏幕外。所以问题从来不是"没 Show",
+        //   而是"位置在屏幕外, 且复位逻辑没生效"(根因见 WarmUp 里那段说明)。
+        //
+        //   这里改成**按屏幕矩形判定**, 不再用某个魔法阈值(-30000 那个判断被 DWM 夹到
+        //   -14563 的值绕过了)。判定标准: 窗口矩形与任何屏幕工作区**不相交**就拉回。
         win.Dispatcher.BeginInvoke(new Action(() =>
         {
             try
@@ -128,19 +136,43 @@ public class PlayerService
                 if (!win.IsVisible) win.Show();
                 if (win.WindowState == WindowState.Minimized)
                     win.WindowState = WindowState.Maximized;
-                // 位置兜底: 屏幕外(预热遗留)就拉回来
-                if (win.Left <= -30000 || win.Top <= -30000)
+
+                // 位置兜底: 按**真实屏幕矩形**判定, 与阈值无关
+                var wa = SystemParameters.WorkArea;
+                if (!IsOnAnyScreen(win))
                 {
-                    win.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-                    win.Left = double.NaN;
-                    win.Top = double.NaN;
+                    win.WindowStartupLocation = WindowStartupLocation.Manual;
+                    win.Left = wa.Left + Math.Max(0, (wa.Width - win.Width) / 2);
+                    win.Top = wa.Top + Math.Max(0, (wa.Height - win.Height) / 2);
                 }
                 win.Activate();
                 win.Topmost = true;
                 win.Topmost = false;   // 一闪拿焦点, 但不长期置顶
+
+                System.IO.File.AppendAllText(
+                    System.IO.Path.Combine(AppPaths.DataDir, "player-show.log"),
+                    $"[after-fix] left={win.Left} top={win.Top} onScreen={IsOnAnyScreen(win)}\n");
             }
             catch { /* 兜底失败不影响播放 */ }
         }), System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    /// <summary>
+    /// 窗口是否有**任何部分**落在某个屏幕的工作区里。
+    ///
+    /// ★ 为什么按矩形判而不是按 Left 阈值: 实测 DWM 会把屏幕外的窗口坐标夹到
+    ///   -14563 这种"虚拟桌面边界", 任何写死的阈值(比如 -30000)都可能被绕过。
+    ///   直接算矩形与 WorkArea 的交集才是可靠判据。
+    /// </summary>
+    private static bool IsOnAnyScreen(Window win)
+    {
+        double w = win.ActualWidth > 0 ? win.ActualWidth : win.Width;
+        double h = win.ActualHeight > 0 ? win.ActualHeight : win.Height;
+        if (double.IsNaN(w) || w <= 0) w = 320;
+        if (double.IsNaN(h) || h <= 0) h = 240;
+        var r = new Rect(win.Left, win.Top, w, h);
+        var wa = SystemParameters.WorkArea;
+        return r.IntersectsWith(wa) && r.Width > 0 && r.Height > 0;
     }
 
     private PlayerWindow? GetOrCreateWindow()
