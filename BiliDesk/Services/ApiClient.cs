@@ -1981,7 +1981,7 @@ public class ApiClient
 
                 // 按档位挑一条:
                 //   Auto  → Hi-Res > 杜比 > 最高 AAC(用户没选就给他最好的)
-                //   其它  → 先找完全匹配的档; 找不到就退到"该档位上最接近的"(见下)
+                //   指定  → 先找完全匹配的档; **找不到绝不退到普通 AAC**(见下)
                 AudioTrack? pick = null;
                 if (audioQuality == AudioQuality.Auto)
                 {
@@ -1991,8 +1991,19 @@ public class ApiClient
                 }
                 else
                 {
-                    pick = dashAudioTracks.FirstOrDefault(t => t.Quality == audioQuality)
-                        ?? dashAudioTracks.OrderByDescending(t => t.Bandwidth).FirstOrDefault();
+                    // ★★★ 2026-11-04 用户要求: "有更高默认使用更高, ... 不应切回 aac"。
+                    //   所以指定档位拿不到时, **优先退回另一种高级音质**(杜比 ↔ Hi-Res),
+                    //   只有连一种高级音质都没有时才落到 AAC —— 绝不因为"要的那档没有"
+                    //   就把用户从无损悄悄降到 AAC。
+                    pick = dashAudioTracks.FirstOrDefault(t => t.Quality == audioQuality);
+                    if (pick == null && audioQuality is AudioQuality.HiRes or AudioQuality.Dolby)
+                    {
+                        // 退到另一种高级音质, 仍然不是 AAC
+                        pick = dashAudioTracks.FirstOrDefault(t => t.Quality == AudioQuality.HiRes)
+                            ?? dashAudioTracks.FirstOrDefault(t => t.Quality == AudioQuality.Dolby);
+                    }
+                    // 这条视频压根没有高级音质 ⇒ 才用最高 AAC(否则就没声了)
+                    pick ??= dashAudioTracks.OrderByDescending(t => t.Bandwidth).FirstOrDefault();
                 }
                 if (pick != null)
                 {

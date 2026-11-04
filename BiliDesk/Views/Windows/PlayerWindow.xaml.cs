@@ -3816,26 +3816,59 @@ public partial class PlayerWindow : FluentWindow
             foreach (var (qn, label) in _qualities)
                 QualityList.Items.Add(new ListBoxItem { Tag = qn, Content = label });
 
-            // ---- 音质分区(2026-11-04) ----
-            // ★ 为什么和画质放同一个弹出菜单: 播放器控制栏已经排满(播放/时间/音量/倍速/
-            //   清晰度/弹幕/全屏), 再塞一个"音质"按钮会把窄窗口挤爆。而"画质/音质"本就是
-            //   用户心里的同一件事(我想看得更好/听得更好), 同一个菜单里分区最自然。
+            // ---- 音质分区(2026-11-04，2026-11-04 二次改) ----
+            // ★ 为什么和画质放同一个弹出菜单: 控制栏已排满, 再塞一个"音质"按钮会挤爆。
+            //
+            // ★★ 用户要求(原话): "有更高默认使用更高, 只作为显示, 不应切回aac。
+            //    同时有杜比和hires时才可以点击选择杜比或hires。"
+            //    ⇒ 三种情况:
+            //      ① **只有一种高级音质**(例如只有 Hi-Res)  → 只显示, 不可点。
+            //         不可点的理由: 点它没有任何别的档能切, 反而会让人以为能切回 AAC 降质。
+            //      ② **杜比与 Hi-Res 同时存在**       → 两个都可点, 让用户自己挑。
+            //      ③ **只有普通 AAC**               → 整个分区不出现。
+            //    ★ AAC 档**永远不列为可选项** —— 那正是用户明确否掉的"切回 aac"。
             if (_audioTracks.Count > 0)
             {
-                QualityList.Items.Add(new ListBoxItem
-                {
-                    Content = "── 音质 ──",
-                    IsEnabled = false,          // 纯分隔, 不可选
-                    Focusable = false,
-                    Padding = new Thickness(6, 6, 6, 3),
-                });
-                foreach (var at in _audioTracks)
+                var hasHiRes = _audioTracks.Any(a => a.Quality == Models.AudioQuality.HiRes);
+                var hasDolby = _audioTracks.Any(a => a.Quality == Models.AudioQuality.Dolby);
+                var premium = _audioTracks
+                    .Where(a => a.Quality is Models.AudioQuality.HiRes or Models.AudioQuality.Dolby)
+                    .ToList();
+
+                if (premium.Count > 0)
                 {
                     QualityList.Items.Add(new ListBoxItem
                     {
-                        Tag = at,               // Tag 是 AudioTrack 而不是 int, 靠类型区分
-                        Content = (at.Quality == _actualAudio ? "✓ " : "") + at.DisplayLabel,
+                        Content = "── 音质 ──",
+                        IsEnabled = false,          // 纯分隔, 不可选
+                        Focusable = false,
+                        Padding = new Thickness(6, 6, 6, 3),
                     });
+
+                    if (hasHiRes && hasDolby)
+                    {
+                        // ② 两种都在: 都做成可点条目, 用户在两者之间挑
+                        foreach (var at in premium)
+                        {
+                            QualityList.Items.Add(new ListBoxItem
+                            {
+                                Tag = at,           // Tag 是 AudioTrack, 靠类型区分
+                                Content = (at.Quality == _actualAudio ? "✓ " : "") + at.DisplayLabel,
+                            });
+                        }
+                    }
+                    else
+                    {
+                        // ① 只有一种: 纯显示, 不可点(IsEnabled=false 让 ListBox 不选中它)
+                        var cur = premium.FirstOrDefault(a => a.Quality == _actualAudio) ?? premium[0];
+                        QualityList.Items.Add(new ListBoxItem
+                        {
+                            Content = "正在使用：" + cur.DisplayLabel,
+                            IsEnabled = false,
+                            Focusable = false,
+                            Padding = new Thickness(10, 6, 10, 6),
+                        });
+                    }
                 }
             }
             if (actualQn > 0) _currentQn = actualQn;
@@ -3851,31 +3884,29 @@ public partial class PlayerWindow : FluentWindow
                 : QualityPreference.LabelOf(Svc.Settings.PreferredQualityQn);
             if (QualityText != null) QualityText.Text = label2;
 
-            // ★ 音质标识(2026-11-04): 用户问"到底开没开 Hi-Res" —— 直接写在控制栏上。
-            //   只有真的在用无损/杜比时才显示, AAC 档保持隐藏(不占位置、不误导)。
+            // ★ 音质标识(2026-11-04 二次改): 按用户要求「只作为显示, 不应切回 aac」。
+            //
+            //   ① 徽章改为**纯显示**, 不再可点(原来点它弹菜单, 会让人以为可以降回 AAC);
+            //   ② 默认就用能拿到的**最高**一档, 所以显示的就是实际在播的那一档;
+            //   ③ 只有杜比与 Hi-Res 同时存在时才需要用户挑 —— 那种情况下菜单里两个都可点,
+            //      徽章显示当前选中的那个。
             if (BtnAudioBadge != null && AudioBadgeText != null)
             {
-                switch (_actualAudio)
+                var badge = _actualAudio switch
                 {
-                    case Models.AudioQuality.HiRes:
-                        AudioBadgeText.Text = "Hi-Res";
-                        BtnAudioBadge.Visibility = Visibility.Visible;
-                        break;
-                    case Models.AudioQuality.Dolby:
-                        AudioBadgeText.Text = "杜比";
-                        BtnAudioBadge.Visibility = Visibility.Visible;
-                        break;
-                    default:
-                        // ★ 直播/本地文件时没有音轨概念, 一律隐藏
-                        BtnAudioBadge.Visibility = Visibility.Collapsed;
-                        break;
-                }
-                // 视频有 Hi-Res 但当前没开(比如偏好是 AAC): 用浅色标一下"可切无损"
-                if (_actualAudio is Models.AudioQuality.Standard or Models.AudioQuality.High
-                    && _audioTracks.Any(a => a.Quality == Models.AudioQuality.HiRes))
+                    Models.AudioQuality.HiRes => "Hi-Res",
+                    Models.AudioQuality.Dolby => "杜比",
+                    _ => "",
+                };
+                if (badge.Length > 0)
                 {
-                    AudioBadgeText.Text = "可切无损";
+                    AudioBadgeText.Text = badge;
                     BtnAudioBadge.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    // 直播/本地文件/纯 AAC: 没有高级音质概念, 一律隐藏
+                    BtnAudioBadge.Visibility = Visibility.Collapsed;
                 }
             }
             // 高亮与实际清晰度匹配的项
@@ -3960,6 +3991,16 @@ public partial class PlayerWindow : FluentWindow
         _ = SwitchQualityAsync(qn);
     }
 
+    /// <summary>音质档位的中文名(提示文案用)</summary>
+    private static string 音质名(Models.AudioQuality q) => q switch
+    {
+        Models.AudioQuality.HiRes => "Hi-Res 无损",
+        Models.AudioQuality.Dolby => "杜比全景声",
+        Models.AudioQuality.High => "高品质音质",
+        Models.AudioQuality.Standard => "标准音质",
+        _ => "最佳音质",
+    };
+
     /// <summary>
     /// 切换音质(2026-11-04)。只换音轨, **不动画面、不 seek**。
     ///
@@ -3988,20 +4029,28 @@ public partial class PlayerWindow : FluentWindow
                 ShowFail(err ?? "切换音质失败");
                 return;
             }
-            if (actualAudio != quality)
+            // ★★★ 2026-11-04 二次改: 用户要求「不应切回 aac」。
+            //   原来这里在"服务端没给这一档"时会把偏好**退回 Auto**, 而 Auto 在
+            //   "这条视频没有高级音质"时就是最高 AAC —— 等于悄悄把用户降回 AAC。
+            //   现在:
+            //     · 拿到了要的档 ⇒ 记住它;
+            //     · 拿到的是**另一种高级音质**(杜比↔Hi-Res 互退) ⇒ 记住实际那档, 并说明;
+            //     · 只有**连高级音质都没有**时才提示, 且偏好保持用户的原始选择
+            //       (下次遇到有高级音质的视频仍然按他的意愿走)。
+            if (actualAudio == quality)
             {
-                // 服务端没给这一档 —— 说清楚, 并把偏好退回 Auto(下次别再要一个拿不到的)
-                Svc.Toast.Show(quality switch
-                {
-                    Models.AudioQuality.HiRes => "这条视频没有 Hi-Res 音轨(需大会员且 UP 主上传)",
-                    Models.AudioQuality.Dolby => "这条视频没有杜比音轨(需大会员)",
-                    _ => "该音质档位不可用, 已回退到最佳可用音质",
-                });
-                Svc.Settings.PreferredAudioQuality = Models.AudioQuality.Auto;
+                Svc.Settings.PreferredAudioQuality = quality;
+            }
+            else if (actualAudio is Models.AudioQuality.HiRes or Models.AudioQuality.Dolby)
+            {
+                // 高级音质之间互退: 记住实际那档(不要留下一个拿不到的偏好)
+                Svc.Settings.PreferredAudioQuality = actualAudio;
+                Svc.Toast.Show($"这条视频没有{音质名(quality)}, 已改用{音质名(actualAudio)}");
             }
             else
             {
-                Svc.Settings.PreferredAudioQuality = quality;
+                // 这条视频压根没有高级音质 —— 说清楚, 但**不改偏好**
+                Svc.Toast.Show($"这条视频没有{音质名(quality)}(需大会员且 UP 主上传)");
             }
             _audioTracks = audioTracks;
             _actualAudio = actualAudio;
