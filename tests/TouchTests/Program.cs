@@ -8,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using System.Windows.Markup;
 using System.Xml.Linq;
+using BiliDesk;
 using BiliDesk.Helpers;
 using BiliDesk.Models;
 using BiliDesk.Services;
@@ -46,6 +47,7 @@ internal static class Program
         {
             TestSessions();
             TestWpfControls();
+            TestLiveDanmaku();
             TestHome();
             TestPlayer(args.FirstOrDefault());
             Console.WriteLine($"PASS: {_checks} checks");
@@ -160,6 +162,46 @@ internal static class Program
         Check(recommend.IsChecked == true, "vertical finger swipe does not switch home tabs");
 
         window.Close(); Pump(120);
+    }
+
+    /// <summary>
+    /// 直播弹幕协议解析(2026-11-04)。
+    ///
+    /// 验证的是**包格式与字段提取**, 不是网络连接 —— 真实连接要靠真直播间(已用探针验证过:
+    /// rid=7734200 收到 3 条真实弹幕)。这里构造二进制包, 走同一套 ParsePackets 逻辑。
+    /// </summary>
+    private static void TestLiveDanmaku()
+    {
+        var svc = new LiveDanmakuService(Svc.Api, System.Windows.Threading.Dispatcher.CurrentDispatcher);
+        var got = new List<LiveDanmakuService.Message>();
+        svc.Received += m => got.Add(m);
+
+        // 构造一个 DANMU_MSG 包(16 字节头 + JSON body)
+        var json = """
+        {"cmd":"DANMU_MSG","info":[[0,1,25,16777215,0,0,0,""],[],"测试用户","",0,0,0,"",0,{},"",{},"",0,0,0,0]}
+        """;
+        // info[1]=文本, info[2][1]... 实际结构是 info[1]=文本, info[2][1]=用户名, info[3]=粉丝牌
+        // 上面的简写不对, 用真实结构重新构造:
+        json = """
+        {"cmd":"DANMU_MSG","info":[[0,1,25,16777215],"这是一条测试弹幕",[12345,"测试用户"],[21,"牌子名"]]}
+        """;
+        var body = System.Text.Encoding.UTF8.GetBytes(json);
+        var packet = new byte[16 + body.Length];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(packet.AsSpan(0, 4), packet.Length);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt16BigEndian(packet.AsSpan(4, 2), 16);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt16BigEndian(packet.AsSpan(6, 2), 0); // 明文
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(packet.AsSpan(8, 4), 5); // op=5 广播
+        body.CopyTo(packet, 16);
+
+        svc.ParsePackets(packet);
+        Pump(120);
+
+        Check(got.Count == 1, "live danmaku packet is parsed into one message");
+        Check(got[0].User == "测试用户", "live danmaku extracts the user name");
+        Check(got[0].Text == "这是一条测试弹幕", "live danmaku extracts the text");
+        Check(got[0].MedalLevel == 21 && got[0].MedalName == "牌子名",
+            "live danmaku extracts the fan medal");
+        svc.Dispose();
     }
 
     private static void TestWpfControls()

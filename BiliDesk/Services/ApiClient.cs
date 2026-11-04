@@ -3939,6 +3939,67 @@ public class ApiClient
     }
 
     /// <summary>
+    /// 直播弹幕服务器信息(2026-11-04)。
+    ///
+    /// ★★ 这个接口**必须走 WBI 签名**, 否则一律返回 `-352`(风控) ——
+    ///   2026-11-04 实测: 裸请求、带 buvid cookie、带完整登录 cookie 全都是 -352;
+    ///   补上 w_rid/wts 后立刻 code=0, 拿到 244 字节 token 和 6 个服务器。
+    ///   同一份代码里 `getRoomPlayInfo` 却不需要签名(它一直正常), 所以这个坑很容易漏。
+    ///
+    /// 返回 wss 地址 + token + uid(未登录时接口给 0, 认证包里照传即可)。
+    /// </summary>
+    public async Task<(string? url, string token, long uid, string? err)>
+        GetLiveDanmakuInfoAsync(long roomId)
+    {
+        try
+        {
+            if (roomId <= 0) return (null, "", 0, "缺少直播间号");
+            await EnsureBuvidAsync();
+
+            var (code, msg, data) = await GetJsonAsync(
+                "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo",
+                new Dictionary<string, string>
+                {
+                    ["id"] = roomId.ToString(),
+                    ["type"] = "0",
+                },
+                sign: true,                     // ★ 关键: 必须签名, 见上面的说明
+                referer: $"https://live.bilibili.com/{roomId}");
+
+            if (code != 0 || data == null)
+                return (null, "", 0, msg ?? $"获取弹幕服务器失败 (code {code})");
+
+            var d = data.Value;
+            var token = d.TryGetProperty("token", out var t) && t.ValueKind == JsonValueKind.String
+                ? t.GetString() ?? "" : "";
+            var uid = 0L;
+            if (d.TryGetProperty("uid", out var u))
+            {
+                if (u.ValueKind == JsonValueKind.Number) u.TryGetInt64(out uid);
+                else if (u.ValueKind == JsonValueKind.String && long.TryParse(u.GetString(), out var p)) uid = p;
+            }
+
+            // host_list[0] 通常是最近的接入点; wss_port 是 TLS 端口
+            if (!d.TryGetProperty("host_list", out var hosts) || hosts.ValueKind != JsonValueKind.Array ||
+                hosts.GetArrayLength() == 0)
+                return (null, token, uid, "没有可用的弹幕服务器");
+
+            var h0 = hosts[0];
+            var host = h0.TryGetProperty("host", out var hv) ? hv.GetString() ?? "" : "";
+            var port = 443;
+            if (h0.TryGetProperty("wss_port", out var pv) && pv.ValueKind == JsonValueKind.Number)
+                port = pv.GetInt32();
+            if (host.Length == 0) return (null, token, uid, "弹幕服务器地址为空");
+
+            return ($"wss://{host}:{port}/sub", token, uid, null);
+        }
+        catch (Exception ex)
+        {
+            return (null, "", 0, ex.Message);
+        }
+    }
+
+    /// <summary>
     /// 直播取流(带清晰度)。返回**实际拿到的档位**与可选档位列表。
     ///
     /// ★ 2026-11-04 之前这里写死 `qn=0`(让服务端给默认档), 于是用户永远只能看默认清晰度,

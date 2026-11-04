@@ -161,4 +161,7 @@
     <Message Text="LibVLC 鎻掍欢宸茶鍓? 鍙繚鐣欐挱鏀惧繀闇€妯″潡" Importance="high" />
   </Target>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="TouchTests" />
+  </ItemGroup>
 </Project>

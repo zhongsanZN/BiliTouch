@@ -58,6 +58,8 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private bool _isLive;
     private long _liveRoomId;
+    /// <summary>直播弹幕(2026-11-04)。只在直播时启动, 换片/关闭时停掉。</summary>
+    private LiveDanmakuService? _liveDanmaku;
     private long _currentCid;
     private long _ownerMid;
     private string _ownerName = "";
@@ -1112,6 +1114,8 @@ public partial class PlayerWindow : FluentWindow
             _isReliableSeekSource = true;
             if (!PlayMedia(media))
                 ShowFail("直播流播放失败, 可能已经下播");
+            else
+                StartLiveDanmaku(roomId);
         }
         catch (Exception ex)
         {
@@ -1198,6 +1202,8 @@ public partial class PlayerWindow : FluentWindow
     private void ResetForNewMedia()
     {
         CancelVideoTouch();
+        // 换片: 上一个直播间的 WebSocket 必须断开(新片不是直播时更不能留着)
+        StopLiveDanmaku();
         TouchHelp.Visibility = Visibility.Collapsed;
         // A new video starts at the normal picture brightness; the old dim must not leak over.
         _touchBrightness = 1;
@@ -3806,6 +3812,54 @@ public partial class PlayerWindow : FluentWindow
         {
             _switchingQuality = false;
         }
+    }
+
+    /// <summary>
+    /// 启动直播弹幕(2026-11-04)。
+    ///
+    /// 与点播弹幕完全两套: 点播是 HTTP 拉 XML 按时间轴播; 直播是 WebSocket 长连接,
+    /// 服务端推一条就画一条(见 <see cref="LiveDanmakuService"/>)。
+    ///
+    /// ★ 弹幕开关跟着设置走: 用户关了弹幕就不连(省流量也省得白跑一个长连接)。
+    /// ★ 服务自己管重连与心跳, 这里只负责起停。
+    /// </summary>
+    private void StartLiveDanmaku(long roomId)
+    {
+        StopLiveDanmaku();
+        if (_closing || !Svc.Settings.DanmakuEnabled) return;
+        try
+        {
+            _liveDanmaku = new LiveDanmakuService(Svc.Api, Dispatcher);
+            _liveDanmaku.Received += OnLiveDanmakuReceived;
+            _liveDanmaku.Start(roomId);
+        }
+        catch (Exception ex)
+        {
+            // 弹幕连不上不能影响看直播: 记日志, 不弹窗
+            App.ReportError(ex);
+        }
+    }
+
+    private void StopLiveDanmaku()
+    {
+        if (_liveDanmaku == null) return;
+        try
+        {
+            _liveDanmaku.Received -= OnLiveDanmakuReceived;
+            _liveDanmaku.Dispose();
+        }
+        catch { }
+        _liveDanmaku = null;
+    }
+
+    private void OnLiveDanmakuReceived(LiveDanmakuService.Message m)
+    {
+        if (_closing || !Svc.Settings.DanmakuEnabled) return;
+        // 系统消息(进场/礼物)只显示高亮的那些(礼物/醒目留言), 进场不刷屏
+        if (m.IsSystem && !m.IsHighlight) return;
+        var text = string.IsNullOrEmpty(m.User) ? m.Text : m.User + "：" + m.Text;
+        // mode 1 = 滚动弹幕; 直播没有时间轴, 传 0 让 AddDanmaku 用当前时钟
+        AddDanmaku(text, 1, 0);
     }
 
     /// <summary>切换清晰度: 记住播放进度, 换流后自动恢复</summary>
@@ -8937,6 +8991,8 @@ public partial class PlayerWindow : FluentWindow
     private void OnClosed(object? sender, EventArgs e)
     {
         _closing = true;
+        // 直播弹幕: 关窗必须断开 WebSocket, 否则后台线程会一直重连
+        StopLiveDanmaku();
         // 后台合流任务要停: 窗口都没了, 下完也没地方切(而且它还在往磁盘写)
         CancelRemuxPrefetch();
         // ★ 全部定时器在这里统一停 —— 漏掉任何一个都会让整个窗口漏掉(见 StopAllTimers 的说明)
