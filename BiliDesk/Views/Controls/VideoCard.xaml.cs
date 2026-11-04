@@ -31,6 +31,11 @@ public partial class VideoCard : UserControl
     private bool _pressed, _dragCanceled;
     private const double ClickSlop = 10;
 
+    // 触摸版(与鼠标那套并行): 触摸不一定能走到 MouseLeftButtonUp, 见构造函数里的说明
+    private Point _touchPressAt;
+    private bool _touchPressed, _touchDragCanceled;
+    private TouchDevice? _touchDevice;
+
     /// <summary>
     /// 已经"亮过相"的视频条目。
     ///
@@ -160,6 +165,36 @@ public partial class VideoCard : UserControl
                 _dragCanceled = true;
         };
         PreviewMouseLeftButtonUp += (_, _) => _pressed = false;
+        // ★ 触摸兜底(2026-11-04): 只靠 MouseLeftButtonUp 不够 —— 手指落在卡片上时,
+        //   外层 ScrollViewer 的平移逻辑可能把手势接走, 提升出来的鼠标 up 就到不了卡片,
+        //   表现是"某些卡片(尤其直播卡)怎么点都点不进去"。
+        //   这里直接吃触摸: 抬起时若没被拖走, 就当作一次点击。
+        PreviewTouchDown += (_, e) =>
+        {
+            _touchPressAt = e.GetTouchPoint(this).Position;
+            _touchPressed = true;
+            _touchDragCanceled = false;
+            _touchDevice = e.TouchDevice;
+        };
+        PreviewTouchMove += (_, e) =>
+        {
+            if (!_touchPressed || !ReferenceEquals(_touchDevice, e.TouchDevice)) return;
+            var p = e.GetTouchPoint(this).Position;
+            if (Math.Abs(p.X - _touchPressAt.X) > ClickSlop || Math.Abs(p.Y - _touchPressAt.Y) > ClickSlop)
+                _touchDragCanceled = true;
+        };
+        PreviewTouchUp += (_, e) =>
+        {
+            if (!_touchPressed || !ReferenceEquals(_touchDevice, e.TouchDevice)) return;
+            var wasDrag = _touchDragCanceled;
+            _touchPressed = false;
+            _touchDevice = null;
+            _touchDragCanceled = false;
+            if (wasDrag) return;
+            // ★ 不判"抬起点是否还在卡片内": 触摸常被外层 ScrollViewer 捕获, 抬起时的
+            //   坐标会按捕获元素换算, 判断会误杀正常点击。拖动与否已经由 Move 的 10px 阈值定了。
+            OpenVideo();
+        };
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -210,8 +245,12 @@ public partial class VideoCard : UserControl
             new DoubleAnimation(_coverScale.ScaleY, zoom, ms) { EasingFunction = ease });
     }
 
-    /// <summary>打开这条视频。封面与标题是两个入口, 逻辑共用一份。</summary>
-    private void OpenVideo()
+    /// <summary>
+    /// 打开这条视频。
+    /// ★ internal: 触摸被外层 ScrollViewer 捕获时, 卡片自己的 TouchUp 收不到,
+    ///   由页面在内容区那一层做命中测试后直接调它(见 HomePage.Swipe 的说明)。
+    /// </summary>
+    internal void OpenVideo()
     {
         if (DataContext is not VideoItem v) return;
 

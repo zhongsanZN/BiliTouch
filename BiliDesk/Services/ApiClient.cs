@@ -2545,6 +2545,7 @@ public class ApiClient
         {
             ContentKind.Live => "live_room",
             ContentKind.Bangumi => "media_bangumi",
+            ContentKind.User => "bili_user",
             _ => "video"
         };
         // 视频每页 20 条、直播每页 40 条(实测)。番剧实测每页 20 条(2026-11)。
@@ -2597,9 +2598,12 @@ public class ApiClient
                     // ★ 番剧结果不在 Items 里, 所以"本页取到几条"必须按 kind 分流,
                     //   否则番剧永远是 0 ⇒ HasMore 恒 false ⇒ 只给第一页就再也没了。
                     // ★ media_ft 合并后条数会变多, 所以这段必须放在它**之后**算(见上面那段注释)。
-                    var got = kind == ContentKind.Bangumi
-                        ? result.BangumiItems.Count
-                        : result.Items.Count;
+                    var got = kind switch
+                    {
+                        ContentKind.Bangumi => result.BangumiItems.Count,
+                        ContentKind.User => result.UserItems.Count,
+                        _ => result.Items.Count
+                    };
                     result.HasMore = got > 0 &&
                                      (numResults <= 0 ? got >= pageSize
                                                       : page * pageSize < numResults);
@@ -2612,6 +2616,7 @@ public class ApiClient
                         {
                             ContentKind.Live => "没有找到相关直播间",
                             ContentKind.Bangumi => "没有找到相关番剧",
+                            ContentKind.User => "没有找到相关用户",
                             _ => "没有找到相关视频"
                         };
                     result.Ok = true;
@@ -2899,9 +2904,52 @@ public class ApiClient
                 if (b != null) result.BangumiItems.Add(b);
                 continue;
             }
+            if (kind == ContentKind.User)
+            {
+                // ★ 用户走**另一个集合**: 点开是个人主页(mid), 不是播放器。
+                var u = ParseUserSearchItem(e);
+                if (u != null) result.UserItems.Add(u);
+                continue;
+            }
             var item = kind == ContentKind.Live ? ParseLiveSearchItem(e) : ParseSearchItem(e);
             if (item != null) result.Items.Add(item);
         }
+    }
+
+    /// <summary>
+    /// 搜索结果里的一条**用户 / UP 主**(`search_type=bili_user`, 2026-11-04 实测)。
+    ///
+    /// 字段: uname / mid / fans / videos / upic / usign / level / official_verify{type,desc}
+    /// ★ official_verify.type 是"官方号"的唯一可靠判据: 1 = 机构认证(影之刃零官方那种),
+    ///   127 = UP 主认证, 0 = 无认证。用户搜作品名时, 官方号必须排在搬运号前面。
+    /// ★ fans / videos 可能缺失(接口对小号偶尔不给), 缺失时保持 0, 不因此丢掉这条结果 ——
+    ///   一个粉丝数没返回的官方号, 仍然比一堆同名搬运号有用。
+    /// </summary>
+    private static UserItem? ParseUserSearchItem(JsonElement e)
+    {
+        var mid = GetLong(e, "mid");
+        if (mid <= 0) return null;
+
+        var verifyType = 0;
+        var verifyDesc = "";
+        if (e.TryGetProperty("official_verify", out var ov) && ov.ValueKind == JsonValueKind.Object)
+        {
+            verifyType = (int)GetLong(ov, "type");
+            verifyDesc = GetStr(ov, "desc");
+        }
+
+        return new UserItem
+        {
+            Mid = mid,
+            Name = GetStr(e, "uname").StripHtml(),
+            Avatar = UrlUtil.Normalize(GetStr(e, "upic")),
+            Sign = GetStr(e, "usign").StripHtml(),
+            Fans = Math.Max(0, GetLong(e, "fans")),
+            Videos = Math.Max(0, GetLong(e, "videos")),
+            Level = (int)GetLong(e, "level"),
+            VerifyType = verifyType,
+            VerifyDesc = verifyDesc,
+        };
     }
 
     /// <summary>

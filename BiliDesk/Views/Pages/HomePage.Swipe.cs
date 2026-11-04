@@ -4,6 +4,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using BiliDesk.Views.Controls;
 
 namespace BiliDesk.Views.Pages;
 
@@ -46,6 +47,33 @@ public partial class HomePage
         _swipeArmed = SwipeAllowed(source);
         _swipeDecided = false;
         _swipeMoved = false;
+        // ★ 触摸点中的卡片先记下来: 外层 ScrollViewer 会在按下时就捕获触摸,
+        //   卡片自己的 TouchUp 收不到 —— 点击只能由这一层在抬起时补发(见 SwipeUp)。
+        _tapCard = FindCard(source);
+    }
+
+    private VideoCard? _tapCard;
+
+    /// <summary>从命中元素往上找最近的 VideoCard(只认这一层之下的, 别串到别的列表)。</summary>
+    private VideoCard? FindCard(DependencyObject? source)
+    {
+        var d = source;
+        while (d != null && d != TabHost)
+        {
+            if (d is VideoCard card) return card;
+            d = d is ContentElement content
+                ? ContentOperations.GetParent(content) ?? (content as FrameworkContentElement)?.Parent
+                : VisualTreeHelper.GetParent(d);
+        }
+        return null;
+    }
+
+    /// <summary>触摸抬起: 没拖动就是一次点击。ScrollViewer 抢走触摸时这条是唯一的点击来源。</summary>
+    private void SwipeUp(bool moved)
+    {
+        if (!moved && _tapCard != null) _tapCard.OpenVideo();
+        _tapCard = null;
+        _swipeDecided = false;
     }
 
     private bool SwipeMove(Point p)
@@ -104,8 +132,9 @@ public partial class HomePage
 
     private void OnSwipeTouchUp(object? sender, TouchEventArgs e)
     {
-        if (_swipeMoved) e.Handled = true;
-        _swipeDecided = false;
+        var moved = _swipeMoved;
+        if (moved) e.Handled = true;
+        SwipeUp(moved);
     }
 
     private void OnSwipeStylusDown(object? sender, StylusEventArgs e) =>

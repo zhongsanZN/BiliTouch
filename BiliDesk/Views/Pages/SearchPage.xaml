@@ -29,6 +29,11 @@
                 <RadioButton GroupName="SearchKind" Style="{StaticResource SettingsTabStyle}"
                              Content="番剧" Margin="2,0,0,0"
                              IsChecked="{Binding IsBangumiKind, Mode=TwoWay}" />
+                <!-- ★ 用户/UP 主(2026-11-04): 官方 PC 端搜作品名第一条就是官方账号,
+                     我们之前只能搜视频, 搜"影之刃零"出来的全是切片搬运。 -->
+                <RadioButton GroupName="SearchKind" Style="{StaticResource SettingsTabStyle}"
+                             Content="用户" Margin="2,0,0,0"
+                             IsChecked="{Binding IsUserKind, Mode=TwoWay}" />
             </StackPanel>
         </Border>
 
@@ -91,7 +96,7 @@
                     <StackPanel>
                         <!-- 视频 / 直播间结果 -->
                         <ItemsControl ItemsSource="{Binding Results}"
-                                      Visibility="{Binding IsBangumiSearch, Converter={StaticResource InvBoolToVis}}">
+                                      Visibility="{Binding IsVideoSearch, Converter={StaticResource BoolToVis}}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <helpers:CardWallPanel helpers:CardWall.Enable="True" />
@@ -120,6 +125,20 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <controls:BangumiCard />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- 用户 / UP 主结果(2026-11-04 新增)。
+                             ★ 单列纵向排列, 不套 CardWallPanel: 用户卡是"一行一条"的信息条
+                               (头像+昵称+粉丝+签名), 排成多列网格会让签名被压成一行残句。
+                               B 站官方 PC 端的用户搜索结果也是单列列表。 -->
+                        <ItemsControl ItemsSource="{Binding UserResults}"
+                                      Visibility="{Binding IsUserSearch, Converter={StaticResource BoolToVis}}"
+                                      Margin="28,4,28,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <controls:UserCard />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>

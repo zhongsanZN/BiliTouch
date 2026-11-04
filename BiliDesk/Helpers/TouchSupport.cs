@@ -6,6 +6,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using BiliDesk.Views.Controls;
 
 namespace BiliDesk.Helpers;
 
@@ -34,6 +35,27 @@ public static class TouchSupport
     /// <summary>The ScrollViewer a finger is currently panning (null when idle).</summary>
     private static ScrollViewer? _touchViewer;
     private static long _touchViewerAt;
+
+    // 触摸点击转发: ScrollViewer 捕获触摸后卡片收不到 TouchUp, 由这里补一次点击。
+    private static ScrollViewer? _tapViewer;
+    private static Point _tapPoint;
+    private static DependencyObject? _tapSource;
+    private static bool _tapMoved;
+    private const double TapSlop = 10;
+
+    /// <summary>从命中元素往上找最近的 VideoCard。找不到就返回 null(不是卡片, 不转发)。</summary>
+    private static VideoCard? TapCard(DependencyObject source)
+    {
+        var d = source;
+        while (d != null)
+        {
+            if (d is VideoCard card) return card;
+            d = d is ContentElement content
+                ? ContentOperations.GetParent(content) ?? (content as FrameworkContentElement)?.Parent
+                : VisualTreeHelper.GetParent(d);
+        }
+        return null;
+    }
 
     private static void MarkTouchPanning(ScrollViewer viewer)
     {
@@ -76,24 +98,53 @@ public static class TouchSupport
         EventManager.RegisterClassHandler(typeof(ScrollViewer), FrameworkElement.SizeChangedEvent,
             new SizeChangedEventHandler((sender, _) => { if (sender is ScrollViewer viewer) ConfigureScrollViewer(viewer); }));
         EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.PreviewTouchDownEvent,
-            new EventHandler<TouchEventArgs>((sender, _) =>
+            new EventHandler<TouchEventArgs>((sender, e) =>
             {
                 if (sender is not ScrollViewer viewer) return;
                 // Belt and braces for a viewer that was never resized before the first finger.
                 ConfigureScrollViewer(viewer);
                 SmoothScroll.Stop(viewer);
                 MarkTouchPanning(viewer);
+                // ★ 记下按下的位置与命中的卡片: ScrollViewer 一开 PanningMode 就会在按下时
+                //   捕获触摸, 卡片自己的 TouchUp 收不到 —— 点击只能由这里在抬起时补发。
+                //   (首页直播卡"点不进去"就是这个原因: 不是数据问题, 是触摸被滚动抢走了。)
+                //   ★ 只记**第一次**(最外层): 嵌套 ScrollViewer 会让每个祖先都走一遍,
+                //     后写的会覆盖先写的, 抬起时命中就乱了。
+                if (_tapSource == null)
+                {
+                    _tapPoint = e.GetTouchPoint(viewer).Position;
+                    _tapSource = e.OriginalSource as DependencyObject;
+                    _tapMoved = false;
+                }
+                _tapViewer = viewer;
             }), true);
         EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.PreviewTouchMoveEvent,
-            new EventHandler<TouchEventArgs>((sender, _) =>
+            new EventHandler<TouchEventArgs>((sender, e) =>
             {
-                if (sender is ScrollViewer viewer && ReferenceEquals(_touchViewer, viewer))
-                    _touchViewerAt = Environment.TickCount64;
+                if (sender is not ScrollViewer viewer || !ReferenceEquals(_touchViewer, viewer)) return;
+                _touchViewerAt = Environment.TickCount64;
+                if (ReferenceEquals(_tapViewer, viewer) && !_tapMoved)
+                {
+                    var p = e.GetTouchPoint(viewer).Position;
+                    if (Math.Abs(p.X - _tapPoint.X) > TapSlop || Math.Abs(p.Y - _tapPoint.Y) > TapSlop)
+                        _tapMoved = true;
+                }
             }), true);
         EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.PreviewTouchUpEvent,
-            new EventHandler<TouchEventArgs>((sender, _) =>
+            new EventHandler<TouchEventArgs>((sender, e) =>
             {
-                if (sender is ScrollViewer viewer && ReferenceEquals(_touchViewer, viewer)) ClearTouchPanning();
+                if (sender is not ScrollViewer viewer) return;
+                if (ReferenceEquals(_touchViewer, viewer)) ClearTouchPanning();
+                // ★ 不看 _tapViewer: 嵌套 ScrollViewer 里最内层的 Up 先到, 它清空后外层就再没有
+                //   机会补发点击了。只要这次按下记过来源, 就由**第一个**收到 Up 的处理器消费。
+                var moved = _tapMoved;
+                var source = _tapSource;
+                _tapViewer = null;
+                _tapSource = null;
+                _tapMoved = false;
+                if (moved || source == null) return;
+                // 命中测试后转发给卡片: 这一下是"点", 不是"滑"
+                TapCard(source)?.OpenVideo();
             }), true);
         EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.LostTouchCaptureEvent,
             new EventHandler<TouchEventArgs>((sender, _) =>

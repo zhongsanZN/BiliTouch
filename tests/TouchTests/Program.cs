@@ -13,6 +13,7 @@ using BiliDesk.Models;
 using BiliDesk.Services;
 using BiliDesk.ViewModels;
 using BiliDesk.Views;
+using BiliDesk.Views.Controls;
 using BiliDesk.Views.Pages;
 
 internal static class Program
@@ -111,12 +112,25 @@ internal static class Program
 
     private static void TestHome()
     {
+        // 直播卡的数据约定: IsLive 是 RoomId>0 的投影, 卡片点击靠它分流到 PlayLive。
+        // 这条钉住"直播卡点不进去"的数据前提 —— 只要 RoomId 有值就一定会走直播分支。
+        var live = new VideoItem { RoomId = 12345, Title = "直播间", Duration = "直播中" };
+        Check(live.IsLive && live.RoomId == 12345, "live items route to the live player by RoomId");
+
         var vm = new HomeViewModel();
         for (var i = 0; i < 8; i++)
             vm.RecommendItems.Add(new VideoItem { Title = "首页测试 " + i, Author = "UP" + i, Duration = "1:00" });
         var page = new HomePage { DataContext = vm };
         var window = new Window { Content = page, Width = 1280, Height = 800 };
         window.Show(); Pump(600);
+
+        // 触摸点卡片 = 打开(这里用 Selectable 模式避免真的拉起播放器窗口):
+        // 卡片自己处理 PreviewTouchUp, 不依赖 ScrollViewer 把触摸提升成鼠标 up。
+        var cardVm = new VideoItem { Title = "触摸卡", Author = "UP", Duration = "1:00", Bvid = "BV1xx" };
+        vm.RecommendItems.Insert(0, cardVm);
+        Pump(300);
+        var card = FindDescendant<VideoCard>(page);
+        Check(card != null, "home renders video cards");
 
         var host = (Grid)page.FindName("TabHost")!;
         var recommend = (RadioButton)page.FindName("RecommendTab")!;

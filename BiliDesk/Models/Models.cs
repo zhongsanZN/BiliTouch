@@ -496,6 +496,17 @@ public enum ContentKind
     ///   所以搜索结果单独走 <see cref="SearchData.BangumiItems"/>, 页面用海报卡渲染。
     /// </summary>
     Bangumi,
+
+    /// <summary>
+    /// 用户 / UP 主(搜索 search_type=bili_user, 2026-11-04 新增)。
+    ///
+    /// ★ 官方 PC 端搜"影之刃零"第一条就是**官方账号**而不是视频 —— 这是搜索的第一优先级:
+    ///   用户搜一个游戏名/作品名, 多半想找的是"谁在做这个"、"官方在哪"。
+    ///   按稿件搜只会给一堆搬运和切片。
+    /// ★ 与番剧同理, 用户没有 bvid/roomid, 点开要进**个人主页**而不是播放器,
+    ///   所以单独走 <see cref="SearchData.UserItems"/>, 页面用用户卡渲染。
+    /// </summary>
+    User,
 }
 
 /// <summary>搜索 API 返回结构</summary>
@@ -513,8 +524,53 @@ public class SearchData
     /// </summary>
     public System.Collections.Generic.List<BangumiItem> BangumiItems { get; set; } = new();
 
+    /// <summary>
+    /// 用户/UP 主结果(2026-11-04 新增)。与 <see cref="Items"/>、<see cref="BangumiItems"/> 互斥。
+    /// 点开的去向是**个人主页**(mid), 不是播放器。
+    /// </summary>
+    public System.Collections.Generic.List<UserItem> UserItems { get; set; } = new();
+
     public bool HasMore { get; set; }
     public int TotalPages { get; set; }
+}
+
+/// <summary>
+/// 搜索里的一条用户/UP 主。
+///
+/// 字段来自 `search_type=bili_user`(2026-11-04 实测):
+///   uname / mid / fans / videos / upic / usign / level / official_verify{type,desc}
+///   official_verify.type: 0=个人, 1=机构认证(官方号), 127=UP 主认证
+/// 这些足够把"官方账号"从一堆同名号里挑出来 —— 认证标 + 粉丝数就是最强的排序信号。
+/// </summary>
+public class UserItem
+{
+    public long Mid { get; set; }
+    public string Name { get; set; } = "";
+    public string Avatar { get; set; } = "";
+    public string Sign { get; set; } = "";
+    public long Fans { get; set; }
+    public long Videos { get; set; }
+    public int Level { get; set; }
+    /// <summary>0=无认证, 1=机构认证(官方), 127=UP 主认证</summary>
+    public int VerifyType { get; set; }
+    public string VerifyDesc { get; set; } = "";
+
+    /// <summary>机构认证(官方号) —— 搜索结果的置顶/高亮依据</summary>
+    public bool IsOfficial => VerifyType == 1;
+    /// <summary>任何认证(官方或 UP 主认证)</summary>
+    public bool IsVerified => VerifyType != 0;
+
+    public string FansText => Fans switch
+    {
+        >= 100_000_000 => (Fans / 100_000_000.0).ToString("0.#") + "亿粉丝",
+        >= 10_000 => (Fans / 10_000.0).ToString("0.#") + "万粉丝",
+        _ => Fans + " 粉丝"
+    };
+
+    public string LevelText => "LV" + Math.Clamp(Level, 0, 6);
+
+    /// <summary>认证文案。★ 官方(1)已经有独立徽章, 这里只给 UP 主认证(127)出文字, 避免重复。</summary>
+    public string VerifyLabel => VerifyType == 127 ? "UP主认证" : "";
 }
 
 /// <summary>
