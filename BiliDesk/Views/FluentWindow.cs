@@ -559,6 +559,17 @@ public class FluentWindow : Window
             if (msg == WM_ENTERSIZEMOVE) OnModalResizeStarted();
             else OnModalResizeEnded();
         }
+        else if (msg == WM_MOUSEHWHEEL)
+        {
+            // 2026-11-04 真正的触控板横向双指滑动。
+            // 关键事实: 精确触控板的横向两指滑动在 Windows 里不产生 MouseWheelEventArgs
+            // (那个只有 Delta 纵向分量), 而是发 WM_MOUSEHWHEEL。所以要接触控板横滑,
+            // 只能在原生消息层接, WPF 的鼠标事件里根本看不到它。
+            // 这里转成 OnHorizontalWheel 广播给子类(首页/搜索页据此切 tab);
+            // 不设 handled, 有横向滚动条的内容仍由 WPF 正常处理。
+            var delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+            OnHorizontalWheel(delta);
+        }
         else if (msg == WM_SYSCOMMAND)
         {
             // ★★★ 最大化/还原/最小化的**最早**可拦截点(2026-10-17, 修"最大化→还原后视频区白块")。
@@ -572,6 +583,16 @@ public class FluentWindow : Window
         }
         return IntPtr.Zero;
     }
+
+    /// <summary>触控板横向双指滑动(水平滚轮)。WPF 的 MouseWheel 收不到它, 只能在原生层接。</summary>
+    private const int WM_MOUSEHWHEEL = 0x020E;
+
+    /// <summary>
+    /// 收到触控板/倾斜滚轮的横向滚动时调用(单位同 wheel delta: 每格 120)。
+    /// 默认空实现; 首页/搜索页覆盖它来做"双指左右滑动切 tab"。
+    /// delta > 0 = 向右滑, < 0 = 向左滑。
+    /// </summary>
+    protected virtual void OnHorizontalWheel(int delta) { }
 
     /// <summary>SC_MAXIMIZE / SC_RESTORE / SC_MINIMIZE 的 wParam 取值(Win32 常量)</summary>
     protected const int SC_MAXIMIZE = 0xF030;

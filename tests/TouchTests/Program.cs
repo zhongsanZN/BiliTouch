@@ -156,19 +156,32 @@ internal static class Program
         page.SwipeUp(); Pump(500);
         Check(recommend.IsChecked == true, "horizontal swipe moves back to the previous home tab");
 
-        // 竖滑不切
+        // 触控板横向双指滑动 → 切 tab(由 MainWindow.OnHorizontalWheel 转发)
+        Pump(300);
+        var idxBefore = popular.IsChecked == true ? 1 : 0;
+        page.HandleHorizontalWheel(1); Pump(400);
+        Check((popular.IsChecked == true ? 1 : 0) != idxBefore,
+            "touchpad horizontal two-finger swipe switches home tabs");
+
+        // 竖滑不切 —— ★ 先记录当前 tab, 断言"竖滑后没变"(不能写死 recommend:
+        //   前面的触控板横向测试可能已经把它切到别的 tab)
+        var tabBeforeVertical = popular.IsChecked == true ? 1 : 0;
         page.SwipeDown(new Point(w * 0.6, 300), (DependencyObject?)host);
         page.SwipeMove(new Point(w * 0.6, 200));
         page.SwipeUp(); Pump(500);
-        Check(recommend.IsChecked == true, "vertical swipe does not switch home tabs");
+        Check((popular.IsChecked == true ? 1 : 0) == tabBeforeVertical,
+            "vertical swipe does not switch home tabs");
 
         // 轻拖不到阈值 → 不切(上一版"轻轻一拖到底"的回归防护)
+        // ★ 同样不能写死 recommend: 前面几条已经把 tab 切过几次了, 这里比"切之前/之后"
+        var tabBeforeShort = page.CurrentTabIndex;
         page.SwipeDown(new Point(w * 0.6, 300), (DependencyObject?)host);
         Pump(400);                                       // ★ 慢拖: 让速度掉到阈值以下
         page.SwipeMove(new Point(w * 0.6 - 30, 300));    // 只拖 30px < w*0.18
         Pump(200);
         page.SwipeUp(); Pump(500);
-        Check(recommend.IsChecked == true, "a short drag below the threshold does not switch home tabs");
+        Check(page.CurrentTabIndex == tabBeforeShort,
+            "a short drag below the threshold does not switch home tabs");
         window.Close(); Pump(120);
     }
 

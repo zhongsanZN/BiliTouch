@@ -198,7 +198,7 @@ public partial class HomePage
     }
 
     /// <summary>当前选中的 tab 下标(0=推荐 … 4=追番)</summary>
-    private int CurrentTabIndex
+    internal int CurrentTabIndex
     {
         get
         {
@@ -232,6 +232,25 @@ public partial class HomePage
                 : VisualTreeHelper.GetParent(d);
         }
         return true;
+    }
+
+    /// <summary>
+    /// 触控板横向双指滑动(由 MainWindow.OnHorizontalWheel 转发, 2026-11-04)。
+    ///
+    /// ★ 与触摸手势共用同一套"切一页"逻辑, 但**不跟手**: 触控板没有绝对坐标,
+    ///   只能拿到离散的 delta, 所以直接切一页 + 走同款吸附动画的尾段。
+    /// ★ 已经在动画中(_tabTrans 有活动动画)时忽略, 否则连划会叠加。
+    /// </summary>
+    internal void HandleHorizontalWheel(int direction)
+    {
+        if (direction == 0) return;
+        // 动画中不响应(连划时避免叠起来)
+        if (_tabTrans != null && _tabTrans.HasAnimatedProperties) return;
+        var target = CurrentTabIndex + direction;
+        if (target is < 0 or >= 5) return;
+        // 复用吸附动画: 先把内容挪一小段, 再让它滑出去并切页
+        _swipeDx = direction > 0 ? -1 : 1;
+        AnimateSnap(true, target, Math.Max(1, TabHost.ActualWidth));
     }
 
     private void OnSwipeTouchDown(object? sender, TouchEventArgs e) =>

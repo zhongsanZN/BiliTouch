@@ -64,6 +64,36 @@ public partial class MainWindow : FluentWindow
     /// 页面的 DataContext 必须跟着实例一起建: 各页 VM 的构造里会订阅服务(搜索历史变更、
     /// 推荐算法变更…), 那些是"页面活着就一直听着"的, 分开建会让订阅时机变得难以推理。
     /// </summary>
+    /// <summary>
+    /// 触控板横向双指滑动 → 首页切 tab(2026-11-04)。
+    ///
+    /// ★ 为什么在窗口层接: 精确触控板的横滑发的是 **WM_MOUSEHWHEEL**, 不进 WPF 的
+    ///   MouseWheel 事件流(那个只有纵向 Delta)。只能在 FluentWindow 的 WndProc 里抓。
+    /// ★ 只在首页时转发; 其它页面横向滚动该交给它们自己的横向滚动条。
+    /// ★ 攒余量: 触控板一次手势会发很多个小 delta, 累加到一格(120)才切一次,
+    ///   否则轻轻一划就翻好几页 —— 正是用户抱怨首页翻页"一拖到底"的同款问题。
+    /// </summary>
+    protected override void OnHorizontalWheel(int delta)
+    {
+        if (delta == 0) return;
+        // 反向时清掉余量(与纵向滚轮同款约定)
+        if (Math.Sign(delta) != Math.Sign(_hWheelAccum)) _hWheelAccum = 0;
+        _hWheelAccum += delta;
+
+        const int Notch = 120;
+        while (Math.Abs(_hWheelAccum) >= Notch)
+        {
+            var dir = Math.Sign(_hWheelAccum);
+            _hWheelAccum -= dir * Notch;
+            // delta > 0 = 手指向右滑 = 切到**上一个** tab(内容跟手反方向)
+            if (_vm.Current == PageKey.Home && PageOf(PageKey.Home) is HomePage home)
+                home.HandleHorizontalWheel(-dir);
+        }
+    }
+
+    /// <summary>触控板横向滚动的余量(攒够一格才切一次 tab)</summary>
+    private int _hWheelAccum;
+
     private FrameworkElement PageOf(PageKey key)
     {
         if (_pages.TryGetValue(key, out var cached)) return cached;
