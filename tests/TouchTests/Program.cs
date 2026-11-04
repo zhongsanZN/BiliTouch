@@ -46,6 +46,12 @@ internal static class Program
         try
         {
             if(args.Contains("--live-mine")) LiveDynamicProbe.Run(Artifacts,false,true);
+            else if(args.Contains("--live-text")) DynamicTextProbe.Run(Artifacts);
+            else if(args.FirstOrDefault(a=>a.StartsWith("--dump-feed",StringComparison.Ordinal)) is { } dumpFlag)
+            {
+                var target = args.FirstOrDefault(a => a.StartsWith("--id=", StringComparison.Ordinal))?[5..];
+                FeedRawDump.Run(Artifacts, target);
+            }
             else if(args.Contains("--card-hang")) CardHangProbe.Run(Artifacts);
             else if(args.Contains("--cover-hang")) CoverHangProbe.Run(Artifacts);
             else if(args.Contains("--live-hang")) FeedHangProbe.Run(Artifacts);

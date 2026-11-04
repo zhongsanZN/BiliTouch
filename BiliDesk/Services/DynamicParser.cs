@@ -209,9 +209,19 @@ public static class DynamicParser
                         });
                     }
                     // opus 自带正文摘要, desc 为空时用它
+                    // ★★★ 2026-11-04(关键): 新版图文动态的**正文全文就在 summary 里**,
+                    //   而 `module_dynamic.desc` 在列表接口下是 null(实测 20 条里 14 条如此)。
+                    //   这条路径以前只是"兜底", 实际上是**主路径** —— 没有它, 卡片上就没有正文。
+                    //   summary 里同时有 text 与 rich_text_nodes, 两个都要读:
+                    //   text 用来显示, rich_text_nodes 用来把话题/@/表情变成可点内容。
                     if (item.Text.Length == 0 &&
                         opus.TryGetProperty("summary", out var sm) && sm.ValueKind == JsonValueKind.Object)
+                    {
                         item.Text = Str(sm, "text");
+                        if (item.Text.Length == 0) item.Text = Str(sm, "rich_text");
+                        if (item.RichNodes.Count == 0)
+                            item.RichNodes = ReadRichNodes(sm);
+                    }
                 }
 
                 // ② draw(老)—— opus 没给图时退回

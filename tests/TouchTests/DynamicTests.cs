@@ -69,8 +69,24 @@ internal static class DynamicTests
     {"id_str":"9102","type":"DYNAMIC_TYPE_WORD","text":"结束了的投票","modules":{"module_author":{"mid":"42","name":"投票 UP"},"module_dynamic":{"additional":{"type":"ADDITIONAL_TYPE_VOTE","vote":{"vote_id":"22043415","title":"已经结束的投票","desc":"9人参与","join_num":"9","status":"4","choice_cnt":"1","end_time":"1700000000"}}}}}
     """;
 
-    /// <summary>"投票没有任何选项"的退化夹具: 解析器不能把它当成可投的投票。</summary>
-    const string VoteOptionBlock = """[{"opt_idx":0,"desc":"A 版","cnt":60},{"opt_idx":1,"desc":"B 版","cnt":60},{"opt_idx":2,"desc":"C 版","cnt":0},{"opt_idx":3,"desc":"D 版","cnt":0}]""";
+    /// <summary>
+    /// **只有 opus.summary 有正文**的图文动态(2026-11-04 用户报"有些文字不显示")。
+    ///
+    /// 实测: feed/all 不带 features=itemOpusStyle 时, 新版图文动态只下发 major.draw(纯图),
+    /// 正文的 major.opus.summary 整块缺失 → 卡片上没字。
+    /// 带上之后同一条变成:
+    ///   major.opus.summary.text = 正文全文
+    ///   major.opus.summary.rich_text_nodes[] = 带话题/@ 的节点
+    /// 这条夹具钉住"从 summary 里把正文和节点都读出来"。
+    /// </summary>
+    const string OpusSummaryOnly = """
+    {"id_str":"9501","type":"DYNAMIC_TYPE_DRAW","modules":{"module_author":{"mid":"42","name":"图文 UP","pub_time":"刚刚"},"module_dynamic":{"major":{"type":"MAJOR_TYPE_OPUS","opus":{"title":"这是标题","summary":{"text":"主要是汇总了更新内容。\n注意破坏性更新：最低 Node 提到 24.9。","rich_text_nodes":[{"type":"RICH_TEXT_NODE_TYPE_TEXT","text":"主要是汇总了更新内容。"},{"type":"RICH_TEXT_NODE_TYPE_TOPIC","text":"#更新日志#","orig_text":"更新日志","rid":"1234"}]},"pics":[{"url":"https://example.invalid/p1.jpg","width":800,"height":600}]}}}}}
+    """;
+
+    /// <summary>"完全没有正文"的视频动态(不该被当成错误, 它本来就只有封面标题)。</summary>
+    const string VideoNoText = """
+    {"id_str":"9601","type":"DYNAMIC_TYPE_AV","modules":{"module_author":{"mid":"42","name":"视频 UP","pub_time":"刚刚"},"module_dynamic":{"major":{"type":"MAJOR_TYPE_ARCHIVE","archive":{"aid":"100","bvid":"BV1234567890","title":"视频标题","cover":"https://example.invalid/c.jpg"}}}}}
+    """;
 
     /// <summary>附加卡片夹具: major.common(活动) —— 带封面/标题/徽章/按钮。</summary>
     const string Common = """
@@ -165,6 +181,19 @@ internal static class DynamicTests
         // ============ 2026-11-04 新增: 投票 / 附加卡片 / 富文本节点 ============
         // 这三块此前完全没解析 —— 投票动态只剩一句正文、活动卡只剩标题、
         // 话题与 @ 是死字。下面每条都钉住"真实接口形状 → 模型字段"的映射。
+
+        // ---- 正文: 只在 major.opus.summary 里的情况(2026-11-04 用户报"有些文字不显示") ----
+        var summaryOnly = Parse(OpusSummaryOnly);
+        check(summaryOnly.Text.Length > 20, $"body read from opus.summary ({summaryOnly.Text.Length} chars)");
+        check(summaryOnly.Text.StartsWith("主要是汇总了更新内容"), "opus summary keeps the real text");
+        check(summaryOnly.RichNodes.Count == 2, "opus summary rich nodes parsed");
+        check(summaryOnly.HasText, "summary-only body counts as having text");
+        check(summaryOnly.ContentTitle == "这是标题", "opus title still parsed separately");
+        check(summaryOnly.Pictures.Count == 1, "opus pics still parsed");
+        // 视频动态本来就没有正文 —— HasText=false 是正确状态, 不能被误判成"解析失败"
+        var videoOnly = Parse(VideoNoText);
+        check(!videoOnly.HasText && videoOnly.Video != null, "video dynamic has no body by design");
+        check(videoOnly.Video!.Title == "视频标题", "video dynamic still shows its title");
 
         // ---- 投票: 节点位置、字段语义、缺 options ----
         var voteItem = Parse(Vote);

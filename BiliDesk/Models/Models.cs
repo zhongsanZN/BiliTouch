@@ -2147,8 +2147,15 @@ public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
 
     // ---- 展示辅助 ----
 
-    /// <summary>有没有正文可显示</summary>
-    public bool HasText => !string.IsNullOrWhiteSpace(Text);
+    /// <summary>
+    /// 有没有正文可显示。
+    /// ★★★ 2026-11-04 修"正文不显示": 判据不能只看 Text。
+    ///   富文本节点(话题/@/表情)本身就是正文 —— 有些动态 desc.text 为空但
+    ///   rich_text_nodes 有内容(纯话题动态、纯表情动态), 只看 Text 会把整块藏掉。
+    ///   ★ 不把 ContentTitle 算进来: 标题有单独的显示位(卡片主体的标题行),
+    ///     算进来会让"只有标题"的卡片多出一行空白正文。
+    /// </summary>
+    public bool HasText => !string.IsNullOrWhiteSpace(Text) || RichNodes.Count > 0;
     /// <summary>有没有图片</summary>
     public bool HasPictures => Pictures.Count > 0;
     /// <summary>九宫格是否只有一张(单图走大图版式)</summary>
@@ -2216,6 +2223,10 @@ public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
         LikeCount = d.LikeCount; CommentCount = d.CommentCount; ForwardCount = d.ForwardCount;
         IsLiked = d.IsLiked; LikeForbidden = d.LikeForbidden; CommentOid = d.CommentOid; CommentType = d.CommentType;
         NotifyContentChanged();
+        // ★ HasText 是计算属性, NotifyContentChanged("") 在 WPF 里刷新全部绑定,
+        //   但保险起见把两个最关键的显式点一次 —— 正文这块的可见性完全依赖它们。
+        Notify(nameof(Text));
+        Notify(nameof(HasText));
     }
     public void SetLiked(bool liked)
     {

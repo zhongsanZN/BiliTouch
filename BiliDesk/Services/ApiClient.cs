@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -1330,6 +1330,10 @@ public partial class ApiClient
 
             var ps = new Dictionary<string, string> { ["host_mid"] = mid.ToString() };
             if (!string.IsNullOrEmpty(offset)) ps["offset"] = offset;
+            // ★ 同上(feed/all 那处的说明): 不带 itemOpusStyle 的话, 新版图文动态只下发
+            //   major.draw(纯图), 正文的 major.opus.summary 整块缺失 ⇒ 卡片上没有文字。
+            //   单 UP 动态流走的是同一个 polymer 体系, 能力位同样适用。
+            ps["features"] = "itemOpusStyle";
 
             var (code, msg, data) = await GetJsonAsync(
                 "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space", ps,
@@ -1452,6 +1456,23 @@ public partial class ApiClient
             await EnsureBuvidAsync();
             var ps = new Dictionary<string, string>();
             if (!string.IsNullOrEmpty(offset)) ps["offset"] = offset;
+            // ★★★ 2026-11-04 修"动态正文不显示, 点进详情再出来才显示, 切走再回来又没了":
+            //
+            //   实测(探针 --dump-feed, 见 artifacts/feed-all*.json):
+            //     默认 feed/all           → 20 条里只有 6 条带正文, 剩下 14 条 desc=null
+            //     + features=itemOpusStyle → **同一条**从"desc=null"变成"major.opus.summary.text"
+            //                                (125 字正文全在), 条数与顺序完全不变
+            //
+            //   根因: 新版图文动态的正文挂在 `major.opus.summary` 里, 而默认响应**不下发 opus**,
+            //   只给老的 `major.draw`(纯图)。于是正文是空的 —— 不是解析器读错字段, 是服务端没给。
+            //   点进详情走的是 detail 接口(它默认带 opus) → 正文出现;
+            //   切走再回来会重新拉列表 → 又变回 draw → 正文再次消失。
+            //   用户报的"有些文字不显示, 点进去能看到, 退出来就显示了, 切走再回来又不显示",
+            //   与这三步一一对应。
+            //
+            //   features 是逗号分隔的能力位。itemOpusStyle 只影响"用哪种结构描述图文",
+            //   不改变条数/排序, 也不影响视频动态 —— 所以可以无条件带上。
+            ps["features"] = "itemOpusStyle";
 
             var (code, msg, data) = await GetJsonAsync(
                 "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all", ps,
