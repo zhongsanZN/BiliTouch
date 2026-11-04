@@ -51,6 +51,11 @@ public partial class HomePage
     private const double SwipeFlingVelocity = 0.35;
     /// <summary>到头了还拖的橡皮筋系数。</summary>
     private const double SwipeEdgeResist = 0.35;
+    /// <summary>被 <see cref="FreezeVertical"/> 关掉平移的那个 tab(null = 没冻)</summary>
+    private HomeTabKind? _frozenKind;
+    /// <summary>冻结前的 PanningMode, 解冻时原样还回去</summary>
+    private PanningMode _frozenPanMode = PanningMode.VerticalFirst;
+
     /// <summary>吸附动画时长。</summary>
     private const int SwipeSnapMs = 180;
 
@@ -119,7 +124,12 @@ public partial class HomePage
             _swipeDirKnown = true;
             // 竖直优先: 滚动列表比翻页常用得多, 斜一点就当滚动
             _swipeHorizontal = _swipeArmed && Math.Abs(dx) > Math.Abs(dy) * 1.2;
-            if (!_swipeHorizontal) return false;
+            if (!_swipeHorizontal)
+            {
+                // 判定为竖直 ⇒ 这是滚动, 立刻把平移还回去(并解冻任何遗留状态)
+                UnfreezeVertical();
+                return false;
+            }
         }
         if (!_swipeHorizontal || _swipeConsumed) return false;
 
@@ -137,19 +147,43 @@ public partial class HomePage
     }
 
     /// <summary>
-    /// 横向手势一旦成立, 就把当前 tab 的纵向滚动**冻结**在原地。
-    /// ★ 只冻一次(靠 _swipeDx==0 判断首次): 每帧都动 ScrollViewer 反而会打断它的惯性。
+    /// 横向手势一旦成立, 就把当前 tab 的纵向滚动**彻底关掉**。
+    ///
+    /// ★★★ 2026-11-04 修"缓慢滑动时画面抽搐"(第二版):
+    ///   上一版是每帧调一次 `ScrollToVerticalOffset(当前值)` —— 那只是把偏移写回原处,
+    ///   但 ScrollViewer 的**物理惯性/触摸平移依然活着**: 手指仍有微小的 dy, WPF 的
+    ///   PanningMode 会照常把它变成"几像素的纵向位移", 而本方法每帧又把它抹平
+    ///   ⇒ 两者拉锯, 观感就是画面在**上下抽搐**。
+    ///
+    ///   正确做法是把 PanningMode 临时设成 None(彻底不参与), 手势结束后再恢复。
+    ///   同时把偏移钉死一次(打断已经在跑的惯性动画)。
     /// </summary>
     private void FreezeVertical()
     {
-        var sv = ScrollOf(CurrentTabFromVm() ?? HomeTabKind.Recommend);
+        var kind = CurrentTabFromVm() ?? HomeTabKind.Recommend;
+        var sv = ScrollOf(kind);
         if (sv == null) return;
-        sv.ScrollToVerticalOffset(sv.VerticalOffset);   // 打断进行中的滚动动画
+        _frozenKind = kind;
+        _frozenPanMode = sv.PanningMode;
+        sv.SetCurrentValue(ScrollViewer.PanningModeProperty, PanningMode.None);
+        sv.ScrollToVerticalOffset(sv.VerticalOffset);
+    }
+
+    /// <summary>恢复上一次 <see cref="FreezeVertical"/> 关掉的触摸平移</summary>
+    private void UnfreezeVertical()
+    {
+        if (_frozenKind is not { } kind) return;
+        var sv = ScrollOf(kind);
+        _frozenKind = null;
+        if (sv == null) return;
+        sv.SetCurrentValue(ScrollViewer.PanningModeProperty, _frozenPanMode);
     }
 
     /// <summary>手指抬起: 按位移+速度决定翻页还是弹回。</summary>
     internal bool SwipeUp()
     {
+        // ★ 无论翻不翻页, 抬手指都要把触摸平移还给 ScrollViewer
+        UnfreezeVertical();
         if (!_swipeHorizontal) return false;
         var elapsed = Math.Max(1, Environment.TickCount64 - _swipeStartTick);
         var velocity = _swipeDx / elapsed;
@@ -193,6 +227,7 @@ public partial class HomePage
             trans.BeginAnimation(TranslateTransform.XProperty, null);
             trans.X = 0;
             SwitchTabTo(target);
+            _wheelSwitching = false;
         };
         trans.BeginAnimation(TranslateTransform.XProperty, slide);
     }
@@ -244,14 +279,18 @@ public partial class HomePage
     internal void HandleHorizontalWheel(int direction)
     {
         if (direction == 0) return;
-        // 动画中不响应(连划时避免叠起来)
-        if (_tabTrans != null && _tabTrans.HasAnimatedProperties) return;
+        // 动画中不响应(连划时避免叠起来) —— 这是第二道单次限位
+        if (_wheelSwitching) return;
         var target = CurrentTabIndex + direction;
         if (target is < 0 or >= 5) return;
-        // 复用吸附动画: 先把内容挪一小段, 再让它滑出去并切页
+        _wheelSwitching = true;
+        // 复用吸附动画: 方向决定往哪边滑出(-1 = 往左滑出 = 切到右边那页)
         _swipeDx = direction > 0 ? -1 : 1;
         AnimateSnap(true, target, Math.Max(1, TabHost.ActualWidth));
     }
+
+    /// <summary>触控板切页进行中(动画期间拒绝新的切页请求)</summary>
+    private bool _wheelSwitching;
 
     private void OnSwipeTouchDown(object? sender, TouchEventArgs e) =>
         SwipeDown(e.GetTouchPoint(TabHost).Position, e.OriginalSource as DependencyObject);

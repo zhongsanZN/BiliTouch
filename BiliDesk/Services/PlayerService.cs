@@ -104,6 +104,43 @@ public class PlayerService
 
         start(win);
         if (!string.IsNullOrEmpty(title)) win.Title = title + " - BiliDesk";
+
+        // ★★★ 2026-11-04 修"点了视频详情页还是不出现"(第二版):
+        //   上面 GetOrCreateWindow 里已经 Show/Activate 过一次, 但那次调用发生在
+        //   **起播之前** —— 而起播路径(PlayVideo → 取 playurl → 建 Media → PlayMedia)
+        //   中间有 await, 且 PlayerWindow 在 Loaded 里还会设 WindowState=Maximized。
+        //   实测下来的效果是: 窗口在起播期间又被藏回去(或从未真正完成 Show),
+        //   用户看到的是"有声音、没窗口"。
+        //
+        //   这里在 start() **之后**再做一次强制显形: 与起播无关, 纯 UI 兜底。
+        //   ★ 用 Dispatcher.BeginInvoke 而不是直接调: 让起播先把同步部分跑完,
+        //     避免和 Loaded 里的 Maximized 抢同一帧。
+        win.Dispatcher.BeginInvoke(new Action(() =>
+        {
+            try
+            {
+                System.IO.File.AppendAllText(
+                    System.IO.Path.Combine(AppPaths.DataDir, "player-show.log"),
+                    $"[after-start] vis={win.IsVisible} state={win.WindowState} " +
+                    $"left={win.Left} top={win.Top} opacity={win.Opacity} " +
+                    $"taskbar={win.ShowInTaskbar} closing={win.IsClosing}\n");
+                if (win.IsClosing) return;
+                if (!win.IsVisible) win.Show();
+                if (win.WindowState == WindowState.Minimized)
+                    win.WindowState = WindowState.Maximized;
+                // 位置兜底: 屏幕外(预热遗留)就拉回来
+                if (win.Left <= -30000 || win.Top <= -30000)
+                {
+                    win.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                    win.Left = double.NaN;
+                    win.Top = double.NaN;
+                }
+                win.Activate();
+                win.Topmost = true;
+                win.Topmost = false;   // 一闪拿焦点, 但不长期置顶
+            }
+            catch { /* 兜底失败不影响播放 */ }
+        }), System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     private PlayerWindow? GetOrCreateWindow()

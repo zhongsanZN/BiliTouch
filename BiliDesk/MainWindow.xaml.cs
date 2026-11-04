@@ -76,20 +76,44 @@ public partial class MainWindow : FluentWindow
     protected override void OnHorizontalWheel(int delta)
     {
         if (delta == 0) return;
-        // 反向时清掉余量(与纵向滚轮同款约定)
+        if (_vm.Current != PageKey.Home) return;
+
+        // ★★★ 2026-11-04 修"触控板双指滑动没有单次限位 + 左右反了":
+        //
+        //   ① **单次限位**: 一次滚动手势会连续发几十个 delta, 而每个 delta 都可能
+        //      凑满一格 ⇒ 原来那个 while 循环会在一次手势里连切好几页。
+        //      现在改成"**一次手势只切一页**": 切完进入冷却(HandWheelCooldownMs),
+        //      冷却期内所有 delta 只累计余量、不切页; 手指停下超过冷却期才允许下一次。
+        //   ② **方向**: WM_MOUSEHWHEEL 的 delta > 0 表示"向右滚"(手指向右滑),
+        //      此时内容应向右跟手 ⇒ 露出**左**边那一页 ⇒ tab 下标 -1。
+        //      上一版传 -dir 正好反了。
+        var now = Environment.TickCount64;
+        if (now < _hWheelReadyAt) { _hWheelAccum = 0; return; }   // 冷却中, 不累计也不切
+
         if (Math.Sign(delta) != Math.Sign(_hWheelAccum)) _hWheelAccum = 0;
         _hWheelAccum += delta;
 
         const int Notch = 120;
-        while (Math.Abs(_hWheelAccum) >= Notch)
-        {
-            var dir = Math.Sign(_hWheelAccum);
-            _hWheelAccum -= dir * Notch;
-            // delta > 0 = 手指向右滑 = 切到**上一个** tab(内容跟手反方向)
-            if (_vm.Current == PageKey.Home && PageOf(PageKey.Home) is HomePage home)
-                home.HandleHorizontalWheel(-dir);
-        }
+        if (Math.Abs(_hWheelAccum) < Notch) return;   // 没攒够一格, 继续等
+
+        var dir = Math.Sign(_hWheelAccum);
+        _hWheelAccum = 0;                            // 清空: 一次手势只用一格
+        _hWheelReadyAt = now + HandWheelCooldownMs;  // 进入冷却, 挡住本次手势的剩余 delta
+
+        // delta > 0(向右滑) ⇒ 切到左边那一页 ⇒ -1
+        if (PageOf(PageKey.Home) is HomePage home)
+            home.HandleHorizontalWheel(-dir);
     }
+
+    /// <summary>
+    /// 触控板横向手势的冷却时长(毫秒)。
+    /// 一次两指横滑通常持续 200~500ms、发几十个 delta; 取 450ms 既挡得住同一次手势的
+    /// 后续 delta, 又不会让"连续划两下"中的第二下被吃掉。
+    /// </summary>
+    private const int HandWheelCooldownMs = 450;
+
+    /// <summary>冷却结束时刻(TickCount64)。在此之前收到的横向 delta 一律忽略。</summary>
+    private long _hWheelReadyAt;
 
     /// <summary>触控板横向滚动的余量(攒够一格才切一次 tab)</summary>
     private int _hWheelAccum;
