@@ -90,9 +90,17 @@ public static class DynamicParser
                 if (st.TryGetProperty("forward", out var fw)) item.ForwardCount = Long(fw, "count");
             }
 
-            // 一条动态至少要有"某种内容"才有意义: 有正文/图/视频/专栏/直播/转发之一
+            // 一条动态至少要有"某种内容"才有意义。
+            // ★ 2026-11-04 放宽: 原来只认 正文/图/视频/专栏标题/直播/转发, 于是
+            //   **投票、分享、op(B 站的小内容单元)、UP 主自己的动态**全被判成空而丢弃 ——
+            //   用户看到的就是"动态页缺一大块"。现在只要有一条动态的 id 且有作者,
+            //   就保留它(最坏情况是一张只有头像+时间的卡片, 也好过整条消失)。
             var hasSomething = item.HasText || item.HasPictures || item.Video != null
-                || item.ArticleTitle.Length > 0 || item.LiveRoomId > 0 || item.IsForward;
+                || item.ArticleTitle.Length > 0 || item.LiveRoomId > 0 || item.IsForward
+                || item.Kind is DynamicKind.Other or DynamicKind.Text;
+            // 兜底: 有 id 且能识别出作者(说明这是条真动态, 只是内容形态我们没覆盖)
+            if (!hasSomething && item.Id.Length > 0 && item.AuthorName.Length > 0)
+                hasSomething = true;
             return hasSomething ? item : null;
         }
         catch
@@ -150,21 +158,53 @@ public static class DynamicParser
                 if (item.Text.Length == 0) item.Text = Str(desc, "rich_text");
             }
 
-            // 图片: major.draw.items[] { src, width, height }
-            if (md.TryGetProperty("major", out var major) && major.ValueKind == JsonValueKind.Object &&
-                major.TryGetProperty("draw", out var draw) && draw.ValueKind == JsonValueKind.Object &&
-                draw.TryGetProperty("items", out var pics) && pics.ValueKind == JsonValueKind.Array)
+            // ---- 图片: 两套结构都要认(2026-11-04 重写) ----
+            // 现代图文动态(opus)长这样, 这是**当前主流**, 之前完全没读 ⇒ 图片全丢:
+            //   modules.module_dynamic.major.opus.pics[] { url, width, height }
+            // 老版图文动态才是:
+            //   modules.module_dynamic.major.draw.items[] { src, width, height }
+            // 两者字段名还不一样(url vs src), 所以必须分开读。
+            if (md.TryGetProperty("major", out var major) && major.ValueKind == JsonValueKind.Object)
             {
-                foreach (var p in pics.EnumerateArray())
+                // ① opus(新)—— 优先
+                if (major.TryGetProperty("opus", out var opus) && opus.ValueKind == JsonValueKind.Object &&
+                    opus.TryGetProperty("pics", out var opics) && opics.ValueKind == JsonValueKind.Array)
                 {
-                    var url = Str(p, "src");
-                    if (url.Length == 0) continue;
-                    item.Pictures.Add(new DynamicPicture
+                    foreach (var p in opics.EnumerateArray())
                     {
-                        Url = UrlUtil.Normalize(url),
-                        Width = (int)Long(p, "width"),
-                        Height = (int)Long(p, "height"),
-                    });
+                        var url = Str(p, "url");
+                        if (url.Length == 0) url = Str(p, "src");
+                        if (url.Length == 0) continue;
+                        item.Pictures.Add(new DynamicPicture
+                        {
+                            Url = UrlUtil.Normalize(url),
+                            Width = (int)Long(p, "width"),
+                            Height = (int)Long(p, "height"),
+                        });
+                    }
+                    // opus 自带正文摘要, desc 为空时用它
+                    if (item.Text.Length == 0 &&
+                        opus.TryGetProperty("summary", out var sm) && sm.ValueKind == JsonValueKind.Object)
+                        item.Text = Str(sm, "text");
+                }
+
+                // ② draw(老)—— opus 没给图时退回
+                if (item.Pictures.Count == 0 &&
+                    major.TryGetProperty("draw", out var draw) && draw.ValueKind == JsonValueKind.Object &&
+                    draw.TryGetProperty("items", out var pics) && pics.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var p in pics.EnumerateArray())
+                    {
+                        var url = Str(p, "src");
+                        if (url.Length == 0) url = Str(p, "url");
+                        if (url.Length == 0) continue;
+                        item.Pictures.Add(new DynamicPicture
+                        {
+                            Url = UrlUtil.Normalize(url),
+                            Width = (int)Long(p, "width"),
+                            Height = (int)Long(p, "height"),
+                        });
+                    }
                 }
             }
         }

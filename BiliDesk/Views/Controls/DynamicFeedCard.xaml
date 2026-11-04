@@ -22,7 +22,8 @@
     <UserControl.Resources>
         <!-- ===================== 图片九宫格 ===================== -->
         <DataTemplate x:Key="DynPicturesTemplate">
-            <ItemsControl ItemsSource="{Binding Pictures}" HorizontalAlignment="Left">
+            <ItemsControl ItemsSource="{Binding Pictures}" HorizontalAlignment="Left"
+                          x:Name="PicHost">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <controls:DynamicPicturePanel />
@@ -30,8 +31,15 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
+                        <!-- ★ 2026-11-04: 图片可点(官方是点图进看图器)。
+                             Cursor=Hand + MouseLeftButtonUp 转发给卡片 code-behind。
+                             高度由 DynamicPicturePanel.TileHeight 决定(单图 180 / 多图 96)。 -->
                         <Border Margin="2" CornerRadius="6" ClipToBounds="True"
-                                Background="{DynamicResource PlaceholderBrush}" Height="96">
+                                Cursor="Hand"
+                                MouseLeftButtonUp="OnPictureClick"
+                                Background="{DynamicResource PlaceholderBrush}"
+                                Height="{Binding TileHeight,
+                                                 RelativeSource={RelativeSource AncestorType=controls:DynamicPicturePanel}}">
                             <Image Source="{Binding Url}" Stretch="UniformToFill" />
                         </Border>
                     </DataTemplate>
@@ -40,36 +48,38 @@
         </DataTemplate>
 
         <!-- ===================== 视频附加卡 ===================== -->
+        <!-- ★ 2026-11-04 改成官方那种"大封面 + 下方标题"布局:
+             原来是小缩略图(150×84)在左、标题在右, 视觉上像一条列表项, 用户说"预览不了视频"。
+             官方 PC 客户端的动态里视频是**整块封面预览**(约 16:9, 占满卡片宽度),
+             标题/UP/播放数在封面下方 —— 这样一眼就能看出视频内容。 -->
         <DataTemplate x:Key="DynVideoTemplate">
             <Border CornerRadius="8" ClipToBounds="True" Cursor="Hand"
                     Background="{DynamicResource ControlFillHoverBrush}"
                     MouseLeftButtonUp="OnContentClick">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="150" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <!-- 封面: 16:9 -->
-                    <Border Grid.Column="0" Height="84" CornerRadius="6" ClipToBounds="True"
+                <StackPanel>
+                    <!-- 封面: 占满卡片宽度, 8:5 比例(接近官方预览比例) -->
+                    <Border CornerRadius="6" ClipToBounds="True" Margin="0,0,0,8"
                             Background="{DynamicResource PlaceholderBrush}">
                         <Grid>
-                            <Image Source="{Binding Video.Cover}" Stretch="UniformToFill" />
+                            <Image Source="{Binding Video.Cover}" Stretch="UniformToFill"
+                                   Height="220" />
+                            <!-- 时长角标 -->
                             <Border HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                                    Margin="0,0,4,4" CornerRadius="3" Padding="4,1"
+                                    Margin="0,0,6,6" CornerRadius="3" Padding="5,1"
                                     Background="{DynamicResource DurationBadgeBackgroundBrush}"
                                     Visibility="{Binding Video.DurationText, Converter={StaticResource StrToVis}}">
-                                <TextBlock Text="{Binding Video.DurationText}" FontSize="10" Foreground="White" />
+                                <TextBlock Text="{Binding Video.DurationText}" FontSize="10.5" Foreground="White" />
                             </Border>
                         </Grid>
                     </Border>
-                    <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding Video.Title}" FontSize="13" FontWeight="SemiBold"
-                                   TextWrapping="Wrap" MaxHeight="40" TextTrimming="CharacterEllipsis"
+                    <StackPanel Margin="2,0,2,0">
+                        <TextBlock Text="{Binding Video.Title}" FontSize="13.5" FontWeight="SemiBold"
+                                   TextWrapping="Wrap" MaxHeight="42" TextTrimming="CharacterEllipsis"
                                    Foreground="{DynamicResource TextPrimaryBrush}" />
                         <TextBlock Text="{Binding Video.ViewCountText}" FontSize="11" Margin="0,6,0,0"
                                    Foreground="{DynamicResource TextTertiaryBrush}" />
                     </StackPanel>
-                </Grid>
+                </StackPanel>
             </Border>
         </DataTemplate>
 
@@ -173,9 +183,12 @@
                                          LiveTemplate="{StaticResource DynLiveTemplate}" />
     </UserControl.Resources>
 
+    <!-- ★ 整卡可点(2026-11-04): 官方客户端点一下动态就进详情(完整内容 + 全部评论)。
+         子元素(头像/视频卡/图片/按钮)先处理并设 Handled, 所以它们各自的动作不受影响。 -->
     <Border Background="{DynamicResource CardBackgroundBrush}"
             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
-            CornerRadius="10" Padding="14,12" Margin="8,6">
+            CornerRadius="10" Padding="14,12" Margin="8,6"
+            Cursor="Hand" MouseLeftButtonUp="OnCardClick">
         <StackPanel>
             <!-- ===== 抬头: 头像 + 昵称 + 时间 ===== -->
             <Grid>

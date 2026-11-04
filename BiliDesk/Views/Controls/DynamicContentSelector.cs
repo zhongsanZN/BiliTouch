@@ -52,6 +52,14 @@ public class DynamicContentSelector : DataTemplateSelector
 /// </summary>
 public class DynamicPicturePanel : System.Windows.Controls.Primitives.UniformGrid
 {
+    /// <summary>
+    /// 图片格子的高度(2026-11-04)。
+    /// 单图给 180 —— 官方单图是"大图预览", 96 的高度根本看不清内容;
+    /// 多图给 96 —— 九宫格要控制整卡高度, 否则一屏放不下两条动态。
+    /// 由 DynamicFeedCard 的 XAML 通过 ElementName 绑定到每个 tile 的 Height。
+    /// </summary>
+    public double TileHeight { get; private set; } = 96;
+
     public DynamicPicturePanel()
     {
         // 行数自动: UniformGrid 在 Rows=0 时按列数推
@@ -61,16 +69,16 @@ public class DynamicPicturePanel : System.Windows.Controls.Primitives.UniformGri
     protected override void OnInitialized(EventArgs e)
     {
         base.OnInitialized(e);
-        var count = Children.Count;
-        Columns = count switch
-        {
-            1 => 1,
-            2 or 4 => 2,
-            _ => 3,
-        };
+        ApplyShape();
     }
 
     protected override Size MeasureOverride(Size constraint)
+    {
+        ApplyShape();
+        return base.MeasureOverride(constraint);
+    }
+
+    private void ApplyShape()
     {
         var count = Children.Count;
         Columns = count switch
@@ -79,7 +87,7 @@ public class DynamicPicturePanel : System.Windows.Controls.Primitives.UniformGri
             2 or 4 => 2,
             _ => 3,
         };
-        return base.MeasureOverride(constraint);
+        TileHeight = count == 1 ? 180 : 96;
     }
 }
 
@@ -111,5 +119,34 @@ public static class DynamicActions
     {
         if (d.LiveRoomId <= 0) return;
         Svc.Player.PlayLive(d.LiveRoomId, d.Text);
+    }
+
+    /// <summary>
+    /// 打开动态详情页(2026-11-04)。
+    ///
+    /// ★ 官方 PC 客户端里"点一下整条动态"会进详情页看完整内容 + 全部评论。
+    ///   我们这边用内嵌 WebView 打开 t.bilibili.com 的那条动态 ——
+    ///   这样评论、图片查看、转发链、投票全都能用, 不用自己再实现一遍。
+    /// ★ 没有 id(极少见)时退回作者主页, 总比点了没反应好。
+    /// </summary>
+    public static void OpenDetail(DynamicItem d)
+    {
+        if (!string.IsNullOrEmpty(d.Id))
+        {
+            Svc.Navigate.OpenWebViewWindow($"https://t.bilibili.com/{d.Id}", "动态");
+            return;
+        }
+        OpenAuthor(d);
+    }
+
+    /// <summary>
+    /// 查看大图(2026-11-04)。
+    /// ★ 官方是点图片进一个可左右翻的看图器。这里用内嵌窗口打开原图地址 ——
+    ///   图片本身是 CDN 直链, WebView 能缩放/保存, 对"我就想看清楚"这个需求够了。
+    /// </summary>
+    public static void OpenPicture(DynamicPicture pic)
+    {
+        if (pic == null || string.IsNullOrEmpty(pic.Url)) return;
+        Svc.Navigate.OpenWebViewWindow(pic.Url, "查看图片");
     }
 }

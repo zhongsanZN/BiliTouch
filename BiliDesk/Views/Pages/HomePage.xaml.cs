@@ -354,9 +354,59 @@ public partial class HomePage : UserControl
         UpdateBackToTop(ScrollOf(tab));
         // 分段标签的下划线跟着选中项走
         MoveTabIndicator(tab);
-        // ★ 2026-10-12 用户要求"彻底移除浮动动画" —— 切 tab 现在**没有任何转场动画**,
-        //   只切显隐与下划线。早先的"闪白幕布"与"卡片上浮"都已删除。
+
+        // ★★★ 2026-11-04 修"切到直播页会卡顿闪屏"(第三版, 按真实机制下手):
+        //
+        //   根因(见 EnsureFill 里那段注释): 折叠状态的 ItemsControl **没被测量过**,
+        //   容器一个都还没生成。所以第一次切到这个 tab 时, 同一帧里要干两件事:
+        //     ① 把 ScrollViewer 变可见 → 触发测量;
+        //     ② 一次性生成整批 VideoCard 容器(WrapPanel 无虚拟化)。
+        //   这两件事撞在同一帧 = 用户看到的"卡一下 + 闪一下"。
+        //
+        //   修法: 先在**不可见状态**下把它们生成出来(Visibility.Hidden 仍然参与布局,
+        //   但不绘制), 生成完再把 Hidden 换成 Visible。这样"生成"和"显示"分到两帧,
+        //   切过去时容器已经就绪, 只是点一下可见性 —— 不会再卡也不会闪。
+        PrewarmTabVisuals(tab);
     }
+
+    /// <summary>
+    /// 让某个 tab 的列表在**不可见但参与布局**的状态下先完成一次测量,
+    /// 把容器生成掉, 再恢复可见性(2026-11-04)。
+    ///
+    /// ★ 为什么用 Hidden 而不是把列表直接设 Visible:
+    ///   Hidden 的元素**仍然参与布局**(会有 Measure/Arrange), 只是不绘制,
+    ///   所以容器会真的被创建; 而 Collapsed 完全不参与, 什么也生成不了。
+    /// ★ 只处理"当前还没显示过"的 tab; 已经显示过的一次就够, 不必每次切都跑。
+    /// </summary>
+    private void PrewarmTabVisuals(HomeTabKind tab)
+    {
+        if (_prewarmedTabs.Contains(tab)) return;
+        var host = ScrollOf(tab);
+        if (host == null) return;
+        _prewarmedTabs.Add(tab);
+
+        // 如果它当前已经是可见的(就是正在切过去的那个), 跳过 —— 已经会正常布局
+        if (host.Visibility == Visibility.Visible) return;
+
+        host.Visibility = Visibility.Hidden;
+        // UpdateLayout 强制同步走一遍测量/排列, 把容器建出来
+        host.UpdateLayout();
+        // 排到下一帧再决定可见性: 让"生成"这一帧先落定
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            // 只有当它**仍然不该显示**时才还原成 Collapsed;
+            // 若这一帧里用户已经切过来了(VM 已把 IsXxxTab 置 true), 就保持可见
+            if (IsTabActive(tab)) host.Visibility = Visibility.Visible;
+            else host.Visibility = Visibility.Collapsed;
+        }));
+    }
+
+    /// <summary>已预热过的 tab(每个只做一次)</summary>
+    private readonly HashSet<HomeTabKind> _prewarmedTabs = new();
+
+    /// <summary>当前 VM 认为哪个 tab 是激活的</summary>
+    private bool IsTabActive(HomeTabKind tab) => CurrentTabFromVm() == tab;
+
     /// <summary>
     /// 保证某个 tab 的列表已经挂上分帧填充器。**每个 tab 只建一次**, 之后永远复用 ——
     /// 这就是"切 tab 不重建"的关键(旧版在 ShowTab 里每次都 Attach/Detach)。
