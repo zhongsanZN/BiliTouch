@@ -58,6 +58,9 @@ public partial class HomePage
     /// <summary>冻结时钉住的纵向偏移(常量): 每帧都回到它, 画面就完全不会上下动</summary>
     private double _frozenOffset;
 
+    /// <summary>本次手势是否已经冻结过一次纵向滚动</summary>
+    private bool _verticalFrozenOnce;
+
     /// <summary>吸附动画时长。</summary>
     private const int SwipeSnapMs = 180;
 
@@ -93,6 +96,7 @@ public partial class HomePage
         _swipeHorizontal = false;
         _swipeConsumed = false;
         _swipeMoved = false;
+        _verticalFrozenOnce = false;
         _swipeDx = 0;
         _tapCard = FindCard(source);
     }
@@ -140,9 +144,14 @@ public partial class HomePage
         //   否则: 手指慢慢横移时, ScrollViewer 的垂直平移仍在按微小的 dy 抖动调整
         //   (每帧 ±1~2px 的来回), 而 TabHost 同时被我们左右平移 —— 两个位移叠加,
         //   观感就是"画面在抽搐"。这里把纵向彻底钉住, 只让横向生效。
-        // ★ 每帧都调 FreezeVertical: 它内部把偏移钉回按下时的常量。
-        //   (不能只在首帧调 —— 平移期间 WPF 会持续改动 VerticalOffset)
-        FreezeVertical();
+        // ★ 抽搐的根因已由 RootPoint(根坐标)解决 —— 那才是真正的反馈环。
+        //   FreezeVertical 现在只作为**补充保险**在首帧调一次: 每帧都钉反而会和
+        //   ScrollViewer 的正常滚动打架(它自己也有轻微的平滑动画)。
+        if (!_verticalFrozenOnce)
+        {
+            _verticalFrozenOnce = true;
+            FreezeVertical();
+        }
         _swipeDx = dx;
         // 到头(已经在第一个/最后一个 tab)还往那个方向拖: 橡皮筋
         var target = CurrentTabIndex + (dx < 0 ? 1 : -1);
@@ -310,11 +319,41 @@ public partial class HomePage
     private bool _wheelSwitching;
 
     private void OnSwipeTouchDown(object? sender, TouchEventArgs e) =>
-        SwipeDown(e.GetTouchPoint(TabHost).Position, e.OriginalSource as DependencyObject);
+        SwipeDown(RootPoint(e), e.OriginalSource as DependencyObject);
+
+    /// <summary>
+    /// 取触摸点在**窗口根坐标**里的位置(不是 TabHost 局部坐标)。
+    ///
+    /// ★★★ 2026-11-04 这是"缓慢横滑时画面抽搐"的**真正根因**, 前面三版都修错了地方:
+    ///
+    ///   原来用的是 `e.GetTouchPoint(TabHost).Position` —— 这是 **TabHost 自己的局部坐标**。
+    ///   而我们做跟手平移时, 改的正是 `TabHost.RenderTransform`。
+    ///   于是形成**坐标反馈环**:
+    ///     手指不动 → 我们把 TabHost 左移 10px → 同一触摸点在 TabHost 局部坐标里
+    ///     变成"右移 10px" → 下一帧算出的 dx 少了 10 → 我们又往右挪回去 →
+    ///     局部坐标又变 … 每帧振荡, 观感就是**抽搐**。
+    ///   手指划得越慢, 单帧位移越小, 振荡越明显(快划时位移远大于振荡幅度, 反而看不出来)。
+    ///
+    ///   修法: 用**根坐标**(GetTouchPoint(null)), 它不随 TabHost 的 RenderTransform 变化。
+    ///   这与 TouchSupport 里"拖动被当成点击"那个 bug 是同一类问题、同一个解法。
+    /// </summary>
+    private Point RootPoint(TouchEventArgs e) => e.GetTouchPoint(null).Position;
+
+    /// <summary>笔的根坐标版本(同上)。取不到点时退回 TabHost 局部坐标, 绝不抛。</summary>
+    private Point RootPoint(StylusEventArgs e)
+    {
+        try
+        {
+            var pts = e.GetStylusPoints(null);
+            if (pts != null && pts.Count > 0) return pts[0].ToPoint();
+        }
+        catch { /* 取不到就退回下面 */ }
+        return e.GetPosition(TabHost);
+    }
 
     private void OnSwipeTouchMove(object? sender, TouchEventArgs e)
     {
-        if (SwipeMove(e.GetTouchPoint(TabHost).Position)) e.Handled = true;
+        if (SwipeMove(RootPoint(e))) e.Handled = true;
     }
 
     private void OnSwipeTouchUp(object? sender, TouchEventArgs e)
@@ -330,11 +369,11 @@ public partial class HomePage
     }
 
     private void OnSwipeStylusDown(object? sender, StylusEventArgs e) =>
-        SwipeDown(e.GetPosition(TabHost), e.OriginalSource as DependencyObject);
+        SwipeDown(RootPoint(e), e.OriginalSource as DependencyObject);
 
     private void OnSwipeStylusMove(object? sender, StylusEventArgs e)
     {
-        if (SwipeMove(e.GetPosition(TabHost))) e.Handled = true;
+        if (SwipeMove(RootPoint(e))) e.Handled = true;
     }
 
     private void OnSwipeStylusUp(object? sender, StylusEventArgs e)

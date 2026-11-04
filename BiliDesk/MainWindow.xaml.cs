@@ -78,71 +78,90 @@ public partial class MainWindow : FluentWindow
         if (delta == 0) return;
         if (_vm.Current != PageKey.Home) return;
 
-        // ★★★ 2026-11-04 第三次修触控板横滑。前两次错在哪, 记清楚别重犯:
+        // ★★★ 2026-11-04 第四次修触控板横滑。这一版把"限位"的判据彻底换掉。
         //
-        //   ① **方向错了两次**: 两版都写 `-dir`, 你两次都说反。所以正确值就是 `+dir`。
-        //      (WM_MOUSEHWHEEL 正 delta 在本机对应"向左滑", 与文档约定相反 ——
-        //       系统反向滚动开着/驱动约定不同, 不必纠结原因, 以实测为准。)
+        //   前三版的错误(全记在这里, 别再犯):
+        //     ① 方向: 两版都写 `-dir` ⇒ 你两次都说反。已经改成 +dir。
+        //     ② 限位: 用"时间冷却(450/900ms)" ⇒ 划得快时后面的手势落在冷却期里
+        //        完全不响应(你说的"后几下根本没反应"), 而冷却一过又会连跳。
+        //     ③ 后来又用"间隔 > 220ms 才算新手势" ⇒ 同样的问题: **划得快时每次间隔都小
+        //        于 220ms**, 于是被判成同一次手势, 第二次起全部被 `_hWheelConsumed` 吞掉。
         //
-        //   ② **"划快一下跳好几页"**: 前两版用"时间冷却"挡连切 —— 这个思路是错的。
-        //      快速手势的 delta 派发极密, 450ms 冷却一过马上又凑满一格, 于是照样连跳。
-        //      ⇒ 正确做法是按**手势边界**限位: 一次"连续滚动"(delta 之间间隔很短)
-        //        只允许切**一页**; 必须出现一次"明显停顿"才算新手势, 才允许再切。
-        //        这跟触屏的"一次手势只翻一页"是同一个语义。
-        var now = Environment.TickCount64;
-
-        // 与上一次 delta 的间隔够大 ⇒ 这是**新手势**, 重置本手势的切页许可
-        if (now - _hWheelLastAt > HandWheelGestureGapMs)
-        {
-            _hWheelAccum = 0;
-            _hWheelConsumed = false;
-        }
-        _hWheelLastAt = now;
-
-        // 本手势已经切过一页 ⇒ 后续 delta 全部丢弃, 直到手指停下再开始
-        if (_hWheelConsumed) return;
+        //   ★ 正确的判据是**"滚动流是否中断"**, 而不是"间隔有多长":
+        //     触控板一次连续滚动是高频连续事件(间隔通常 5~30ms);
+        //     两次**独立**的划动之间, 系统会有一个明确的空档(手指离开再落下)。
+        //     所以: 用一个 **短定时器(90ms)** 检测"滚动流结束" —— 每收到一个 delta
+        //     就重置它, 定时器真触发(即 90ms 内没有新 delta)才解锁下一次切页。
+        //     这样"划得快"只是事件间隔更短, 流一旦停顿超过 90ms 立刻解锁,
+        //     下一个手势必定有反应; 而同一次流里无论多少 delta 都只切一页。
+        if (_vm.Current != PageKey.Home) return;
 
         // 反向时清掉余量(与纵向滚轮同款约定)
         if (Math.Sign(delta) != Math.Sign(_hWheelAccum)) _hWheelAccum = 0;
         _hWheelAccum += delta;
 
-        // 门槛: 一格(120)。慢划要攒够一格; 快划的 delta 本来就大, 同样要够一格 ——
-        // 关键是 **consumed 标志** 保证一次手势只切一页, 与快慢无关。
+        // 只要还有 delta 进来, 就把"滚动流结束"的判定往后推
+        RestartWheelIdleTimer();
+
+        // 本滚动流已经切过一页 ⇒ 剩余 delta 只累计不切(等定时器解锁)
+        if (_hWheelConsumed) { return; }
+
         if (Math.Abs(_hWheelAccum) < Notch) return;
 
         var dir = Math.Sign(_hWheelAccum);
         _hWheelAccum = 0;
-        _hWheelConsumed = true;      // ★ 本手势到此为止, 后续 delta 一律忽略
+        _hWheelConsumed = true;
 
         // ★ 方向: delta > 0 ⇒ 手指向左滑 ⇒ 内容向左跟手 ⇒ 露出**右**边那页 ⇒ +1
         if (PageOf(PageKey.Home) is HomePage home)
             home.HandleHorizontalWheel(_hWheelInvert ? -dir : dir);
     }
 
+    /// <summary>
+    /// 重置"滚动流结束"定时器。90ms 内没有新的横向 delta ⇒ 认定这次滚动流结束,
+    /// 解锁下一次切页。
+    /// ★ 90ms 的取法: 精确触控板连续滚动的 delta 间隔实测 5~30ms, 90ms 是它的三倍以上,
+    ///   足够可靠地判断"手停了"; 又远小于人类连续划两下的间隔(通常 200ms+)。
+    /// </summary>
+    private void RestartWheelIdleTimer()
+    {
+        if (_hWheelIdleTimer == null)
+        {
+            _hWheelIdleTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(HandWheelIdleMs)
+            };
+            _hWheelIdleTimer.Tick += (_, _) =>
+            {
+                // 滚动流结束: 停表 + 解锁下一次切页
+                _hWheelIdleTimer!.Stop();
+                _hWheelConsumed = false;
+                _hWheelAccum = 0;
+            };
+        }
+        _hWheelIdleTimer.Stop();     // Stop+Start 就是"重置"
+        _hWheelIdleTimer.Start();
+    }
+
+    private DispatcherTimer? _hWheelIdleTimer;
+
     /// <summary>一格滚轮的标准 delta</summary>
     private const int Notch = 120;
 
-    /// <summary>
-    /// 两次横向 delta 之间超过这个间隔, 就认为是**两次不同的手势**。
-    /// 触控板一次连续滚动的 delta 间隔通常 5~30ms; 手指抬起再落下至少几十上百毫秒。
-    /// 取 220ms 能可靠分开"连续划两下"与"一次划动的后续事件"。
-    /// </summary>
-    private const int HandWheelGestureGapMs = 220;
+    /// <summary>判定"滚动流已结束"的空闲时长(ms)。见 RestartWheelIdleTimer 的说明。</summary>
+    private const int HandWheelIdleMs = 90;
 
     /// <summary>
     /// 方向开关: true = 把 delta 符号取反后再用。
-    /// ★ 前两版都是"取反"且你两次都说反, 所以这里默认 **false**(不取反)。
-    ///   若换一台机器发现又反了, 只改这一个常量 —— 不要再往别处加方向修正。
+    /// ★ 前两版都是"取反"且两次都说反, 所以默认 **false**(不取反)。
+    ///   若换机器发现又反了, 只改这一个常量。
     /// </summary>
     private const bool _hWheelInvert = false;
 
-    /// <summary>上一次收到横向 delta 的时刻</summary>
-    private long _hWheelLastAt;
-
-    /// <summary>本次手势是否已经切过一页(切过就置位, 直到出现手势间隔才清)</summary>
+    /// <summary>本次滚动流是否已经切过一页(滚动流结束后由定时器清掉)</summary>
     private bool _hWheelConsumed;
 
-    /// <summary>本次手势累计的 delta 余量</summary>
+    /// <summary>本次滚动流累计的 delta 余量</summary>
     private int _hWheelAccum;
 
     private FrameworkElement PageOf(PageKey key)

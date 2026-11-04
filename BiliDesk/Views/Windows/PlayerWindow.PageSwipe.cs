@@ -257,10 +257,20 @@ public partial class PlayerWindow
     /// </summary>
     private bool InfoSwipeAllowed(DependencyObject? source)
     {
+        // ★★★ 2026-11-04 修"从简介页滑到评论页时, 手指初始位置落在推荐视频上就变成硬切":
+        //
+        //   原因: VideoCard 内部装着 ButtonBase(收藏/更多等), 起手点落在它上面时
+        //   这里直接返回 false ⇒ _infoSwipeArmed = false ⇒ InfoMove 判为横向后返回 false
+        //   ⇒ BeginPageDrag 从不执行 ⇒ 走 InfoUp 的**降级路径**(按位移直接切 tab)。
+        //   降级路径没有跟手、没有动画, 观感就是"硬切"。
+        //
+        //   修法: 卡片整块是"可滑动的内容区", 不该因为它内部有一个小按钮就否掉整个手势。
+        //   真正需要排除的是**独占手势的控件**: 滑块(要拖动)、文本框(要选字)、
+        //   下拉框/列表(要自己滚动)。按钮被手指划过时不会误触发(点击有 10px 抖动阈值)。
         var d = source;
         while (d != null && d != InfoPanel)
         {
-            if (d is ButtonBase or Slider or TextBox or PasswordBox or Selector or Hyperlink) return false;
+            if (d is Slider or TextBox or PasswordBox or Selector) return false;
             d = d is ContentElement content
                 ? ContentOperations.GetParent(content) ?? (content as FrameworkContentElement)?.Parent
                 : VisualTreeHelper.GetParent(d);

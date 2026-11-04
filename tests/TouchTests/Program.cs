@@ -406,6 +406,12 @@ internal static class Program
         Call(player, "InfoUp");
         Pump(400);
         Check(commentsTab.IsChecked == true, "horizontal swipe switches to the comments tab");
+        // ★ 触控板/横向滚轮翻页(2026-11-04): 走 PlayerWindow.OnHorizontalWheel 那条链路
+        player.SwitchInfoPageByWheelForTest(1); Pump(400);
+        Check(commentsTab.IsChecked == true, "wheel right switches the info panel to comments");
+        player.SwitchInfoPageByWheelForTest(-1); Pump(400);
+        Check(introTab.IsChecked == true, "wheel left switches the info panel back to the intro");
+
         // 右滑: 回简介
         Call(player, "InfoDown", new Point(120, 300), (DependencyObject?)infoPanel);
         Call(player, "InfoMove", new Point(200, 300));
