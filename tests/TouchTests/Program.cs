@@ -363,7 +363,24 @@ internal static class Program
             a.Down(x, y); b.Down(x + 40, y); Pump(550); b.Up(x + 40, y); a.Up(x, y); Pump(400);
             Check(!Field<bool>(player, "_isFastForwarding") && controls.IsHitTestVisible, "two fingers cancel hold without hiding controls");
             finger = new Finger(root); finger.Down(x, y); finger.Move(x + 100, y);
-            Check(Field<bool>(player, "_isSeeking"), "horizontal touch previews seek while finger is down");
+            // ★ 单击 = 切换控制栏显隐(2026-11-04 用户要求; 原来是"单击/双击都暂停", 浪费了单击)
+        Call(player, "ShowControls");
+        Call(player, "HideControls");
+        Check(Field<bool>(player, "_controlsHidden"), "controls can be hidden programmatically");
+        Call(player, "ToggleControlsByClick");
+        Check(!Field<bool>(player, "_controlsHidden"), "single click shows the control bar when hidden");
+        Call(player, "ToggleControlsByClick");
+        Check(Field<bool>(player, "_controlsHidden"), "single click hides the control bar when shown");
+
+        // ★ 触控板缩放(Ctrl+滚轮) → libvlc Scale
+        Call(player, "ApplyZoom", 1.5);
+        Check(Math.Abs(Field<double>(player, "_videoZoom") - 1.5) < 0.01,
+            "ctrl+wheel zoom sets the video zoom factor");
+        Call(player, "ApplyZoom", 1.0);
+        Check(Math.Abs(Field<double>(player, "_videoZoom") - 1.0) < 0.01,
+            "zoom returns to the original size");
+
+        Check(Field<bool>(player, "_isSeeking"), "horizontal touch previews seek while finger is down");
             finger.Up(x + 100, y); Pump(700);
             Check(!Field<bool>(player, "_isSeeking") && mp.Time > 3000, "horizontal touch commits seek after release");
             a = new Finger(root); b = new Finger(root);

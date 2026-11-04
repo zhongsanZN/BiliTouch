@@ -3488,6 +3488,25 @@ public partial class PlayerWindow : FluentWindow
     {
         if (_mp == null || _closing || e.Delta == 0) return;
 
+        // ★★★ 2026-11-04 触控板双指缩放手势(用户报"没有生效")。
+        //
+        //   事实: 精确触控板的捏合在 Windows 里**不产生触摸事件**, 也不产生
+        //   ManipulationDelta —— WPF 那套 Manipulation 只认 Touch(Stylus) 输入。
+        //   系统把触控板捏合映射成的通用手势是 **Ctrl + 滚轮**
+        //   (Windows 设置 → 触控板 → 缩放 就绑在这个组合上; Chrome/照片/资源管理器都这么做)。
+        //   所以这里接管 Ctrl+滚轮 = 缩放视频画面, 而不是去等一个永远不会来的触摸事件。
+        //
+        //   ★ 为什么放在音量判断**之前**: 按住 Ctrl 时滚轮不应该是音量,
+        //     否则"想缩放却把声音滚没了"。
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        {
+            _wheelAccum = 0;            // 清掉音量那边的余量, 免得切回来时跳一下
+            var step = e.Delta > 0 ? ZoomStep : -ZoomStep;
+            ApplyZoom(_videoZoom + step);
+            e.Handled = true;
+            return;
+        }
+
         // 反向滚动时先清掉上次攒的余量, 否则要先"抵消"掉才动
         if (Math.Sign(e.Delta) != Math.Sign(_wheelAccum)) _wheelAccum = 0;
         _wheelAccum += e.Delta;
@@ -3501,6 +3520,47 @@ public partial class PlayerWindow : FluentWindow
         }
         // 不够一格也要吃掉: 否则事件继续冒泡给别的可滚动控件(视频区里其实没有, 但别留隐患)
         e.Handled = true;
+    }
+
+    // ------------------------------------------------------------ 画面缩放(触控板捏合 / Ctrl+滚轮)
+
+    /// <summary>当前画面缩放倍率(1.0 = 原始)</summary>
+    private double _videoZoom = 1.0;
+    /// <summary>每次缩放步长</summary>
+    private const double ZoomStep = 0.1;
+    /// <summary>缩放范围</summary>
+    private const double ZoomMin = 1.0;
+    private const double ZoomMax = 3.0;
+
+    /// <summary>
+    /// 应用画面缩放(2026-11-04)。
+    ///
+    /// ★★★ 为什么用 libvlc 的 Scale/SetCropGeometry 而**不是** WPF 的 RenderTransform:
+    ///   `VideoView` 是 **HwndHost**, 视频画面画在一个**原生子窗口**里。
+    ///   WPF 的 RenderTransform 只影响 WPF 自己的合成层, 对原生子窗口**完全无效** ——
+    ///   挂上去什么也不会发生(这就是我第一次写错的地方)。
+    ///   所以缩放必须落到 libvlc 上。
+    ///
+    /// 用 `MediaPlayer.Scale`(0 = 自适应, >0 = 以浮点倍率放大并裁剪到窗口内):
+    ///   它由 vout 直接处理, 不重建 vout, 不闪。
+    ///
+    /// ★ 范围 1.0~3.0: 小于 1.0 会露出黑边(视频缩小), 那不是用户想要的效果;
+    ///   放大超过 3 倍在 3K 屏上已经糊得没法看。
+    /// </summary>
+    private void ApplyZoom(double zoom)
+    {
+        if (_closing || _mp == null) return;
+        _videoZoom = Math.Clamp(zoom, ZoomMin, ZoomMax);
+
+        try
+        {
+            // Scale = 0 表示自适应窗口(原始行为); 1.0 等价于不放大
+            _mp.Scale = Math.Abs(_videoZoom - 1.0) < 0.001 ? 0f : (float)_videoZoom;
+        }
+        catch { /* 直播/某些 codec 下 Scale 可能不被支持, 静默失败 */ }
+
+        // 复用倍速提示那条 OSD 显示百分比, 不新开一套 UI
+        ShowSpeedHint(_videoZoom <= 1.001 ? "原始大小" : $"缩放 {_videoZoom * 100:0}%", hold: false);
     }
 
     /// <summary>滚轮累计的余量(±120 为一格)。见 OnVideoAreaMouseWheel 的说明</summary>
@@ -4684,7 +4744,14 @@ public partial class PlayerWindow : FluentWindow
         {
             _singleClickTimer!.Stop();
             if (_suppressSingleClick) return;
-            OnPlayPauseClick(this, new RoutedEventArgs());
+            // ★★★ 2026-11-04 用户要求: 「单击应该改为和晃动鼠标一样唤出或让状态栏消失」。
+            //
+            //   原来单击 = 播放/暂停, 而双击**也是**播放/暂停 —— 两个手势做同一件事,
+            //   等于单击这个交互完全浪费了。官方 PC 客户端(以及几乎所有播放器)的约定是:
+            //     · 单击画面 = 显示/隐藏控制栏(与"晃动鼠标唤出控制栏"同一个开关);
+            //     · 双击画面 = 播放/暂停(或全屏, 这里按用户要求保持播放/暂停)。
+            //   这样单击与"鼠标移动唤出"语义一致, 也不会误暂停。
+            ToggleControlsByClick();
         };
         _singleClickTimer.Start();
     }
@@ -4836,6 +4903,31 @@ public partial class PlayerWindow : FluentWindow
         }
         _controlsHideTimer.Stop();
         _controlsHideTimer.Start();
+    }
+
+    /// <summary>
+    /// 单击画面 = 切换控制栏显隐(2026-11-04)。
+    ///
+    /// ★ 语义与"鼠标移动唤出控制栏"完全一致(见 OnVideoAreaMouseMove 里的 ShowControls):
+    ///   控制栏藏着 → 这次单击把它唤出来; 已经显示 → 这次单击把它收起来。
+    ///   与"晃动鼠标"并不冲突: 移动鼠标永远只会**唤出**, 只有单击才会收起。
+    /// ★ 收起时顺手停掉自动隐藏倒计时 —— 否则用户手动藏起来后, 180ms 的淡出动画刚结束,
+    ///   倒计时又把它"该隐藏"的状态重新排一遍(虽然结果一样, 但会扰乱后续计时)。
+    /// </summary>
+    private void ToggleControlsByClick()
+    {
+        if (_closing) return;
+        if (_controlsHidden)
+        {
+            ShowControls();
+            // 唤出后按常规规则重新开始自动隐藏倒计时(播放中才会真的藏)
+            if (ShouldHideControls()) StartControlsHideCountdown();
+        }
+        else
+        {
+            _controlsHideTimer?.Stop();
+            HideControls();
+        }
     }
 
     private void HideControls()
