@@ -126,3 +126,48 @@ public static class DynamicActions
         BiliDesk.Helpers.MediaActions.ShowImage(pic.Url, "动态图片");
     }
 }
+
+/// <summary>
+/// 按固定宽高比量高/排布的面板(2026-11-04)。
+///
+/// 为什么需要它: 动态卡的视频封面要"宽度撑满卡片、高度按比例"。
+///   · 用 MultiBinding 把 ActualWidth 喂给 Converter 不行 —— 第一次布局时
+///     ActualWidth 还是 0, 换算出的高度就是 0, 里面所有角标全被裁掉(实测就是这样);
+///   · 用 Viewbox 又会把子元素缩放, 角标跟着变小。
+///
+/// 这个面板在 MeasureOverride 里直接拿 availableSize.Width, 除以比例得到高度,
+/// 一轮布局就定下来, 不依赖任何"先量出来再回填"的反馈环。
+/// ★ 这正是之前那次"封面卡死"教训的正解: 尺寸**只由输入(可用宽度 + 比例)**决定,
+///   不由内容(位图)决定 —— 所以永远不会自旋。
+/// </summary>
+public sealed class AspectPanel : Panel
+{
+    public static readonly DependencyProperty AspectProperty = DependencyProperty.Register(
+        nameof(Aspect), typeof(double), typeof(AspectPanel),
+        new FrameworkPropertyMetadata(16.0 / 9.0,
+            FrameworkPropertyMetadataOptions.AffectsMeasure));
+
+    /// <summary>宽 / 高。16/9 = 横版, 0.5625 = 竖版</summary>
+    public double Aspect
+    {
+        get => (double)GetValue(AspectProperty);
+        set => SetValue(AspectProperty, value);
+    }
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        var width = double.IsFinite(availableSize.Width) ? Math.Max(1, availableSize.Width) : 320;
+        var aspect = double.IsFinite(Aspect) && Aspect > 0.05 ? Aspect : 16.0 / 9.0;
+        var height = width / aspect;
+        var slot = new Size(width, height);
+        foreach (UIElement child in InternalChildren) child.Measure(slot);
+        return slot;
+    }
+
+    protected override Size ArrangeOverride(Size finalSize)
+    {
+        foreach (UIElement child in InternalChildren)
+            child.Arrange(new Rect(0, 0, finalSize.Width, finalSize.Height));
+        return finalSize;
+    }
+}

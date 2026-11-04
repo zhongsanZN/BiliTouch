@@ -2095,6 +2095,58 @@ public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
     /// <summary>视频动态: 可播放对象(非视频动态为 null)</summary>
     public VideoItem? Video { get; set; }
 
+    /// <summary>
+    /// 视频封面的**原始宽高比**(2026-11-04 修"封面被裁切")。
+    ///
+    /// 原来视频附带卡把封面写死 220 高、宽度撑满, 再叠一层 `Stretch=UniformToFill` ——
+    /// 那等于**裁掉两侧**: 16:9 的封面塞进更扁的框里, 左右直接被切。
+    /// 用户截图里 ED 画面的"Presented by Nintendo"被切、竖版的方舟封面被切,
+    /// 都是同一个原因。
+    ///
+    /// 现在改成: 由接口给的 archive 尺寸算出比例, 让框**自己**按比例定高,
+    /// 封面用 Uniform 填满 —— 不裁、不变形。
+    /// 拿不到尺寸时退回 16:9(官方客户端的默认预览比)。
+    /// </summary>
+    public double VideoAspect { get; set; }
+
+    /// <summary>
+    /// 视频动态的类型标(2026-11-04)。
+    /// 来自 `archive.badge.text` / `module_author.pub_action`, 实测取值:
+    ///   "投稿视频" / "投稿了视频" / "直播回放" / "投稿了专栏" ...
+    /// 官方客户端在封面左上角显示这个标, 让人一眼分清是视频还是直播回放。
+    /// 空 = 不显示(图文/纯文字动态本来就没有)。
+    /// </summary>
+    public string PubAction { get; set; } = "";
+
+    /// <summary>封面左上角的类型标(优先用 archive.badge.text, 退到 pub_action)</summary>
+    public bool HasPubAction => PubAction.Length > 0;
+
+    /// <summary>时长的展示串("06:53")。视频动态才有</summary>
+    public string DurationText => Video?.Duration ?? "";
+
+    /// <summary>播放量的展示串("2063" / "4.7万")</summary>
+    public string ViewCountText => Video?.ViewCountText ?? "";
+
+    /// <summary>弹幕数的展示串, 与播放量并排显示在封面左下角</summary>
+    public string DanmakuCountText => Video?.DanmakuCountText ?? "";
+
+    /// <summary>播放 + 弹幕的合并串(官方是"20播放 · 3弹幕"这种一行)</summary>
+    public string StatText
+    {
+        get
+        {
+            var play = ViewCountText;
+            var danmaku = DanmakuCountText;
+            if (play.Length > 0 && danmaku.Length > 0) return play + "播放 · " + danmaku + "弹幕";
+            if (play.Length > 0) return play + "播放";
+            if (danmaku.Length > 0) return danmaku + "弹幕";
+            return "";
+        }
+    }
+
+    /// <summary>有没有时长角标可显示</summary>
+    public bool HasDuration => DurationText.Length > 0;
+
     /// <summary>专栏: 标题 + 封面 + cv 号</summary>
     public string ArticleTitle { get; set; } = "";
     public string ArticleCover { get; set; } = "";
@@ -2180,6 +2232,16 @@ public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
     public string CommentText => CommentCount > 0 ? "评论 " + FormatCount(CommentCount) : "评论";
     public string ForwardText => ForwardCount > 0 ? "转发 " + FormatCount(ForwardCount) : "转发";
 
+    /// <summary>
+    /// 互动行用的**纯数字**(2026-11-04 改为图标 + 数字)。
+    /// 数字为 0 时返回空串 —— 官方手机版也是"没有数字就只显示图标",
+    /// 一排 "0" 只会让界面显得没内容。
+    /// 与 <see cref="LikeText"/> 等"文字版"并存: 别的页面(消息页/详情页)还在用文字版。
+    /// </summary>
+    public string LikeCountText => LikeCount > 0 ? FormatCount(LikeCount) : "";
+    public string CommentCountText => CommentCount > 0 ? FormatCount(CommentCount) : "";
+    public string ForwardCountText => ForwardCount > 0 ? FormatCount(ForwardCount) : "";
+
     private static string FormatCount(long n) => n switch
     {
         >= 100_000_000 => (n / 100_000_000.0).ToString("0.#") + "亿",
@@ -2220,6 +2282,7 @@ public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
         //   卡片上还是列表接口那份旧快照(投票参与人数不更新、话题不上色)。
         Vote = d.Vote; Common = d.Common; RichNodes = d.RichNodes;
         TopicId = d.TopicId; TopicName = d.TopicName; TopicJumpUrl = d.TopicJumpUrl;
+        VideoAspect = d.VideoAspect; PubAction = d.PubAction;
         LikeCount = d.LikeCount; CommentCount = d.CommentCount; ForwardCount = d.ForwardCount;
         IsLiked = d.IsLiked; LikeForbidden = d.LikeForbidden; CommentOid = d.CommentOid; CommentType = d.CommentType;
         NotifyContentChanged();

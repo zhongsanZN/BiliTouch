@@ -1,7 +1,8 @@
-﻿using System.IO;
+using System.IO;
 using System.Reflection;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -62,6 +63,45 @@ internal static class LiveDynamicProbe
             heartbeat.Stop();
             delays.Sort();
             Console.WriteLine($"FEED scroll completed; UI heartbeat p95={delays[(int)(delays.Count*0.95)]:0.0}ms max={delays.Last():0.0}ms (16ms timer; not GPU frame time)");
+            // 截图: 给"动态卡视觉"留证据(封面比例/类型标/统计/图标互动行)
+            list.ScrollIntoView(items.FirstOrDefault(x=>x.Video!=null) ?? items[0]);for(int i=0;i<12;i++)Pump();
+            var feedShot=new RenderTargetBitmap((int)feedPage.ActualWidth,(int)feedPage.ActualHeight,96,96,PixelFormats.Pbgra32);feedShot.Render(feedPage);
+            var feedEnc=new PngBitmapEncoder();feedEnc.Frames.Add(BitmapFrame.Create(feedShot));
+            using(var s=File.Create(Path.Combine(output,"live-feedcard.png")))feedEnc.Save(s);
+            // 单卡近景: 视频卡(看封面比例/类型标/统计/图标)
+            var videoItem=items.FirstOrDefault(x=>x.Video!=null);
+            if(videoItem!=null){
+                // 放进一个限宽的容器里再截图 —— 直接挂 Window.Content 会让卡片按窗口宽铺开,
+                // 而真实列表里它的宽度由 ListBox 决定(约 760-800)。不模拟这层会截出错误的比例。
+                var thicket=new Border {Width=760,Padding=new Thickness(12),Background=(System.Windows.Media.Brush)Application.Current.Resources["AppBackgroundBrush"]};
+                var card=new BiliDesk.Views.Controls.DynamicFeedCard {DataContext=videoItem,HorizontalAlignment=HorizontalAlignment.Stretch};
+                thicket.Child=card;feedWindow.Content=thicket;
+                for(int i=0;i<12;i++)Pump();
+                var cshot=new RenderTargetBitmap((int)Math.Ceiling(thicket.ActualWidth),(int)Math.Ceiling(Math.Max(thicket.ActualHeight,200)),96,96,PixelFormats.Pbgra32);cshot.Render(thicket);
+                var cenc=new PngBitmapEncoder();cenc.Frames.Add(BitmapFrame.Create(cshot));
+                using(var s=File.Create(Path.Combine(output,"live-videocard.png")))cenc.Save(s);
+                Console.WriteLine($"CARD shot: aspect={videoItem.VideoAspect:0.000} action={videoItem.PubAction} dur=[{videoItem.DurationText}] view=[{videoItem.ViewCountText}] dm=[{videoItem.DanmakuCountText}] videoDur=[{videoItem.Video?.Duration}] videoDm={videoItem.Video?.DanmakuCount} videoView={videoItem.Video?.ViewCount}");
+                // 检查角标真实状态: 是不是被布局/可见性吃掉了
+                // ★ 用**几何**验证角标, 不靠看截图: 把每个角标相对卡片的位置与尺寸量出来,
+                //   再判断它是否落在封面区域内、且没有被裁到负坐标。
+                var panel=Descendants<BiliDesk.Views.Controls.AspectPanel>(card).FirstOrDefault();
+                Console.WriteLine($"  AspectPanel: found={panel!=null} size={(panel==null?"-":panel.ActualWidth+"x"+panel.ActualHeight)}");
+                void Geo(string tag, System.Windows.FrameworkElement? el)
+                {
+                    if(el==null){Console.WriteLine($"  [{tag}] 元素不存在");return;}
+                    try
+                    {
+                        var box=el.TransformToAncestor(card).TransformBounds(
+                            new System.Windows.Rect(0,0,el.ActualWidth,el.ActualHeight));
+                        Console.WriteLine($"  [{tag}] vis={el.Visibility} size={el.ActualWidth:0}x{el.ActualHeight:0} " +
+                                          $"at=({box.X:0},{box.Y:0}) insideCard={box.Right<=card.ActualWidth+1 && box.Bottom<=card.ActualHeight+1}");
+                    }
+                    catch(Exception ex){Console.WriteLine($"  [{tag}] 位置取不到: {ex.Message}");}
+                }
+                Geo("duration", Descendants<System.Windows.Controls.TextBlock>(card).FirstOrDefault(t=>t.Text==videoItem.DurationText));
+                Geo("view", Descendants<System.Windows.Controls.TextBlock>(card).FirstOrDefault(t=>t.Text==videoItem.ViewCountText && t.Text.Length>0));
+                Geo("action", Descendants<System.Windows.Controls.TextBlock>(card).FirstOrDefault(t=>t.Text==videoItem.PubAction && t.Text.Length>0));
+            }
             feedWindow.Close();return;
         }
         var source=items.FirstOrDefault(x=>x.HasPictures) ?? items[0];

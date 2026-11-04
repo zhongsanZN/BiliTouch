@@ -46,6 +46,7 @@ internal static class Program
         try
         {
             if(args.Contains("--live-mine")) LiveDynamicProbe.Run(Artifacts,false,true);
+            else if(args.Contains("--cover-fill")) CoverFillProbe.Run(Artifacts);
             else if(args.Contains("--live-text")) DynamicTextProbe.Run(Artifacts);
             else if(args.FirstOrDefault(a=>a.StartsWith("--dump-feed",StringComparison.Ordinal)) is { } dumpFlag)
             {

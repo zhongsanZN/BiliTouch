@@ -77,27 +77,95 @@
                          ★ 曾经写成内层 Border 只给 Height="220" —— 那会让"期望宽度由位图决定",
                            贴上封面后尺寸变、又触发重解码, UI 线程在 Measure 里自旋, 整页卡死。
                            详见 tests/TouchTests/CardHangProbe.cs。 -->
-                    <Border CornerRadius="6" ClipToBounds="True" Margin="0,0,0,8"
-                            Height="220" Background="{DynamicResource PlaceholderBrush}">
-                        <Grid>
-                            <!-- 内层用 Stretch 填满父 Grid, 自身不参与尺寸决定 -->
+                    <!-- 封面: 高度 = 内容宽度 / 视频自己的比例(VideoAspect, 来自 archive.dimension)。
+                         ★★★ 为什么不能用固定 220 高 + 铺满:
+                           卡片内容宽约 720, 16:9 的封面本该高 405; 框只有 220 时,
+                           "铺满"只能按宽度放大再裁掉上下 —— 实测就是只看到画面中间一条。
+                           让框**按封面比例定高**, 才是既不裁也不留边的做法。
+                         ★ 拿不到 dimension 时 VideoAspect 缺省 16:9。
+                         ★ 不要给挂 Cover.Source 的那条 Border 写自己的 Width/Height:
+                           那会让"期望尺寸由位图决定" → 贴图 → 尺寸变 → 重解码 → 自旋 → 整页卡死
+                           (见 CardHangProbe.cs)。高度只能写在外层这个框上。
+                         ★ 那条 Border 必须带 Background(哪怕 Transparent):
+                           空 Border 在 Stretch 布局里 ActualWidth 可能是 0, 而 Cover.LoadAsync
+                           会先等"真实宽度"—— 等不到就永远不贴图(封面一直停在占位底色)。 -->
+                    <!-- 封面: 宽度撑满卡片, 高度 = 宽度 / 视频比例(VideoAspect)。
+                         ★ 用 AspectPanel 而不是 MultiBinding + Converter:
+                           Converter 那条路第一次布局时 ActualWidth 还是 0, 算出高度 0,
+                           里面所有角标都被裁掉(实测: 时长/弹幕数不显示就是这个)。
+                           AspectPanel 在 MeasureOverride 里直接用可用宽度算, 一轮定死。
+                         ★ 更不能给挂 Cover.Source 的 Border 写自己的 Width/Height ——
+                           那会让尺寸由位图决定, 贴图/重解码/再贴图形成自旋, 整页卡死
+                           (见 CardHangProbe.cs)。
+                         ★ 那个 Border 必须带 Background(哪怕 Transparent):
+                           空 Border 在 Stretch 布局里 ActualWidth 可能是 0, 而 Cover.LoadAsync
+                           会先等"真实宽度"—— 等不到就永远不贴图(封面停在占位底色)。 -->
+                    <Border x:Name="CoverFrame" CornerRadius="6" ClipToBounds="True" Margin="0,0,0,8"
+                            HorizontalAlignment="Stretch"
+                            Background="{DynamicResource PlaceholderBrush}">
+                        <controls:AspectPanel Aspect="{Binding VideoAspect}">
                             <Border helpers:Cover.Source="{Binding Video.Cover}"
+                                    helpers:Cover.Fill="True"
+                                    Background="Transparent"
                                     HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
-                            <!-- 时长角标 -->
-                            <Border HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                                    Margin="0,0,6,6" CornerRadius="3" Padding="5,1"
-                                    Background="{DynamicResource DurationBadgeBackgroundBrush}"
-                                    Visibility="{Binding Video.DurationText, Converter={StaticResource StrToVis}}">
-                                <TextBlock Text="{Binding Video.DurationText}" FontSize="10.5" Foreground="White" />
+
+                            <!-- 左上: 类型标(投稿视频 / 合作视频 / 直播回放) -->
+                            <Border HorizontalAlignment="Left" VerticalAlignment="Top"
+                                    Margin="8,8,0,0" CornerRadius="4" Padding="6,2"
+                                    Background="{DynamicResource AccentBrush}"
+                                    Visibility="{Binding HasPubAction, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="{Binding PubAction}" FontSize="10.5" FontWeight="SemiBold"
+                                           Foreground="White" />
                             </Border>
-                        </Grid>
+
+                            <!-- ===== 左下: 播放量 + 弹幕数 =====
+                                 ★ 2026-11-04: 完全沿用首页 VideoCard 的那一套
+                                   (VideoCard.xaml 的 StatsBadge) —— 同一个
+                                   DurationBadgeBackgroundBrush、同样的圆角/内边距/图标/字号、
+                                   同样是"两个独立胶囊 + 拿不到就整块藏起来"。
+                                   为什么不自己拼一句 "6播放 · 3弹幕": 首页已经是这个视觉,
+                                   动态页另造一套会让同一个客户端里出现两种数据样式,
+                                   而且那个"·"分隔在数字很长时会显得很挤。 -->
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                                        Margin="8,0,0,8">
+                                <Border CornerRadius="4" Padding="6,2"
+                                        Background="{DynamicResource DurationBadgeBackgroundBrush}"
+                                        Visibility="{Binding ViewCountText, Converter={StaticResource StrToVis}}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE768;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                                   FontSize="10" Foreground="#F2FFFFFF" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding ViewCountText, Mode=OneWay}" FontSize="11"
+                                                   Foreground="#F2FFFFFF" Margin="3,0,0,0" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Border>
+                                <Border CornerRadius="4" Padding="6,2" Margin="4,0,0,0"
+                                        Background="{DynamicResource DurationBadgeBackgroundBrush}"
+                                        Visibility="{Binding DanmakuCountText, Converter={StaticResource StrToVis}}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE90A;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                                   FontSize="10" Foreground="#F2FFFFFF" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding DanmakuCountText, Mode=OneWay}" FontSize="11"
+                                                   Foreground="#F2FFFFFF" Margin="3,0,0,0" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- 右下: 时长(与首页同款: 同一个背景刷、同样 Padding="6,2"、FontSize=11) -->
+                            <Border HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                    Margin="0,0,8,8" CornerRadius="4" Padding="6,2"
+                                    Background="{DynamicResource DurationBadgeBackgroundBrush}"
+                                    Visibility="{Binding DurationText, Converter={StaticResource StrToVis}}">
+                                <TextBlock Text="{Binding DurationText}" Foreground="White" FontSize="11" />
+                            </Border>
+                        </controls:AspectPanel>
                     </Border>
                     <StackPanel Margin="2,0,2,0">
                         <TextBlock Text="{Binding Video.Title}" FontSize="13.5" FontWeight="SemiBold"
                                    TextWrapping="Wrap" MaxHeight="42" TextTrimming="CharacterEllipsis"
                                    Foreground="{DynamicResource TextPrimaryBrush}" />
-                        <TextBlock Text="{Binding Video.ViewCountText}" FontSize="11" Margin="0,6,0,0"
-                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                        <!-- 播放数已并入封面左下角的 StatText(官方版式),
+                             不再在标题下面单独飘一行数字 -->
                     </StackPanel>
                 </StackPanel>
             </Border>
@@ -342,6 +410,7 @@
     <Border Background="{DynamicResource CardBackgroundBrush}"
             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
             CornerRadius="10" Padding="14,12" Margin="8,6"
+            HorizontalAlignment="Stretch"
             Cursor="Hand" MouseLeftButtonUp="OnCardClick">
         <Border.ContextMenu>
             <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
@@ -434,12 +503,44 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
 
-            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                <Button Content="{Binding ForwardText}" Click="OnRepostClick" ToolTip="查看动态与转发"
-                        Style="{StaticResource SubtleButtonStyle}" Padding="12,6" Margin="0,0,12,0" />
-                <Button Content="{Binding CommentText}" Click="OnCommentClick" ToolTip="查看全部评论"
-                        Style="{StaticResource SubtleButtonStyle}" Padding="12,6" Margin="0,0,12,0" />
-                <Button Content="{Binding LikeText}" Click="OnLikeClick" IsEnabled="{Binding CanLike}" Padding="12,6" Margin="0,0,12,0">
+            <!-- ===== 互动行(2026-11-04 改为图标 + 数字) =====
+                 照官方手机版: [转发图标 N] [评论图标 N] [点赞图标 N] 三等分,
+                 数字贴图标右侧; 点赞过整组变强调色; 复制链接靠右固定宽。
+                 ★ 为什么最后一列用固定 44 而不是 Auto: 前三列是 *, Auto 会让它们
+                   平分"剩余"空间而最后一列贴边, 视觉上三个图标位置不匀。
+                 ★ 数字为 0 时返回空串 —— 一排 "0" 只会显得没内容(见 XXXCountText)。 -->
+            <Grid Margin="0,10,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="44" />
+                </Grid.ColumnDefinitions>
+
+                <Button Grid.Column="0" Click="OnRepostClick" ToolTip="转发这条动态"
+                        Style="{StaticResource SubtleButtonStyle}" Padding="0,7"
+                        HorizontalContentAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE72A;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                   FontSize="15" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding ForwardCountText}" FontSize="12.5" Margin="6,0,0,0"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="1" Click="OnCommentClick" ToolTip="查看全部评论"
+                        Style="{StaticResource SubtleButtonStyle}" Padding="0,7"
+                        HorizontalContentAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE8F2;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                   FontSize="15" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding CommentCountText}" FontSize="12.5" Margin="6,0,0,0"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="2" Click="OnLikeClick" IsEnabled="{Binding CanLike}" ToolTip="点赞"
+                        Padding="0,7" HorizontalContentAlignment="Center">
                     <Button.Style>
                         <Style TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
                             <Style.Triggers>
@@ -449,9 +550,20 @@
                             </Style.Triggers>
                         </Style>
                     </Button.Style>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE8E1;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                   FontSize="15" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding LikeCountText}" FontSize="12.5" Margin="6,0,0,0"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
                 </Button>
-                <Button Content="复制链接" Click="OnCopyLink" Style="{StaticResource SubtleButtonStyle}" Padding="12,6" />
-            </StackPanel>
+
+                <Button Grid.Column="3" Click="OnCopyLink" ToolTip="复制动态链接"
+                        Style="{StaticResource SubtleButtonStyle}" Padding="0,7">
+                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                               FontSize="13" />
+                </Button>
+            </Grid>
         </StackPanel>
     </Border>
 </UserControl>

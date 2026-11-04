@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="BiliDesk.Views.Pages.DynamicDetailPage"
+<UserControl x:Class="BiliDesk.Views.Pages.DynamicDetailPage"
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:controls="clr-namespace:BiliDesk.Views.Controls" xmlns:helpers="clr-namespace:BiliDesk.Helpers"
@@ -18,7 +18,12 @@
   </DataTemplate>
  </UserControl.Resources>
  <Grid Margin="16,8">
-  <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <!-- 2026-11-04 修"动态详情页底部内容被裁切":
+       原来是 [* / Auto], 底部评论输入区在 Auto 行。窗口一矮, Auto 行**不能被压缩**,
+       整页就超出窗口, 输入框被裁掉一截(用户截图: "发表评论"框只剩半截)。
+       现在: 上面给 MinHeight 保住可读区域, 底部给 MaxHeight 让输入框自己滚;
+       两行都受限, 窗口再矮也不会把任何一块挤到窗口外。 -->
+  <Grid.RowDefinitions><RowDefinition Height="*" MinHeight="160"/><RowDefinition Height="Auto" MaxHeight="200"/></Grid.RowDefinitions>
   <Grid>
    <Grid.ColumnDefinitions><ColumnDefinition Width="3*" MinWidth="280"/><ColumnDefinition Width="2*" MinWidth="300"/></Grid.ColumnDefinitions>
    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,0,12,0">
@@ -27,6 +32,68 @@
      <TextBlock Text="{Binding DetailError}" Visibility="{Binding DetailError, Converter={StaticResource StrToVis}}" TextWrapping="Wrap" Margin="12,6" Foreground="{DynamicResource DangerTextBrush}" />
      <controls:LoadingRing Width="18" Height="18" Visibility="{Binding DetailLoading, Converter={StaticResource BoolToVis}}" />
      <Button Content="重新加载完整内容" Visibility="{Binding DetailError, Converter={StaticResource StrToVis}}" HorizontalAlignment="Left" Margin="12,6" Click="OnReloadDetail" Style="{StaticResource SubtleButtonStyle}" />
+
+     <!-- ===== 评论图片的内联查看区(2026-11-04) =====
+          用户反馈两点, 合起来就是这一块:
+            ① 点开评论图片是"生硬地弹出窗口", 不是原生查看;
+            ② 动态详情页左下角空空的, 那块正好适合放要看的图片。
+          所以: 点评论里的图片 → **不弹窗**, 就在这儿原地显示大图。
+          行为照官方: 双击 1:1 / 适应切换, 支持上一张下一张、点开原图、保存。
+          ★ 只在真的点过图片后才占高度(Visibility=Collapsed 时不占位),
+            不会把正常浏览时的版面顶下去。 -->
+     <Border x:Name="InlineImageHost" Margin="12,12,12,0" CornerRadius="10"
+             Background="{DynamicResource CardBackgroundBrush}"
+             BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+             Visibility="Collapsed">
+      <StackPanel>
+       <!-- 标题行: 谁发的 + 第几张/共几张 + 关闭 -->
+       <Grid Margin="12,10,10,6">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+         <TextBlock Text="&#xE8B9;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                    FontSize="13" VerticalAlignment="Center"
+                    Foreground="{DynamicResource AccentTextBrush}" />
+         <TextBlock x:Name="InlineImageTitle" Text="评论图片" FontSize="13" FontWeight="SemiBold"
+                    Margin="8,0,0,0" VerticalAlignment="Center"
+                    Foreground="{DynamicResource TextPrimaryBrush}"
+                    TextTrimming="CharacterEllipsis" MaxWidth="380" />
+         <TextBlock x:Name="InlineImageIndex" Text="" FontSize="12" Margin="10,0,0,0"
+                    VerticalAlignment="Center"
+                    Foreground="{DynamicResource TextTertiaryBrush}" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+         <Button x:Name="InlineImagePrev" Content="&#xE76B;" Click="OnInlineImagePrev"
+                 Style="{StaticResource IconButtonStyle}" ToolTip="上一张" />
+         <Button x:Name="InlineImageNext" Content="&#xE76C;" Click="OnInlineImageNext"
+                 Style="{StaticResource IconButtonStyle}" Margin="4,0,0,0" ToolTip="下一张" />
+         <Button Content="&#xE8B9;" Click="OnInlineImageOpen" Margin="4,0,0,0"
+                 Style="{StaticResource IconButtonStyle}" ToolTip="用图片查看器打开(可缩放/保存)" />
+         <Button Content="&#xE711;" Click="OnInlineImageClose" Margin="4,0,0,0"
+                 Style="{StaticResource IconButtonStyle}" ToolTip="关闭(Esc)" />
+        </StackPanel>
+       </Grid>
+       <!-- 图片本体: 高度随窗口, 宽度按比例, 不裁 -->
+       <Border x:Name="InlineImageFrame" Margin="12,0,12,10" CornerRadius="8"
+               ClipToBounds="True" Height="320"
+               Background="{DynamicResource PlaceholderBrush}">
+        <Grid>
+         <Border x:Name="InlineImageSurface"
+                 helpers:Cover.Fill="True"
+                 HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+         <controls:LoadingRing x:Name="InlineImageLoading" Width="24" Height="24"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Visibility="Collapsed" />
+         <TextBlock x:Name="InlineImageError" Text="" FontSize="12" TextWrapping="Wrap"
+                    Margin="16" TextAlignment="Center"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Foreground="{DynamicResource TextTertiaryBrush}"
+                    Visibility="Collapsed" />
+        </Grid>
+       </Border>
+       <TextBlock Text="点「用图片查看器打开」可缩放/保存 · Esc 关闭"
+                  FontSize="11" Margin="12,0,12,10"
+                  Foreground="{DynamicResource TextTertiaryBrush}" />
+      </StackPanel>
+     </Border>
     </StackPanel>
    </ScrollViewer>
    <DockPanel Grid.Column="1" LastChildFill="True">
@@ -73,12 +140,13 @@
     </ListBox>
    </DockPanel>
   </Grid>
-  <Border Grid.Row="1" Margin="8,12,8,0" Padding="12" CornerRadius="8" Background="{DynamicResource CardBackgroundBrush}">
+  <Border Grid.Row="1" Margin="8,10,8,4" Padding="12,10" CornerRadius="8" VerticalAlignment="Bottom"
+          Background="{DynamicResource CardBackgroundBrush}">
    <Grid>
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <StackPanel>
      <StackPanel Orientation="Horizontal"><TextBlock Text="{Binding ComposerTitle}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center"/><Button Content="取消" Click="OnCancelReply" Visibility="{Binding HasReplyTarget, Converter={StaticResource BoolToVis}}" Style="{StaticResource SubtleButtonStyle}" Margin="8,0"/></StackPanel>
-     <TextBox x:Name="Composer" Style="{StaticResource FluentTextBoxStyle}" Text="{Binding Draft, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="60" MaxHeight="120" MaxLength="1000" VerticalScrollBarVisibility="Auto" IsEnabled="{Binding CanEdit}" PreviewKeyDown="OnComposerKey" Margin="0,6,12,0" />
+     <TextBox x:Name="Composer" Style="{StaticResource FluentTextBoxStyle}" Text="{Binding Draft, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="52" MaxHeight="96" MaxLength="1000" VerticalScrollBarVisibility="Auto" IsEnabled="{Binding CanEdit}" PreviewKeyDown="OnComposerKey" Margin="0,6,12,0" />
     </StackPanel>
     <Button Grid.Column="1" Content="发送" Click="OnSend" IsEnabled="{Binding CanSend}" Style="{StaticResource AccentButtonStyle}" VerticalAlignment="Bottom" Padding="20,8" ToolTip="Ctrl+Enter 发送" />
    </Grid>

@@ -401,6 +401,24 @@ public static class Cover
     public static string? GetSource(DependencyObject d) => (string?)d.GetValue(SourceProperty);
     public static void SetSource(DependencyObject d, string? value) => d.SetValue(SourceProperty, value);
 
+    /// <summary>
+    /// 封面**不裁剪**(2026-11-04)。
+    ///
+    /// false(默认)= UniformToFill: 填满容器, 超出部分裁掉 —— 首页卡片墙/番剧海报要的就是这个
+    ///   (墙是按封面比例算高度的, 铺满才好看)。
+    /// true = Uniform: 完整显示整张图, 比例不符时留底色 —— 动态卡的视频封面要这个,
+    ///   因为动态卡的高度是按**那条视频自己的比例**算的, 一旦算错或拿不到尺寸,
+    ///   UniformToFill 会直接裁掉画面两侧(用户截图里 ED 的 "Presented by Nintendo" 被切)。
+    ///
+    /// ★ 为什么做成附加属性而不是改默认值: 见 ApplyDecoded 里那段说明 —— 改默认值会把
+    ///   番剧海报(3:4 塞进 16:9 框)变成上下大片留白, 那是退步。
+    /// </summary>
+    public static readonly DependencyProperty FillProperty = DependencyProperty.RegisterAttached(
+        "Fill", typeof(bool), typeof(Cover), new PropertyMetadata(false));
+
+    public static bool GetFill(DependencyObject d) => (bool)d.GetValue(FillProperty);
+    public static void SetFill(DependencyObject d, bool value) => d.SetValue(FillProperty, value);
+
     /// <summary>最近一次实际解码出的像素宽(应用成功后记录), 供"变宽了就重解码"判断。</summary>
     private static readonly DependencyProperty DecodedPixelWidthProperty =
         DependencyProperty.RegisterAttached("DecodedPixelWidth", typeof(int), typeof(Cover),
@@ -560,7 +578,10 @@ public static class Cover
 
             var brush = new ImageBrush(img)
             {
-                Stretch = Stretch.UniformToFill,
+                // ★ 2026-11-04: 允许元素声明"不裁剪"(Fill=true → Uniform)。
+                //   默认仍是 UniformToFill —— 首页卡片墙/番剧海报一直靠它铺满,
+                //   改默认值会让 3:4 的海报塞进 16:9 的框里变成上下大片留白。
+                Stretch = GetFill(border) ? Stretch.Uniform : Stretch.UniformToFill,
                 AlignmentX = AlignmentX.Center,
                 AlignmentY = AlignmentY.Center
             };

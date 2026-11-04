@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using BiliDesk.Models;
 
 namespace BiliDesk.ViewModels;
@@ -12,6 +12,9 @@ public sealed class DynamicDetailViewModel : ObservableObject
     private string _error="", _draft="", _status="", _detailError="";
     private bool _detailLoading;
     public string DetailError {get=>_detailError;private set=>SetProperty(ref _detailError,value);}
+    /// <summary>内联图片查看区当前显示的图片地址(2026-11-04, 绑到 DetailPage 的封面)</summary>
+    private string _inlineImageUrl="";
+    public string InlineImageUrl {get=>_inlineImageUrl;set=>SetProperty(ref _inlineImageUrl,value);}
     public bool DetailLoading {get=>_detailLoading;private set=>SetProperty(ref _detailLoading,value);}
     private CommentItem? _reply;
     public bool Loading { get=>_loading; private set {SetProperty(ref _loading,value);OnPropertyChanged(nameof(CanLoadMore));} }

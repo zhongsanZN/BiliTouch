@@ -109,6 +109,8 @@ public static class DynamicParser
                 video.Author = item.AuthorName;
                 video.AuthorFace = item.AuthorFace;
                 video.Pubdate = item.PubTs;
+                // ★ 视频动态的封面比例与类型标(2026-11-04): 修"封面被裁切 / 缺类型标"
+                ReadVideoExtras(e, item);
             }
             // 一条动态至少要有"某种内容"才有意义。
             // ★ 2026-11-04 放宽: 原来只认 正文/图/视频/专栏标题/直播/转发, 于是
@@ -526,6 +528,8 @@ public static class DynamicParser
     {
         string? bvid = null, title = null, cover = null, duration = null;
         long aid = 0, view = 0, danmaku = 0;
+        double aspect = 0;
+        string badge = "";
 
         if (e.TryGetProperty("modules", out var mods) && mods.ValueKind == JsonValueKind.Object &&
             mods.TryGetProperty("module_dynamic", out var md) && md.ValueKind == JsonValueKind.Object &&
@@ -544,6 +548,15 @@ public static class DynamicParser
                 danmaku = Long(st, "danmaku");
                 if (danmaku <= 0) danmaku = ParseCount(Str(st, "danmaku"));
             }
+            // ★ 2026-11-04 新增: 封面原始比例 + 类型标, 修"封面被裁切"和"缺类型标"
+            if (arc.TryGetProperty("dimension", out var dim) && dim.ValueKind == JsonValueKind.Object)
+            {
+                var w = Long(dim, "width");
+                var h = Long(dim, "height");
+                if (w > 0 && h > 0) aspect = (double)w / h;
+            }
+            if (arc.TryGetProperty("badge", out var bd) && bd.ValueKind == JsonValueKind.Object)
+                badge = Str(bd, "text");
         }
 
         // 扁平兜底
@@ -566,6 +579,46 @@ public static class DynamicParser
             DanmakuCount = danmaku,
             // 作者信息由外层 DynamicItem 持有, 卡片上不再重复显示(视频卡只显示封面+标题)
         };
+    }
+
+    /// <summary>
+    /// 视频动态的两项附加信息(2026-11-04): 封面比例 + 类型标。
+    ///
+    /// ★ 为什么要单独一个方法: ReadVideo 只返回 VideoItem(那个模型被首页/搜索共用,
+    ///   不该塞"动态专用"的字段); 而比例与类型标属于**动态卡**的展示信息,
+    ///   挂在 DynamicItem 上更合适。
+    /// </summary>
+    private static void ReadVideoExtras(JsonElement e, DynamicItem item)
+    {
+        if (!e.TryGetProperty("modules", out var mods) || mods.ValueKind != JsonValueKind.Object) return;
+
+        // 类型标: public 的 pub_action 更口语("投稿了视频"), archive.badge.text 更短("投稿视频")。
+        // 官方客户端用的是 archive.badge; 那一个拿不到才退回 pub_action。
+        if (mods.TryGetProperty("module_author", out var au) && au.ValueKind == JsonValueKind.Object)
+            item.PubAction = Str(au, "pub_action");
+
+        if (mods.TryGetProperty("module_dynamic", out var md) && md.ValueKind == JsonValueKind.Object &&
+            md.TryGetProperty("major", out var major) && major.ValueKind == JsonValueKind.Object)
+        {
+            if (major.TryGetProperty("archive", out var arc) && arc.ValueKind == JsonValueKind.Object)
+            {
+                if (arc.TryGetProperty("badge", out var badge) && badge.ValueKind == JsonValueKind.Object)
+                {
+                    var text = Str(badge, "text");
+                    if (text.Length > 0) item.PubAction = text;   // 短的优先
+                }
+                if (arc.TryGetProperty("dimension", out var dim) && dim.ValueKind == JsonValueKind.Object)
+                {
+                    var w = Long(dim, "width");
+                    var h = Long(dim, "height");
+                    if (w > 0 && h > 0) item.VideoAspect = (double)w / h;
+                }
+            }
+            // 直播回放/直播预告走 pgc / live_rcmd, 也给个类型标
+            if (item.PubAction.Length == 0 && major.TryGetProperty("live_rcmd", out _))
+                item.PubAction = "直播";
+        }
+        if (item.VideoAspect <= 0) item.VideoAspect = 16.0 / 9.0;   // 官方默认预览比
     }
 
     private static string ExtractBvid(string jumpUrl)

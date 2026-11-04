@@ -182,7 +182,48 @@ internal static class DynamicTests
         // 这三块此前完全没解析 —— 投票动态只剩一句正文、活动卡只剩标题、
         // 话题与 @ 是死字。下面每条都钉住"真实接口形状 → 模型字段"的映射。
 
-        // ---- 正文: 只在 major.opus.summary 里的情况(2026-11-04 用户报"有些文字不显示") ----
+        // ---- 视频卡的三类角标必须**真的落在卡片内**(2026-11-04) ----
+        // 起因: 我一开始靠"看截图"判断角标有没有显示, 而模型读图能力有限, 连续误判两次
+        // (一次说封面被裁、一次说时长没显示, 实际都是好的)。
+        // 改成量几何: 元素可见 + 尺寸>0 + 包围盒落在卡片内。这才是可断言的判据。
+        var geoItem = new DynamicItem
+        {
+            Id = "geo", Kind = DynamicKind.Video, AuthorName = "几何 UP", PubAction = "投稿视频",
+            VideoAspect = 16.0 / 9.0,
+            Video = new VideoItem
+            {
+                Bvid = "BV1geotest01", Title = "几何验证用视频", Cover = "",
+                Duration = "13:13", ViewCount = 2063, DanmakuCount = 22,
+            },
+        };
+        var geoCard = new DynamicFeedCard { DataContext = geoItem };
+        window.Content = geoCard; Pump();
+        geoCard.Measure(new Size(760, double.PositiveInfinity));
+        geoCard.Arrange(new Rect(new Point(), geoCard.DesiredSize)); geoCard.UpdateLayout();
+
+        var aspectPanel = Descendants<BiliDesk.Views.Controls.AspectPanel>(geoCard).FirstOrDefault();
+        check(aspectPanel != null, "video card uses AspectPanel for the cover");
+        check(aspectPanel!.ActualHeight > 100 && Math.Abs(aspectPanel.ActualWidth / aspectPanel.ActualHeight - 16.0/9.0) < 0.05,
+            $"cover keeps 16:9 (actual {aspectPanel.ActualWidth:0}x{aspectPanel.ActualHeight:0})");
+
+        bool InsideCard(FrameworkElement? el, out string detail)
+        {
+            if (el == null) { detail = "missing"; return false; }
+            if (el.Visibility != Visibility.Visible || el.ActualWidth <= 0) { detail = "hidden/zero"; return false; }
+            var box = el.TransformToAncestor(geoCard).TransformBounds(
+                new Rect(0, 0, el.ActualWidth, el.ActualHeight));
+            var inside = box.X >= -1 && box.Y >= -1 &&
+                         box.Right <= geoCard.ActualWidth + 1 && box.Bottom <= geoCard.ActualHeight + 1;
+            detail = $"({box.X:0},{box.Y:0}) {el.ActualWidth:0}x{el.ActualHeight:0}";
+            return inside;
+        }
+        var durEl = Descendants<TextBlock>(geoCard).FirstOrDefault(t => t.Text == "13:13");
+        check(InsideCard(durEl, out var durDetail), $"duration badge sits inside the card {durDetail}");
+        var viewEl = Descendants<TextBlock>(geoCard).FirstOrDefault(t => t.Text == geoItem.ViewCountText);
+        check(InsideCard(viewEl, out var viewDetail), $"view count badge sits inside the card {viewDetail}");
+        var actionEl = Descendants<TextBlock>(geoCard).FirstOrDefault(t => t.Text == "投稿视频");
+        check(InsideCard(actionEl, out var actionDetail), $"pub-action badge sits inside the card {actionDetail}");
+
         var summaryOnly = Parse(OpusSummaryOnly);
         check(summaryOnly.Text.Length > 20, $"body read from opus.summary ({summaryOnly.Text.Length} chars)");
         check(summaryOnly.Text.StartsWith("主要是汇总了更新内容"), "opus summary keeps the real text");
