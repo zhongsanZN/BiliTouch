@@ -1957,6 +1957,25 @@ public class DynamicItem
         _ => n.ToString(),
     };
 
+    /// <summary>
+    /// 这条动态下的**热门评论**(2026-11-04)。
+    ///
+    /// B 站 PC 客户端的动态流里, 一条动态下面会直接挂 1~2 条"热评"预览,
+    /// 不用点进去就能看到别人怎么说 —— 这是"动态"区别于"视频列表"的关键体验之一。
+    /// 空 = 还没拉/没有评论。
+    /// </summary>
+    public System.Collections.Generic.List<DynamicComment> TopComments { get; set; } = new();
+
+    public bool HasComments => TopComments.Count > 0;
+
+    /// <summary>评论拉回来之后通知界面(DynamicItem 不是 INPC, 用一次性事件最省)。</summary>
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+    public void HasCommentsChanged() =>
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(HasComments)));
+
+    /// <summary>动态类型标识(接口原文的数字), 评论接口要用它区分 12/17(图文) 与 1(转发)</summary>
+    public int RawType { get; set; }
+
     /// <summary>卡片顶部的"作者 · 时间"那一行的第二部分</summary>
     public string AuthorTimeText =>
         string.IsNullOrEmpty(PubTimeText) ? AuthorName : AuthorName + " · " + PubTimeText;
@@ -2000,4 +2019,22 @@ public class AudioTrack
     public string DisplayLabel => Bandwidth > 0
         ? $"{Label} ({Bandwidth / 1000} kbps)"
         : Label;
+}
+
+/// <summary>
+/// 动态下的一条评论预览(2026-11-04)。
+/// 只保留卡片上要显示的三样: 谁说的、说了什么、几个赞。
+/// </summary>
+public class DynamicComment
+{
+    public long UserMid { get; set; }
+    public string UserName { get; set; } = "";
+    public string UserFace { get; set; } = "";
+    public string Text { get; set; } = "";
+    public long LikeCount { get; set; }
+    public bool IsUp { get; set; }
+
+    public string LikeText => LikeCount > 0
+        ? (LikeCount >= 10_000 ? (LikeCount / 10_000.0).ToString("0.#") + "万" : LikeCount.ToString())
+        : "";
 }

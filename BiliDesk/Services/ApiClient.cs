@@ -1309,6 +1309,80 @@ public class ApiClient
     }
 
     /// <summary>
+    /// 拉一条动态下的热门评论(2026-11-04)。
+    ///
+    /// B 站 PC 客户端的动态卡下面直接挂 1~2 条热评, 不用点进去就能看到别人怎么说 ——
+    /// 这是"动态流"和"视频列表"观感差异的关键。这里只取前几条, 且**失败一律静默**
+    /// (评论是锦上添花, 拉不到不该让整条动态报错)。
+    ///
+    /// 接口: `/x/v2/reply?type=&oid=&sort=2`(sort=2 按热度), type 由动态原始类型决定:
+    ///   1(转发)/ 11(视频) → 11;  2(图文)/ 4(文字)/ 17 → 17;  其它默认 11。
+    /// ★ oid 用 `dynamic_id`(不是 id_str 的字符串形式), 接口要的是数字。
+    /// </summary>
+    public async Task<List<Models.DynamicComment>?> GetDynamicCommentsAsync(string dynamicId, int rawType, int count = 2)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(dynamicId)) return null;
+            await EnsureBuvidAsync();
+
+            // 动态类型 → 评论接口的 type
+            var replyType = rawType switch
+            {
+                2 or 4 or 17 => 17,   // 图文/纯文字/相簿
+                _ => 11,              // 转发/视频/其它
+            };
+
+            var (code, _, data) = await GetJsonAsync(
+                "https://api.bilibili.com/x/v2/reply",
+                new Dictionary<string, string>
+                {
+                    ["type"] = replyType.ToString(),
+                    ["oid"] = dynamicId,
+                    ["sort"] = "2",            // 2 = 按热度
+                    ["ps"] = count.ToString(),
+                    ["pn"] = "1",
+                },
+                sign: false,
+                referer: "https://t.bilibili.com/");
+
+            if (code != 0 || data == null) return null;
+            if (!data.Value.TryGetProperty("replies", out var list) || list.ValueKind != JsonValueKind.Array)
+                return new List<Models.DynamicComment>();   // 没评论 ≠ 失败
+
+            var result = new List<Models.DynamicComment>();
+            foreach (var r in list.EnumerateArray())
+            {
+                if (result.Count >= count) break;
+                var text = "";
+                if (r.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.Object)
+                {
+                    text = c.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String
+                        ? m.GetString() ?? "" : "";
+                }
+                if (text.Length == 0) continue;
+
+                var user = r.TryGetProperty("member", out var mb) && mb.ValueKind == JsonValueKind.Object
+                    ? mb : default;
+                result.Add(new Models.DynamicComment
+                {
+                    UserName = user.ValueKind == JsonValueKind.Object ? GetStr(user, "uname") : "",
+                    UserFace = user.ValueKind == JsonValueKind.Object
+                        ? UrlUtil.Normalize(GetStr(user, "avatar")) : "",
+                    UserMid = user.ValueKind == JsonValueKind.Object ? GetLongLoose(user, "mid") : 0,
+                    Text = text,
+                    LikeCount = r.TryGetProperty("like", out var lk) ? GetLong(lk, "count") : 0,
+                });
+            }
+            return result;
+        }
+        catch
+        {
+            return null;   // 评论失败不打扰用户
+        }
+    }
+
+    /// <summary>
     /// 动态混合流(2026-11-04): 返回**全部类型**的动态, 不再只挑视频。
     ///
     /// 这是"动态页内容不全"的根治点: 原实现走 ParseDynamicVideo, 图文/纯文字/专栏/转发

@@ -435,7 +435,7 @@
                                  ★ 2026-11-04: 这两个列表现在只在**单 UP 视图**下显示
                                    (全部动态走上面的混合流)。 -->
                             <ItemsControl ItemsSource="{Binding FeedItems}" Margin="4,0,8,0"
-                                          Visibility="{Binding UseCardWall, Converter={StaticResource InvBoolToVis}}">
+                                          Visibility="{Binding ShowUpFeed, Converter={StaticResource BoolToVis}}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <controls:DynamicCard />
@@ -445,7 +445,7 @@
 
                             <!-- 卡片墙(切换档): 复用 VideoCard(点击播放/右键操作/全局屏蔽同首页) -->
                             <ItemsControl ItemsSource="{Binding FeedItems}" Margin="4,0,0,0"
-                                          Visibility="{Binding UseCardWall, Converter={StaticResource BoolToVis}}">
+                                          Visibility="{Binding ShowUpFeedCardWall, Converter={StaticResource BoolToVis}}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
                                         <helpers:CardWallPanel helpers:CardWall.Enable="True" />

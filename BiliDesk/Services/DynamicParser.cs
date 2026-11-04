@@ -32,6 +32,7 @@ public static class DynamicParser
             {
                 Id = Str(e, "id_str"),
                 Kind = KindOf(e),
+                RawType = RawTypeOf(e),   // 评论接口要用它决定 type 参数
             };
             if (item.Id.Length == 0) item.Id = Str(e, "id");
 
@@ -101,6 +102,16 @@ public static class DynamicParser
     }
 
     // ------------------------------------------------------------ 类型
+
+    /// <summary>接口原文的动态类型数字(评论接口按它分 type)。</summary>
+    private static int RawTypeOf(JsonElement e)
+    {
+        var t = Str(e, "type");
+        if (int.TryParse(t, out var n)) return n;
+        if (e.TryGetProperty("type", out var tv) && tv.ValueKind == JsonValueKind.Number)
+            return tv.GetInt32();
+        return 0;
+    }
 
     private static DynamicKind KindOf(JsonElement e)
     {

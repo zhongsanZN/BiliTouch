@@ -80,6 +80,16 @@ public static class SmoothScroll
         };
     }
 
+    /// <summary>
+    /// 触控板每 1 单位 delta 滚多少像素。
+    /// 实测 Windows 精确触控板两指滑动的 delta 在 15~120 之间密集派发, 取 1.2 时
+    /// "手指滑过触控板一半"约等于滚半屏 —— 与 Chrome/Edge 的手感接近。
+    /// </summary>
+    private const double TouchpadPixelPerDelta = 1.2;
+
+    /// <summary>触控板滚动动画时长(比鼠标滚轮的 280ms 短得多, 否则高频事件会把动画堆起来)。</summary>
+    private const int TouchpadDurationMs = 60;
+
     /// <summary>Finger input takes over immediately from a running wheel animation.</summary>
     public static void Stop(ScrollViewer viewer)
     {
@@ -101,9 +111,29 @@ public static class SmoothScroll
         var ms = GetDurationMs(sv);
         if (ms <= 0) ms = DefaultDurationMs;
 
-        var notches = e.Delta / 120.0;
+        // ★★★ 2026-11-04 触控板支持(用户: "触控板又不做, 单线程思维"):
+        //   精确触控板(precision touchpad)的滚动**不走触摸**, 而是高频小 delta 的滚轮事件
+        //   (常见 15/30/60, 一秒几十到几百个)。原来一律按 `notches * 180px` 算,
+        //   于是一秒能滚出去几千像素 —— 这就是"触控板灵敏度过高"的根因。
+        //   `ScrollViewer.PanningRatio` 只影响**手指平移**, 对滚轮路径完全无效。
+        //
+        //   处理: 小 delta(<120)视为触控板, 按**像素**直通(1 delta ≈ 1.2px),
+        //   符合"手指移多少内容走多少"的直觉; 鼠标滚轮整格(±120 的整数倍)保持原手感。
         var from = sv.VerticalOffset;
-        var target = Math.Clamp(from - notches * step, 0, sv.ScrollableHeight);
+        double target;
+        if (Math.Abs(e.Delta) < 120)
+        {
+            // 触控板: delta 直接当像素用, 不再乘 step(180)
+            var px = e.Delta * TouchpadPixelPerDelta;
+            target = Math.Clamp(from - px, 0, sv.ScrollableHeight);
+            // 触控板事件密集, 用短动画(60ms)避免动画堆积造成的"甩出去"
+            ms = TouchpadDurationMs;
+        }
+        else
+        {
+            var notches = e.Delta / 120.0;
+            target = Math.Clamp(from - notches * step, 0, sv.ScrollableHeight);
+        }
         if (Math.Abs(target - from) < 0.5) return;
 
         sv.BeginAnimation(ProxyOffsetProperty, null);

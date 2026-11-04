@@ -179,7 +179,37 @@ public static class TouchSupport
             new EventHandler<TouchEventArgs>(OnSliderUp));
         EventManager.RegisterClassHandler(typeof(Slider), UIElement.LostTouchCaptureEvent,
             new EventHandler<TouchEventArgs>(OnSliderLostCapture));
+        // ★★★ 2026-11-04 触控板(precision touchpad)滚动:
+        //   精确触控板的两指滚动是**高频小 delta 的滚轮事件**, 不走触摸 —— 所以
+        //   PanningMode / PanningRatio 对它一律无效, 这就是"触控板从来没人管"的真相。
+        //   WPF 默认每个小 delta 按"一行"滚, 密集派发时会飞出去。
+        //   这里统一接管: 小 delta 按像素滚(≈1.2px/单位), 整格(±120)仍交给原生/平滑滚动。
+        EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.PreviewMouseWheelEvent,
+            new MouseWheelEventHandler(OnTouchpadWheel), true);
     }
+
+    /// <summary>
+    /// 触控板滚动。只接管"小 delta"(<120) —— 那是精密触控板/高精度滚轮的特征;
+    /// 整格滚轮(±120 的整数倍)原样放行, 保持鼠标滚轮与 SmoothScroll 的既有手感。
+    ///
+    /// ★ 为什么用 PreviewMouseWheel + handledEventsToo: SmoothScroll 也在 Preview 上挂了处理器,
+    ///   两个都要能看到事件。这里只在判定为触控板时才 Handled, 否则让它继续走自己的路。
+    /// ★ 已被内层处理过(e.Handled)的事件不再碰: 嵌套列表时应该是最内层负责滚动。
+    /// </summary>
+    private static void OnTouchpadWheel(object? sender, MouseWheelEventArgs e)
+    {
+        if (sender is not ScrollViewer viewer || e.Handled) return;
+        if (e.Delta == 0 || Math.Abs(e.Delta) >= 120) return;   // 整格 = 鼠标滚轮, 不接管
+        if (viewer.ScrollableHeight <= 0) return;
+
+        var target = Math.Clamp(viewer.VerticalOffset - e.Delta * TouchpadPixelPerDelta,
+            0, viewer.ScrollableHeight);
+        viewer.ScrollToVerticalOffset(target);
+        e.Handled = true;
+    }
+
+    /// <summary>触控板每 1 单位 delta 对应多少像素(1.2 ≈ 手指滑一半滚半屏, 接近 Chrome 手感)</summary>
+    private const double TouchpadPixelPerDelta = 1.2;
 
     private static void ConfigureScrollViewer(ScrollViewer viewer)
     {

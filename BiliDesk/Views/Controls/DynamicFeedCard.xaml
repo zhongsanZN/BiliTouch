@@ -209,6 +209,34 @@
             <ContentControl Content="{Binding}" Margin="0,9,0,0"
                             ContentTemplateSelector="{StaticResource DynamicContentSelector}" />
 
+            <!-- ===== 热评(B 站 PC 客户端把评论直接挂在动态下面) ===== -->
+            <ItemsControl ItemsSource="{Binding TopComments}" Margin="0,10,0,0"
+                          Visibility="{Binding HasComments, Converter={StaticResource BoolToVis}}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{DynamicResource ControlFillHoverBrush}"
+                                CornerRadius="6" Padding="9,7" Margin="0,0,0,5">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding UserName}" FontSize="11.5"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource AccentTextBrush}"
+                                               TextTrimming="CharacterEllipsis" MaxWidth="160" />
+                                    <TextBlock Text="  ·  " FontSize="11.5"
+                                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                                    <TextBlock Text="{Binding LikeText}" FontSize="11"
+                                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="12.5"
+                                           Margin="0,3,0,0" MaxHeight="60"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
             <!-- ===== 互动行 ===== -->
             <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                 <StackPanel Orientation="Horizontal" Margin="0,0,20,0"

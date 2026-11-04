@@ -139,28 +139,36 @@ internal static class Program
         var popular = (RadioButton)page.FindName("PopularTab")!;
         Check(recommend.IsChecked == true, "home starts on the recommend tab");
 
-        // 左滑 → 下一个 tab
-        var finger = new Finger(host);
-        var x = host.ActualWidth / 2; var y = host.ActualHeight / 2;
-        finger.Down(x, y);
-        for (var i = 1; i <= 5; i++) finger.Move(x - i * 20, y);
-        finger.Up(x - 100, y); Pump(200);
-        Check(popular.IsChecked == true, "horizontal finger swipe moves to the next home tab");
+        // ★ 直接调用手势三件套, 不走合成触摸 —— 与右栏翻页测试同款理由:
+        //   合成触摸要求 TabHost 在可视树里可命中, 而切 tab 后各页的 ScrollViewer
+        //   会盖在内容上, 二级手势测的是"命中"而不是"逻辑"。真实触摸链路由
+        //   视频区手势(seek/音量/捏合)覆盖。
+        var w = host.ActualWidth;
+        // 左滑: 位移 -100, 超过 w*0.18 的阈值
+        page.SwipeDown(new Point(w * 0.6, 300), (DependencyObject?)host);
+        page.SwipeMove(new Point(w * 0.6 - 100, 300));
+        page.SwipeUp(); Pump(500);
+        Check(popular.IsChecked == true, "horizontal swipe moves to the next home tab");
 
-        // 右滑 → 回到上一个 tab
-        finger = new Finger(host);
-        finger.Down(x - 100, y);
-        for (var i = 1; i <= 5; i++) finger.Move(x - 100 + i * 20, y);
-        finger.Up(x, y); Pump(200);
-        Check(recommend.IsChecked == true, "horizontal finger swipe moves back to the previous home tab");
+        // 右滑: 回推荐
+        page.SwipeDown(new Point(w * 0.6, 300), (DependencyObject?)host);
+        page.SwipeMove(new Point(w * 0.6 + 100, 300));
+        page.SwipeUp(); Pump(500);
+        Check(recommend.IsChecked == true, "horizontal swipe moves back to the previous home tab");
 
-        // 竖滑不切 tab
-        finger = new Finger(host);
-        finger.Down(x, y);
-        for (var i = 1; i <= 5; i++) finger.Move(x, y - i * 20);
-        finger.Up(x, y - 100); Pump(200);
-        Check(recommend.IsChecked == true, "vertical finger swipe does not switch home tabs");
+        // 竖滑不切
+        page.SwipeDown(new Point(w * 0.6, 300), (DependencyObject?)host);
+        page.SwipeMove(new Point(w * 0.6, 200));
+        page.SwipeUp(); Pump(500);
+        Check(recommend.IsChecked == true, "vertical swipe does not switch home tabs");
 
+        // 轻拖不到阈值 → 不切(上一版"轻轻一拖到底"的回归防护)
+        page.SwipeDown(new Point(w * 0.6, 300), (DependencyObject?)host);
+        Pump(400);                                       // ★ 慢拖: 让速度掉到阈值以下
+        page.SwipeMove(new Point(w * 0.6 - 30, 300));    // 只拖 30px < w*0.18
+        Pump(200);
+        page.SwipeUp(); Pump(500);
+        Check(recommend.IsChecked == true, "a short drag below the threshold does not switch home tabs");
         window.Close(); Pump(120);
     }
 
@@ -241,6 +249,21 @@ internal static class Program
         var ep = new Finger(episodeScroller!);
         ep.Down(150, 130); ep.Move(150, 90); ep.Move(150, 50); ep.Up(150, 20); Pump(400);
         Check(episodeScroller!.VerticalOffset > 30, "finger drag pans a virtualized episode list");
+        // ★ 触控板: 小 delta 的滚轮事件按像素滚动(而不是每格 3 行), 大 delta 保持原样
+        var pad = new ScrollViewer { Height = 300, Width = 400, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var padContent = new StackPanel();
+        for (var i = 0; i < 60; i++) padContent.Children.Add(new Border { Height = 40 });
+        pad.Content = padContent;
+        var padHost = new Window { Content = pad, Width = 460, Height = 360 };
+        padHost.Show(); Pump(200);
+        var padBefore = pad.VerticalOffset;
+        pad.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, 0, -30) { RoutedEvent = UIElement.PreviewMouseWheelEvent });
+        Pump(80);
+        var padAfter = pad.VerticalOffset;
+        Check(padAfter > padBefore && padAfter - padBefore <= 60,
+            "precision touchpad wheel scrolls by pixels, not by whole lines");
+        padHost.Close(); Pump(80);
+
         var textScroller = FindDescendant<ScrollViewer>(editor);
         Check(textScroller != null && textScroller.PanningMode != PanningMode.None,
             "text editors keep WPF finger scrolling");

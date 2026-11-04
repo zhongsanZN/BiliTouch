@@ -46,8 +46,21 @@ public class FollowViewModel : ObservableObject
     /// </summary>
     public ObservableCollection<DynamicItem> Dynamics { get; } = new();
 
-    /// <summary>当前右栏显示的是混合流(全部动态)还是单 UP 的视频列表</summary>
+    /// <summary>
+    /// 当前右栏显示的是混合流(全部动态)还是单 UP 的视频列表。
+    /// ★★★ 2026-11-04 修"动态页还是一堆视频卡": 原来 FollowPage 里 FeedItems 那两个
+    ///   ItemsControl 的 Visibility 只绑了 UseCardWall —— 也就是说**无论是不是"全部动态"
+    ///   都在显示**。而全部动态模式走的是 Dynamics(混合流), 于是两套列表叠在一起:
+    ///   上面是混合流, 下面还挂着一堆视频卡(FeedItems 可能残留上一次单 UP 的内容)。
+    ///   现在拆成三个互斥的可见性, 见下面两个属性。
+    /// </summary>
     public bool ShowDynamics => SelectedUp == null;
+
+    /// <summary>单 UP 视图 + 动态卡档位(FeedItems, 单列)</summary>
+    public bool ShowUpFeed => SelectedUp != null && !UseCardWall;
+
+    /// <summary>单 UP 视图 + 卡片墙档位(FeedItems, 网格)</summary>
+    public bool ShowUpFeedCardWall => SelectedUp != null && UseCardWall;
 
     private FollowUser? _selectedUp;
 
@@ -67,8 +80,10 @@ public class FollowViewModel : ObservableObject
             if (value != null) value.IsSelected = true;
             OnPropertyChanged(nameof(IsAllSelected));
             OnPropertyChanged(nameof(SelectionTitle));
-            // 右栏两套列表按它切显隐(混合流 vs 单 UP 视频)
+            // 右栏三套列表按它切显隐(混合流 / 单UP动态卡 / 单UP卡片墙)
             OnPropertyChanged(nameof(ShowDynamics));
+            OnPropertyChanged(nameof(ShowUpFeed));
+            OnPropertyChanged(nameof(ShowUpFeedCardWall));
         }
     }
 
@@ -457,6 +472,8 @@ public class FollowViewModel : ObservableObject
                     OnPropertyChanged(nameof(ShowFullLoading));
                     if (Dynamics.Count == 0) Error = "关注的 UP 最近没有动态";
                     UpdateUnreadBadges();
+                    // 拉前几条动态的热评(B 站 PC 客户端就是这样挂在卡片下面的)
+                    _ = LoadDynamicCommentsAsync(dyns);
                     return;
                 }
                 if (items == null)
@@ -510,6 +527,9 @@ public class FollowViewModel : ObservableObject
             if (!SetProperty(ref _useCardWall, value)) return;
             Svc.Settings.FollowCardWall = value;
             Svc.Settings.Save();
+            // 两个"单 UP 档位"可见性跟着档位走(见 ShowUpFeed 的说明)
+            OnPropertyChanged(nameof(ShowUpFeed));
+            OnPropertyChanged(nameof(ShowUpFeedCardWall));
         }
     }
 
@@ -619,5 +639,25 @@ public class FollowViewModel : ObservableObject
     {
         if (Loading || LoadingMore || !HasMore) return;
         await LoadSelectionAsync(reset: false);
+    }
+    /// <summary>
+    /// 给刚加载的动态拉热评(2026-11-04)。
+    ///
+    /// ★ 只拉**前 8 条**: 评论是锦上添花, 一次拉几十条会打一串请求、还可能吃风控。
+    /// ★ 单条失败不影响其它条(GetDynamicCommentsAsync 内部已吞异常, 失败返回 null)。
+    /// </summary>
+    private async Task LoadDynamicCommentsAsync(List<DynamicItem> items)
+    {
+        var slice = items.Where(d => d.Id.Length > 0).Take(8).ToList();
+        foreach (var d in slice)
+        {
+            var cs = await Svc.Api.GetDynamicCommentsAsync(d.Id, d.RawType);
+            if (cs == null) continue;
+            await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                d.TopComments = cs;
+                d.HasCommentsChanged();
+            });
+        }
     }
 }
