@@ -551,8 +551,23 @@
                         </Style>
                     </Button.Style>
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="&#xE8E1;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                   FontSize="15" VerticalAlignment="Center" />
+                        <!-- ★ 用 B 站官方的点赞几何(LikeIconGeometry, 见 Themes/Icons.xaml),
+                             与播放器操作栏同一个图形 —— 不再用 Segoe 字体图标(E8E1)。
+                             字体图标和官方图形是两套线条语言, 放在同一个客户端里一眼能看出不一致。
+                             填色走 Fill(几何是纯填充图形, 不是描边), 已赞时整组变强调色。 -->
+                        <Path Data="{StaticResource LikeIconGeometry}" Width="15" Height="15"
+                              Stretch="Uniform" VerticalAlignment="Center">
+                            <Path.Style>
+                                <Style TargetType="Path">
+                                    <Setter Property="Fill" Value="{DynamicResource TextSecondaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLiked}" Value="True">
+                                            <Setter Property="Fill" Value="{DynamicResource AccentTextBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Path.Style>
+                        </Path>
                         <TextBlock Text="{Binding LikeCountText}" FontSize="12.5" Margin="6,0,0,0"
                                    VerticalAlignment="Center" />
                     </StackPanel>

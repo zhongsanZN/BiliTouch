@@ -8,6 +8,8 @@
             <ResourceDictionary.MergedDictionaries>
                 <!-- 第 0 项会被 ThemeService 动态替换以实现深浅色切换 -->
                 <ResourceDictionary Source="Themes/Colors.Light.xaml" />
+                <!-- B 站官方图标几何(三连/评论): 播放器与动态卡共用同一份 -->
+                <ResourceDictionary Source="Themes/Icons.xaml" />
                 <ResourceDictionary Source="Themes/Styles.xaml" />
             </ResourceDictionary.MergedDictionaries>
 
