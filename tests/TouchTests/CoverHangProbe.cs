@@ -5,11 +5,11 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.Helpers;
-using BiliDesk.Views.Controls;
+using BiliTouch;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Views.Controls;
 
 /// <summary>
 /// 最小复现: 只放一个视频附加卡的封面, 看是不是 Cover.Source 在无宽度约束下自旋(2026-11-04)。

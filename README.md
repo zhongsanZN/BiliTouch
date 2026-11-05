@@ -1,25 +1,31 @@
 <div align="center">
 
-<img src="docs/logo_rounded.png" width="104" alt="BiliDesk 图标">
+<img src="BiliTouch/Assets/app.png" width="104" alt="BiliTouch 图标">
 
-# BiliDesk
+# BiliTouch
 
-**干净、流畅的哔哩哔哩第三方 Windows 桌面客户端**
+**面向触摸屏、触控板手势与人体工学优化的哔哩哔哩第三方 Windows 客户端**
+
+作者：**中三** · 当前版本：**0.1.6**
+
+原作者、上游项目与许可证信息见[鸣谢](docs/ACKNOWLEDGEMENTS.md)。
+
+触屏横滑翻页、手势调节进度/亮度/音量、长按加速、触控板交互与更易点按的操作入口是本分支的重点。
 
 *WPF · .NET 10 · LibVLC*
 
 <br>
 
-[![Release](https://img.shields.io/github/v/release/ABING1111/BiliDesk?style=flat-square)](https://github.com/ABING1111/BiliDesk/releases/latest)
+**BiliTouch v0.1.6**
 [![Platform](https://img.shields.io/badge/Windows-10%2B-0078D4?logo=windows11&logoColor=white&style=flat-square)](#-下载安装)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white&style=flat-square)](#-从源码构建)
-[![License](https://img.shields.io/github/license/ABING1111/BiliDesk?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](LICENSE)
 
-[下载](https://github.com/ABING1111/BiliDesk/releases/latest) · [功能特性](#-功能特性) · [快捷键](#-快捷键) · [从源码构建](#-从源码构建)
+[上游鸣谢](docs/ACKNOWLEDGEMENTS.md) · [功能特性](#-功能特性) · [快捷键](#-快捷键) · [从源码构建](#-从源码构建)
 
 <br>
 
-<img width="100%" alt="BiliDesk 首页" src="docs/screenshot-home-rounded.png">
+<img width="100%" alt="BiliTouch 首页" src="docs/screenshot-home-rounded.png">
 
 </div>
 
@@ -44,6 +50,8 @@
 - 智能屏蔽、关键词黑名单、彩色开关、显示区域调节
 
 **浏览**
+
+- 独立直播间：实时画面弹幕、可滚动聊天侧栏、醒目留言（SC）置顶与倒计时、弹幕发送、清晰度切换、断线重连和开播/下播状态；无礼物购买入口
 
 - 扫码登录，历史 / 收藏 / 稍后再看 / 动态 / 消息
 - 首页推荐 / 热门 / 排行榜 / 直播 / 追番，分区浏览与搜索
@@ -70,7 +78,7 @@
 
 ## 📥 下载安装
 
-前往 [**Releases**](https://github.com/ABING1111/BiliDesk/releases/latest) 获取最新版本：
+本地发行包位于上级 `dist/BiliTouch-0.1.6`。BiliTouch 独立发布渠道尚未配置，程序不会将 BiliTouch 上游安装包作为本分支更新。原上游提供的发行形式如下：
 
 | 发行包 | 说明 |
 | :--- | :--- |
@@ -82,9 +90,8 @@
 需要 Windows 10+ 与 [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)（x64）。
 
 ```powershell
-git clone https://github.com/ABING1111/BiliDesk.git
-cd BiliDesk
-dotnet build BiliDesk/BiliDesk.csproj -c Release
+cd BiliTouch
+dotnet build BiliTouch/BiliTouch.csproj -c Release
 ```
 
 LibVLC 原生库由 NuGet 包（`VideoLAN.LibVLC.Windows`）自动部署，无需手动安装。

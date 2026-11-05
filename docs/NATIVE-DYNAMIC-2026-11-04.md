@@ -2,7 +2,7 @@
 
 ## 本次交付
 
-版本为 1.5.4-touch.3，源码位于 BiliDesk-touch，运行目录位于上级 dist/BiliDesk-1.5.4-touch.3。
+版本为 1.5.4-touch.3，源码位于 BiliTouch-touch，运行目录位于上级 dist/BiliTouch-1.5.4-touch.3。
 
 ### P0：进入动态页报错（已修复）
 

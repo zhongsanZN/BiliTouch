@@ -1,0 +1,47 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        B 站官方图标几何(2026-11-04 从 PlayerWindow.xaml 提到全局)。
+
+        ★ 为什么必须提到全局: 这些是 B 站官方 SVG 的 path 数据(三连/评论),
+          原本只写在 PlayerWindow.xaml 自己的 Resources 里 —— 动态卡在另一棵树里,
+          **访问不到**, 于是动态卡上另用了 Segoe 字体图标(E8E1/E72A 那套)。
+          同一个客户端出现两套点赞图标, 观感不一致(用户反馈"前面不都有图标了吗")。
+          提到全局后, 播放器与动态卡共用同一份。
+
+        ★ 源文件的共同点(改的时候别丢):
+          viewBox 都是 1024x1024, fill="currentColor" —— 纯填充图形,
+          上色要用 Path 的 Fill(不能用 Stroke), 缩放交给调用方 Path 的 Stretch=Uniform。
+    -->
+<PathGeometry x:Key="LikeIconGeometry" FillRule="Nonzero"
+                      Figures="M323 877V326H327L481 137Q506 112 541 110Q576 108 603 131Q617 145 625 163Q633 181 631 202L625 326H860Q882 326 901.5 335.5Q921 345 935 363Q947 380 950 401Q953 422 948 441L848 769Q835 816 799 845Q763 874 713 877ZM266 877H186Q156 879 130 865Q104 851 89 824Q74 797 73 769V438Q73 407 88 381.5Q103 356 130 342Q144 335 158 331.5Q172 328 186 326H266Z">
+            <PathGeometry.Transform>
+                <TranslateTransform X="-0.06" Y="18.46" />
+            </PathGeometry.Transform>
+        </PathGeometry>
+
+<PathGeometry x:Key="CoinIconGeometry" FillRule="Nonzero"
+                      Figures="M545 317H664Q680 317 690 307.5Q700 298 700 284Q700 270 690 261Q680 252 664 252H354Q339 252 329 261Q319 270 319 284Q319 298 329 307.5Q339 317 354 317H479V377Q395 383 340.5 440.5Q286 498 283 582V626Q284 639 293 648.5Q302 658 316 658Q330 658 339 649Q348 640 349 626V582Q350 526 386.5 486.5Q423 447 479 442V747Q480 761 489 770Q498 779 512 779Q526 779 535 770Q544 761 545 747V442Q601 447 637.5 486.5Q674 526 675 582V626Q675 640 684.5 649Q694 658 708 658Q722 658 731 649Q740 640 740 626V582Q738 498 683.5 440.5Q629 383 544 377V317ZM512 951Q326 946 202 822Q78 698 73 512Q78 326 202 202Q326 78 512 73Q698 78 822 202Q946 326 951 512Q946 698 822 822Q698 946 512 951Z" />
+
+<PathGeometry x:Key="FavoriteIconGeometry" FillRule="Nonzero"
+                      Figures="M735 297Q703 292 678 273Q653 254 640 225L568 74Q549 37 511.5 37Q474 37 452 74L384 225Q369 254 344.5 273Q320 292 289 297L127 322Q88 330 76.5 364Q65 398 92 429L214 555Q236 576 244.5 605Q253 634 249 665L221 840Q216 882 246.5 903Q277 924 315 906L452 831Q481 814 513.5 814Q546 814 575 831L713 906Q750 924 779.5 903Q809 882 807 840L775 665Q771 634 779.5 605Q788 576 810 555L932 429Q959 398 947.5 364Q936 330 897 322Z">
+            <PathGeometry.Transform>
+                <TranslateTransform X="0" Y="36.35" />
+            </PathGeometry.Transform>
+        </PathGeometry>
+<Geometry x:Key="ShareIconGeometry">M12,15 V3.5 M8.2,7.3 L12,3.5 L15.8,7.3 M4.5,12.5 V18.5 A2,2 0 0 0 6.5,20.5 H17.5 A2,2 0 0 0 19.5,18.5 V12.5</Geometry>
+
+<!--
+    控制栏的两个图标(2026-11-05 提到全局)。
+
+    ★ 为什么搬到这里: 播放器与直播间的底部控制条现在是**同一套**, 而"弹幕开关"这颗
+      两边原来各画一份 path —— 直播间那份的墨迹比例与播放器不同, 并排看能看出粗细不一样。
+      提到全局后两个窗口引用同一份几何, 想改只改一处。
+    ★ 都是**描边**图形: 上色要用 Path.Stroke(不是 Fill), 线宽由调用方给(现在 1.6 / 2)。
+-->
+<Geometry x:Key="DanmakuIconGeometry">M2,2 H20 V15 H14 L10,19 V15 H2 Z M6,6 H9 M12,6 H16 M6,10 H15</Geometry>
+<Geometry x:Key="DanmakuOffSlashGeometry">M2,0 L21,19</Geometry>
+
+<!-- 铺满窗口: 进入前 = 虚线框(E9A6 的矢量版) / 已铺满 = 向内的双箭头。 
+     ★ 这两个用的是 Segoe 码位而不是 path: 播放器顶栏与直播间顶栏都按同一对码位渲染,
+       字体缺失时会退化成方块 —— 但项目全局字体栈里已带 Segoe Fluent Icons 回退, 可接受。 -->
+</ResourceDictionary>

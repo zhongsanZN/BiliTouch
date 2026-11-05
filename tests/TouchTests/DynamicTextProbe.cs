@@ -5,10 +5,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.Views.Controls;
+using BiliTouch;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.Views.Controls;
 
 /// <summary>
 /// 查"动态正文不显示, 点进详情再返回才显示"(2026-11-04 用户报)。
@@ -31,7 +31,7 @@ internal static class DynamicTextProbe
     public static void Run(string output)
     {
         var sessionFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "AppData", "Local", "BiliDesk", "session.json");
+            "AppData", "Local", "BiliTouch", "session.json");
         if (!File.Exists(sessionFile)) { Console.WriteLine("TEXT unavailable: no session"); return; }
         var session = JsonSerializer.Deserialize<Session>(File.ReadAllText(sessionFile),
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });

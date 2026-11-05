@@ -4,8 +4,8 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using BiliDesk.Models;
-using BiliDesk.Views;
+using BiliTouch.Models;
+using BiliTouch.Views;
 
 /// <summary>
 /// 复现"点进评论详情再返回后, 触屏拖不动"(2026-11-04) —— 第二轮, 走**真实触摸事件**。
@@ -130,13 +130,13 @@ internal static class CommentTouchChainProbe
         Line($"  返回后反向竖滑: {before3:0} → {after3:0} (Δ{after3 - before3:0})");
 
         // ---- TouchSupport 的静态残留 ----
-        var touchViewerField = typeof(BiliDesk.Helpers.TouchSupport).GetField("_touchViewer",
+        var touchViewerField = typeof(BiliTouch.Helpers.TouchSupport).GetField("_touchViewer",
             System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
         var resident = touchViewerField?.GetValue(null) as ScrollViewer;
         Line($"  TouchSupport._touchViewer = " +
              (resident == null ? "null(正常)" : $"残留: {resident.Name} ({resident.GetType().Name})"));
         Line($"  TouchSupport.IsTouchPanning(InfoScroll) = " +
-             BiliDesk.Helpers.TouchSupport.IsTouchPanning(infoScroll));
+             BiliTouch.Helpers.TouchSupport.IsTouchPanning(infoScroll));
 
         if (Math.Abs(delta2) < 1 && infoScroll.ScrollableHeight > 0)
             Line("FAIL 返回后从顶部往下滑也不动 —— 触摸链被破坏");

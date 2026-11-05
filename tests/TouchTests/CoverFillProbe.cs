@@ -3,7 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
+using BiliTouch.Helpers;
 
 /// <summary>
 /// 验证 Cover.Fill 附加属性是否真的传到了 ImageBrush(2026-11-04)。

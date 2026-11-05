@@ -1,7 +1,7 @@
 ﻿; ============================================================
-; BiliDesk 安装器 (Inno Setup 6)
+; BiliTouch 安装器 (Inno Setup 6)
 ;
-; 前提: 先跑 发布.ps1 生成 "BiliDesk-安装器-files" (框架依赖版, 不含 .NET)。
+; 前提: 先跑 发布.ps1 生成 "BiliTouch-安装器-files" (框架依赖版, 不含 .NET)。
 ; 本脚本把它打包成安装器, 并在安装前检测 .NET 桌面运行时 —— 10 及以上任何大版本
 ; 都可以(程序在 csproj 里配了 RollForward=Major, 没有运行时 10 时可直接跑在 11+ 上),
 ; 一个都没有才引导下载 .NET 10 桌面运行时(所以安装器本体能保持 ~30MB,
@@ -9,19 +9,21 @@
 ;
 ; 用 Inno Setup 打开本文件编译即可。
 ; ============================================================
-#define MyAppName "BiliDesk"
-; 触控修复版: 程序内 App.AppVersion 也是 1.5.3-touch.1(带预发布后缀, 更新检查按 1.5.3 比较)
-#define MyAppVersion "1.5.4-touch.4"
+#define MyAppName "BiliTouch"
+; BiliTouch 独立版本，与 App.AppVersion / csproj 保持一致
+#define MyAppVersion "0.1.6"
 ; VersionInfoVersion 必须是纯数字四段 (a.b.c.d), 不能带 -touch
-#define MyFileVersion "1.5.4.4"
-#define MyAppPublisher "ABing"
-#define MyAppExeName "BiliDesk.exe"
+#define MyFileVersion "0.1.6.0"
+#define MyAppPublisher "中三"
+#define MyAppExeName "BiliTouch.exe"
 ; 指向发布脚本生成的框架依赖目录(相对本 .iss 所在目录)
-#define MySourceDir "BiliDesk-安装器-files"
+#ifndef MySourceDir
+#define MySourceDir "BiliTouch-安装器-files"
+#endif
 
 [Setup]
 ; AppId 的字面 "{" 必须写成 "{{"(Inno 常量转义), 否则编译报 Unknown constant
-AppId={{B3C9A1E4-2E6B-4A11-8B11-9F0D1C2E3A4B}
+AppId={{F4A7C086-EF18-4BD6-B709-C75A83B62D91}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 VersionInfoVersion={#MyFileVersion}
@@ -30,8 +32,8 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=.
-; 文件名用纯 ASCII: GitHub 会把非 ASCII 的资产名截掉(1.2.0 的 zip 在下载页显示成 "BiliDesk-1.2.0-.zip")
-OutputBaseFilename=BiliDesk-{#MyAppVersion}-setup
+; 文件名用纯 ASCII: GitHub 会把非 ASCII 的资产名截掉(1.2.0 的 zip 在下载页显示成 "BiliTouch-1.2.0-.zip")
+OutputBaseFilename=BiliTouch-{#MyAppVersion}-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -42,8 +44,9 @@ ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 ; 应用是 x64-only
 PrivilegesRequired=admin
-SetupIconFile=..\BiliDesk\Assets\app.ico
-UninstallDisplayIcon={app}\{#MyAppExeName}
+SetupIconFile=..\BiliTouch\Assets\app.ico
+UninstallDisplayIcon={app}\Assets\BiliTouch-{#MyAppVersion}.ico
+ChangesAssociations=yes
 
 ; 安装向导语言: 简体中文。语言文件随仓库放在本 .iss 同目录, 任何版本的 Inno 都能直接编译。
 [Languages]
@@ -54,8 +57,8 @@ Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\BiliTouch-{#MyAppVersion}.ico"; IconIndex: 0
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\BiliTouch-{#MyAppVersion}.ico"; IconIndex: 0; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务:"

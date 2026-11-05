@@ -1,6 +1,6 @@
 ﻿# 动态页修复与验证（2026-11-04）
 
-版本：1.5.4-touch.2。源码基于本目录 BiliDesk-touch，产物位于上级 dist/BiliDesk-1.5.4-touch.2。
+版本：1.5.4-touch.2。源码基于本目录 BiliTouch-touch，产物位于上级 dist/BiliTouch-1.5.4-touch.2。
 
 ## 本轮已修复
 

@@ -1,0 +1,143 @@
+<views:FluentWindow x:Class="BiliTouch.Views.DynamicPublishWindow"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:BiliTouch.Views"
+             xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
+             xmlns:helpers="clr-namespace:BiliTouch.Helpers"
+             Title="发布动态" Width="620" Height="560"
+             MinWidth="520" MinHeight="460"
+             WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+             Background="{DynamicResource AppBackgroundBrush}">
+    <!--
+        动态发布窗口(2026-11-04)。
+
+        对标官方 PC 客户端的"发动态"弹窗: 头像 + 输入框 + 图片九宫格 + 底部工具条 + 发布按钮。
+        之前客户端只能转发别人的动态, 自己发一条必须去网页 —— 这就是用户说的"生硬支持"。
+
+        ★ 为什么图片先传后发: 服务端要求 ctrl 里带 img_src/img_url,
+          那是上传完才有的东西。所以"选图 → 立刻后台上传 → 拿到地址 → 发布"是唯一顺序。
+          界面上给每张图一个上传中/失败的状态, 失败可以单独重试, 不需要重选。
+    -->
+    <Grid Margin="22,18,22,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ===== 头部: 头像 + 谁在发 ===== -->
+        <Grid Grid.Row="0" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Width="40" Height="40" CornerRadius="20"
+                    Background="{DynamicResource AccentSoftFillBrush}" ClipToBounds="True">
+                <Border helpers:Cover.Source="{Binding Face}" />
+            </Border>
+            <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                <TextBlock Text="{Binding UserName}" FontSize="14" FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                <TextBlock Text="公开发布，所有人都能看到" FontSize="11.5" Margin="0,2,0,0"
+                           Foreground="{DynamicResource TextTertiaryBrush}" />
+            </StackPanel>
+        </Grid>
+
+        <!-- ===== 正文 ===== -->
+        <TextBox x:Name="BodyBox" Grid.Row="1"
+                 Style="{StaticResource FluentTextBoxStyle}"
+                 AcceptsReturn="True" TextWrapping="Wrap" MinHeight="140" MaxHeight="260"
+                 VerticalScrollBarVisibility="Auto" MaxLength="2000"
+                 AcceptsTab="False"
+                 TextChanged="OnBodyChanged"
+                 ToolTip="支持 #话题# 与 @昵称，客户端会自动把它们变成可点内容" />
+
+        <!-- ===== 图片 ===== -->
+        <ScrollViewer Grid.Row="2" Margin="0,10,0,0" VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding Images}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Width="96" Height="96" Margin="0,0,8,8">
+                            <Border CornerRadius="8" ClipToBounds="True"
+                                    Background="{DynamicResource PlaceholderBrush}">
+                                <Image Source="{Binding Preview}" Stretch="UniformToFill" />
+                            </Border>
+                            <!-- 上传中的遮罩: 半透明 + 转圈。
+                                 ★ 用一层 Grid 盖住而不是换模板: 换模板会让图片闪一下才出现。 -->
+                            <Border Background="#99000000" CornerRadius="8"
+                                    Visibility="{Binding Uploading, Converter={StaticResource BoolToVis}}">
+                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                    <controls:LoadingRing Width="20" Height="20" />
+                                </StackPanel>
+                            </Border>
+                            <!-- 失败提示: 点一下重试 -->
+                            <Border Background="#99200000" CornerRadius="8" Cursor="Hand"
+                                    MouseLeftButtonUp="OnRetryUpload"
+                                    Visibility="{Binding Failed, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="上传失败 点击重试" FontSize="11" Foreground="White"
+                                           TextAlignment="Center" TextWrapping="Wrap"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <!-- 删除 -->
+                            <Border Width="20" Height="20" CornerRadius="10" Margin="0,3,3,0"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                                    Background="#B3000000" Cursor="Hand"
+                                    MouseLeftButtonUp="OnRemoveImage">
+                                <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                           FontSize="9" Foreground="White"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <!-- ===== 错误条 ===== -->
+        <Border Grid.Row="3" Margin="0,8,0,0" Padding="12,8" CornerRadius="8"
+                Background="{DynamicResource InfoBarBackgroundBrush}"
+                BorderBrush="{DynamicResource AccentBorderFillBrush}" BorderThickness="1"
+                Visibility="{Binding Error, Converter={StaticResource StrToVis}}">
+            <TextBlock Text="{Binding Error}" FontSize="12" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondaryBrush}" />
+        </Border>
+
+        <!-- ===== 底部工具条 ===== -->
+        <Grid Grid.Row="4" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <!-- 加图片 -->
+            <Button Grid.Column="0" Style="{StaticResource SubtleButtonStyle}" Padding="12,7"
+                    Click="OnAddImages" ToolTip="添加图片（最多 9 张）">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE91B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                               FontSize="14" VerticalAlignment="Center" />
+                    <TextBlock Text="图片" FontSize="12.5" Margin="7,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+
+            <!-- 字数 -->
+            <TextBlock Grid.Column="1" Text="{Binding CountText}" FontSize="11.5"
+                       HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0"
+                       Foreground="{DynamicResource TextTertiaryBrush}" />
+
+            <Button Grid.Column="2" Content="取消" Click="OnCancel"
+                    Style="{StaticResource SubtleButtonStyle}" Padding="18,8" Margin="0,0,10,0" />
+            <Button x:Name="PublishButton" Grid.Column="3" Content="发布"
+                    Click="OnPublish" IsEnabled="{Binding CanPublish}"
+                    Style="{StaticResource AccentButtonStyle}" Padding="24,8"
+                    ToolTip="Ctrl+Enter 发布" />
+        </Grid>
+    </Grid>
+</views:FluentWindow>

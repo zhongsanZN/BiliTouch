@@ -2,9 +2,9 @@ using System.IO;
 using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
-using BiliDesk.Models;
-using BiliDesk;
-using BiliDesk.Services;
+using BiliTouch.Models;
+using BiliTouch;
+using BiliTouch.Services;
 
 /// <summary>
 /// 把 feed/all 的**原始响应**落盘, 供离线分析"为什么列表里没有正文"(2026-11-04)。
@@ -21,7 +21,7 @@ internal static class FeedRawDump
     public static void Run(string output, string? targetId = null)
     {
         var sessionFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "AppData", "Local", "BiliDesk", "session.json");
+            "AppData", "Local", "BiliTouch", "session.json");
         if (!File.Exists(sessionFile)) { Console.WriteLine("DUMP no session"); return; }
         var session = JsonSerializer.Deserialize<Session>(File.ReadAllText(sessionFile),
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });

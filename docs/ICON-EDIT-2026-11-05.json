@@ -1,0 +1,10 @@
+{
+  "tool": "built-in imagegen",
+  "mode": "edit",
+  "prompt": "Edit this BiliTouch application icon. Keep the current square composition, dark charcoal strip occupying left 26%, the brown-haired peeking character on the right, pink background, all facial features and accessory, exact existing crop. Only design typography inside the currently empty dark strip at left. Add exactly the brand word Touch, with capital T and lowercase ouch, arranged as a tasteful vertical stack of upright letters T / o / u / c / h, one letter per line reading top to bottom. Center this stack at x=13% of the canvas, spanning roughly y=16% to y=70%, leaving the bottom circular accessory unobscured. Use large bold rounded friendly sans-serif lettering, warm ivory #FFF8F2 for ouch, the capital T in soft signature pink #F6739F. Strong simple letter shapes and generous spacing, comfortable legibility at small Windows app icon sizes. Flat clean typography, no outline, no shadow, no badge, no extra words or decorative UI, no changes to the character. Keep background fully opaque. Output final square application icon art only, no mockup.",
+  "output": "BiliTouch/Assets/app.png",
+  "icon": "BiliTouch/Assets/app.ico",
+  "upstreamAcknowledgement": "BiliTouch/Assets/upstream-original.png",
+  "previousPrompt": "Edit target: the attached 500x500 PNG illustration at C:/Users/hjk00/Downloads/.png. This is an app icon production edit, not a redesign. Change ONLY transparent pixels / alpha background to solid opaque pink RGB(246,115,159), hex #F6739F, matching the old BiliTouch icon background. Preserve every visible part of the original illustration exactly: the dark gray vertical wall at the left, black outlines, brown hair, face/eye, pink cheek, green/white circular accessory, exact framing and edge crops. Do not extend, redraw, restyle, add text, round corners, add shadows, or move any elements. Output square PNG fully opaque with the original composition. The pink should show only where the input was transparent, especially the upper/right background.",
+  "variant": "Touch vertical lettering, pink T and ivory ouch"
+}

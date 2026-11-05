@@ -1,4 +1,4 @@
-﻿# BiliDesk 发布脚本
+﻿# BiliTouch 发布脚本
 #
 # 一次产出两套(2026-09-26 定):
 #   1) 便携版(zip): 自包含 + 单文件压缩 —— 用户机器**不用装 .NET**, 解压即用;
@@ -7,8 +7,8 @@
 #      程序在 csproj 配了 RollForward=Major, 只有 .NET 10+ 也能跑)。
 #
 # 产物统一落在仓库根的 Publish\ (installer.iss 就在那里, 它的相对路径按同级目录写):
-#   Publish\BiliDesk-便携版\            Publish\BiliDesk-安装器-files\
-#   Publish\BiliDesk-<ver>-portable.zip
+#   Publish\BiliTouch-便携版\            Publish\BiliTouch-安装器-files\
+#   Publish\BiliTouch-<ver>-portable.zip
 # (2026-10-03 由 "Pulish" 更正为 "Publish" —— 这是拼写错误, 目录、脚本、.gitignore、.iss 一起改。)
 #
 # 用法(在仓库根目录):
@@ -16,13 +16,13 @@
 #
 # 注意: 这里的默认版本号要跟 App.AppVersion / csproj 的 <Version> / installer.iss 的
 # MyAppVersion 一起改 —— 它只决定 zip 的文件名, 不参与程序内部显示。
-param([string]$Version = "1.5.3")
+param([string]$Version = "0.1.6")
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Out = Join-Path $Root "Publish"
-$PortableDir = Join-Path $Out "BiliDesk-便携版"
-$InstallerDir = Join-Path $Out "BiliDesk-安装器-files"
+$PortableDir = Join-Path $Out "BiliTouch-便携版"
+$InstallerDir = Join-Path $Out "BiliTouch-安装器-files"
 
 # Publish 根目录只建不清理: 里面还放着 installer.iss, 任何 Remove-Item Publish\* 都会连带删掉它。
 if (-not (Test-Path $Out)) { New-Item -ItemType Directory -Path $Out -Force | Out-Null }
@@ -42,17 +42,23 @@ if (-not (Test-Path $Out)) { New-Item -ItemType Directory -Path $Out -Force | Ou
 # 1.5.1 便携版就是这么发出去的(1.5.0 同样中招)。清目录, 再配合下面第 3 步的版本校验。
 # ============================================================
 foreach ($dir in @($PortableDir, $InstallerDir)) {
-    if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+    $resolved = [IO.Path]::GetFullPath($dir)
+    $publishRoot = [IO.Path]::GetFullPath($Out)
+    if ([IO.Path]::GetDirectoryName($resolved) -ne $publishRoot -or
+        [IO.Path]::GetFileName($resolved) -notin @('BiliTouch-便携版','BiliTouch-安装器-files')) {
+        throw "拒绝清理超出发布目录的路径: $resolved"
+    }
+    if (Test-Path -LiteralPath $resolved) { Remove-Item -LiteralPath $resolved -Recurse -Force }
 }
 
 Write-Host "== 1/5 便携版(自包含 + 压缩) =="
-dotnet publish (Join-Path $Root "BiliDesk\BiliDesk.csproj") -c Release -r win-x64 `
+dotnet publish (Join-Path $Root "BiliTouch\BiliTouch.csproj") -c Release -r win-x64 `
     --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true `
     -o $PortableDir
 if ($LASTEXITCODE -ne 0) { throw "便携版发布失败" }
 
 Write-Host "== 2/5 安装器载荷(依赖 .NET 10+ 桌面运行时) =="
-dotnet publish (Join-Path $Root "BiliDesk\BiliDesk.csproj") -c Release -r win-x64 `
+dotnet publish (Join-Path $Root "BiliTouch\BiliTouch.csproj") -c Release -r win-x64 `
     --self-contained false -p:PublishSingleFile=false `
     -o $InstallerDir
 if ($LASTEXITCODE -ne 0) { throw "安装器载荷发布失败" }
@@ -61,7 +67,7 @@ Write-Host "== 3/5 校验 WPF 原生库版本(防旧 .NET 残留混进包) =="
 # 只查 WPF 那三个 dll: 它们的文件版本大版本号必须等于 app 目标框架的大版本(net10.0 → 10)。
 # D3DCompiler_47_cor3.dll 是 Windows SDK 的、vcruntime140_cor3.dll 是 VC 运行时的,
 # 版本号与 .NET 无关, 排除在外。
-$tfm = ([xml](Get-Content (Join-Path $Root "BiliDesk\BiliDesk.csproj") -Raw)).Project.PropertyGroup |
+$tfm = ([xml](Get-Content (Join-Path $Root "BiliTouch\BiliTouch.csproj") -Raw)).Project.PropertyGroup |
        ForEach-Object { $_.TargetFramework } | Where-Object { $_ } | Select-Object -First 1
 if (-not ($tfm -match '^net(\d+)\..*$')) { throw "无法从 csproj 读出 TargetFramework: $tfm" }
 $expectedMajor = [int]$Matches[1]
@@ -102,8 +108,8 @@ Write-Host "== 4/5 提回 Medium 完整性(修 Low 标签导致的放不出视�
 icacls $Out /setintegritylevel Medium /T /C | Out-Null
 
 Write-Host "== 5/5 打包便携版 =="
-# 文件名用纯 ASCII: GitHub 会把非 ASCII 的资产名截掉(1.2.0 的 zip 在下载页显示成 "BiliDesk-1.2.0-.zip")
-$zip = Join-Path $Out "BiliDesk-$Version-portable.zip"
+# 文件名用纯 ASCII: GitHub 会把非 ASCII 的资产名截掉(1.2.0 的 zip 在下载页显示成 "BiliTouch-1.2.0-.zip")
+$zip = Join-Path $Out "BiliTouch-$Version-portable.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path (Join-Path $PortableDir "*") -DestinationPath $zip
 

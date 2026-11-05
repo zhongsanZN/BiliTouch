@@ -6,19 +6,19 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Models;
-using BiliDesk.Helpers;
-using BiliDesk.Services;
-using BiliDesk.Views.Pages;
-using BiliDesk.ViewModels;
+using BiliTouch;
+using BiliTouch.Models;
+using BiliTouch.Helpers;
+using BiliTouch.Services;
+using BiliTouch.Views.Pages;
+using BiliTouch.ViewModels;
 
 internal static class LiveDynamicProbe
 {
     public static void Run(string output,bool fullFeed=false,bool mineMode=false)
     {
         // Keep credentials in memory only. AppPaths points to the isolated test directory.
-        var sessionFile=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"AppData","Local","BiliDesk","session.json");
+        var sessionFile=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"AppData","Local","BiliTouch","session.json");
         if(!File.Exists(sessionFile)) {Console.WriteLine("LIVE unavailable: no session at the application data path");return;}
         var session=JsonSerializer.Deserialize<Session>(File.ReadAllText(sessionFile),new JsonSerializerOptions {PropertyNameCaseInsensitive=true});
         if(session==null || string.IsNullOrEmpty(session.SessData) || string.IsNullOrEmpty(session.Buvid3) || string.IsNullOrEmpty(session.Buvid4))
@@ -28,7 +28,7 @@ internal static class LiveDynamicProbe
             typeof(ApiClient).GetField(pair.Item1,BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(Svc.Api,pair.Item2);
         if(mineMode)
         {
-            var mine=new MinePage {DataContext=new BiliDesk.ViewModels.MineViewModel()};
+            var mine=new MinePage {DataContext=new BiliTouch.ViewModels.MineViewModel()};
             var host=new Window {Width=1200,Height=850,Content=mine,ShowInTaskbar=false};host.Show();
             foreach(var section in new[]{PageKey.Mine,PageKey.History,PageKey.Favorites,PageKey.WatchLater,PageKey.Cache})
             {
@@ -48,7 +48,7 @@ internal static class LiveDynamicProbe
         {
             var feedWindow=new Window {Width=1200,Height=850,ShowInTaskbar=false};
             var feedPage=new FollowPage();feedWindow.Content=feedPage;feedWindow.Show();Pump();
-            var vm=new BiliDesk.ViewModels.FollowViewModel();
+            var vm=new BiliTouch.ViewModels.FollowViewModel();
             vm.Users.Add(new FollowUser {Mid=1,Name="验证"});
             foreach(var item in items)vm.Dynamics.Add(item);
             var delays=new List<double>();var clock=System.Diagnostics.Stopwatch.StartNew();double last=0;
@@ -74,7 +74,7 @@ internal static class LiveDynamicProbe
                 // 放进一个限宽的容器里再截图 —— 直接挂 Window.Content 会让卡片按窗口宽铺开,
                 // 而真实列表里它的宽度由 ListBox 决定(约 760-800)。不模拟这层会截出错误的比例。
                 var thicket=new Border {Width=760,Padding=new Thickness(12),Background=(System.Windows.Media.Brush)Application.Current.Resources["AppBackgroundBrush"]};
-                var card=new BiliDesk.Views.Controls.DynamicFeedCard {DataContext=videoItem,HorizontalAlignment=HorizontalAlignment.Stretch};
+                var card=new BiliTouch.Views.Controls.DynamicFeedCard {DataContext=videoItem,HorizontalAlignment=HorizontalAlignment.Stretch};
                 thicket.Child=card;feedWindow.Content=thicket;
                 for(int i=0;i<12;i++)Pump();
                 var cshot=new RenderTargetBitmap((int)Math.Ceiling(thicket.ActualWidth),(int)Math.Ceiling(Math.Max(thicket.ActualHeight,200)),96,96,PixelFormats.Pbgra32);cshot.Render(thicket);
@@ -84,7 +84,7 @@ internal static class LiveDynamicProbe
                 // 检查角标真实状态: 是不是被布局/可见性吃掉了
                 // ★ 用**几何**验证角标, 不靠看截图: 把每个角标相对卡片的位置与尺寸量出来,
                 //   再判断它是否落在封面区域内、且没有被裁到负坐标。
-                var panel=Descendants<BiliDesk.Views.Controls.AspectPanel>(card).FirstOrDefault();
+                var panel=Descendants<BiliTouch.Views.Controls.AspectPanel>(card).FirstOrDefault();
                 Console.WriteLine($"  AspectPanel: found={panel!=null} size={(panel==null?"-":panel.ActualWidth+"x"+panel.ActualHeight)}");
                 void Geo(string tag, System.Windows.FrameworkElement? el)
                 {
@@ -119,12 +119,12 @@ internal static class LiveDynamicProbe
         var recommendations=Svc.Api.GetRecommendAsync(true);Wait(recommendations);
         if(recommendations.Result.ok && recommendations.Result.items is {Count:>0} videos)
         {
-            var homeVm=new BiliDesk.ViewModels.HomeViewModel();
+            var homeVm=new BiliTouch.ViewModels.HomeViewModel();
             foreach(var video in videos)homeVm.RecommendItems.Add(video);
             var home=new HomePage {DataContext=homeVm};window.Content=home;
             for(int i=0;i<16;i++)Pump();
             var covers=Task.WhenAll(videos.Take(8).Select(v=>CoverLoader.LoadAsync(v.Cover,480)));Wait(covers);Pump();
-            var rendered=Descendants<BiliDesk.Views.Controls.VideoCard>(home).Count();
+            var rendered=Descendants<BiliTouch.Views.Controls.VideoCard>(home).Count();
             Console.WriteLine($"LIVE home: items={videos.Count}, realized cards={rendered}, decoded covers={covers.Result.Count(x=>x!=null)}/{covers.Result.Length}");
             var homeBitmap=new RenderTargetBitmap((int)home.ActualWidth,(int)home.ActualHeight,96,96,PixelFormats.Pbgra32);homeBitmap.Render(home);
             var homeEncoder=new PngBitmapEncoder();homeEncoder.Frames.Add(BitmapFrame.Create(homeBitmap));

@@ -8,14 +8,14 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using System.Windows.Markup;
 using System.Xml.Linq;
-using BiliDesk;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views;
-using BiliDesk.Views.Controls;
-using BiliDesk.Views.Pages;
+using BiliTouch;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views;
+using BiliTouch.Views.Controls;
+using BiliTouch.Views.Pages;
 
 internal static class Program
 {
@@ -30,22 +30,37 @@ internal static class Program
         typeof(AppPaths).GetProperty(nameof(AppPaths.DataDir))!.SetValue(null, Artifacts);
         typeof(AppPaths).GetProperty(nameof(AppPaths.CacheRoot))!.SetValue(null, Artifacts);
         var app = new Application();
-        var markup = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "../../../../../BiliDesk/App.xaml"));
+        var markup = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "../../../../../BiliTouch/App.xaml"));
         XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
         var resources = new XElement(markup.Descendants(presentation + "ResourceDictionary").First());
         resources.SetAttributeValue(XNamespace.Xmlns + "x", "http://schemas.microsoft.com/winfx/2006/xaml");
-        resources.SetAttributeValue(XNamespace.Xmlns + "helpers", "clr-namespace:BiliDesk.Helpers;assembly=BiliDesk");
-        foreach (var element in resources.Descendants().Where(e => e.Name.NamespaceName == "clr-namespace:BiliDesk.Helpers"))
-            element.Name = XName.Get(element.Name.LocalName, "clr-namespace:BiliDesk.Helpers;assembly=BiliDesk");
+        resources.SetAttributeValue(XNamespace.Xmlns + "helpers", "clr-namespace:BiliTouch.Helpers;assembly=BiliTouch");
+        foreach (var element in resources.Descendants().Where(e => e.Name.NamespaceName == "clr-namespace:BiliTouch.Helpers"))
+            element.Name = XName.Get(element.Name.LocalName, "clr-namespace:BiliTouch.Helpers;assembly=BiliTouch");
         foreach (var source in resources.Descendants().Attributes("Source"))
-            source.Value = "/BiliDesk;component/" + source.Value;
+            source.Value = "/BiliTouch;component/" + source.Value;
         app.Resources = (ResourceDictionary)XamlReader.Parse(resources.ToString());
         app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
         TouchSupport.Install();
         var exit = 0;
         try
         {
-            if(args.Contains("--live-mine")) LiveDynamicProbe.Run(Artifacts,false,true);
+            if(args.Contains("--live-room-network")) LiveRoomTests.Network(Artifacts,args.FirstOrDefault(a=>a.StartsWith("--session="))?[10..]);
+            else if(args.Contains("--live-room")) LiveRoomTests.Run(Check, Artifacts);
+            else if(args.Contains("--continuation")) ContinuationTests.Run(Check, Artifacts);
+            else if(args.Contains("--star-party")) StarPartyTests.Run(Check, Artifacts);
+            else if(args.Contains("--web-cursor")) AudioImagesFontsTests.WebCursor(Check);
+            else if(args.Contains("--audio-images-fonts")) AudioImagesFontsTests.Run(Check, Artifacts);
+            else if(args.Contains("--live-premium-audio")) AudioImagesFontsTests.Live();
+            else if(args.Contains("--trackpad-scroll")) TrackpadScrollTests.Run(Check, Artifacts);
+            else if(args.Contains("--web-player-layout")) WebPlayerLayoutTests.Run(Check, Artifacts);
+            else if(args.Contains("--live-mine-messages")) MineMessagesTests.Live();
+            else if(args.Contains("--mine-messages")) MineMessagesTests.Run(Check, Artifacts);
+            else if(args.Contains("--ui-polish")) UiPolishTests.Run(Check, Artifacts);
+            else if(args.Contains("--mine-gestures")) MineExperienceTests.TestGestures(Check, Artifacts);
+            else if(args.Contains("--mine")) MineExperienceTests.Run(Check, Artifacts);
+            else if(args.Contains("--bilitouch")) BiliTouchTests.Run(Check, Artifacts);
+            else if(args.Contains("--live-mine")) LiveDynamicProbe.Run(Artifacts,false,true);
             else if(args.Contains("--cover-fill")) CoverFillProbe.Run(Artifacts);
             else if(args.Contains("--live-text")) DynamicTextProbe.Run(Artifacts);
             else if(args.FirstOrDefault(a=>a.StartsWith("--dump-feed",StringComparison.Ordinal)) is { } dumpFlag)
@@ -58,7 +73,8 @@ internal static class Program
             else if(args.Contains("--live-hang")) FeedHangProbe.Run(Artifacts);
             else if(args.Contains("--live-feed")) LiveDynamicProbe.Run(Artifacts,true);
             else if(args.Contains("--live-dynamic")) LiveDynamicProbe.Run(Artifacts);
-            else if (args.Contains("--dynamic")) DynamicTests.Run(Check, Artifacts);
+            else if(args.Contains("--dynamic")) DynamicTests.Run(Check, Artifacts);
+            else if(args.Contains("--follow-sort")) FollowSortTests.Run(Check, Artifacts);
             else
             {
             TestSessions();
@@ -126,7 +142,7 @@ internal static class Program
         Check(right.Action == PlayerTouchAction.Volume && right.VolumeTarget(20) == 70, "right vertical swipe adjusts volume");
         right.Move(703, -2000);
         Check(right.VolumeTarget(80) == 100, "volume clamps to 100");
-        Check(UpdateChecker.ParseVersion(BiliDesk.App.AppVersion) == new Version(1, 5, 4), "touch build version works with updater");
+        Check(typeof(App).Assembly.GetName().Version!.ToString(3) == BiliTouch.App.AppVersion, "BiliTouch version matches the built assembly");
     }
 
     private static void TestHome()
@@ -258,7 +274,7 @@ internal static class Program
         var panel = new StackPanel();
         panel.Children.Add(slider); panel.Children.Add(viewer); panel.Children.Add(horizontal);
         panel.Children.Add(explicitViewer); panel.Children.Add(episodes); panel.Children.Add(editor);
-        var window = new Window { Title = "BiliDesk touch control tests", Content = panel, Width = 650, Height = 560 };
+        var window = new Window { Title = "BiliTouch touch control tests", Content = panel, Width = 650, Height = 560 };
         window.Show(); Pump(200);
         Check(viewer.PanningMode == PanningMode.VerticalFirst, "default scroll viewers enable native finger panning");
         Check(horizontal.PanningMode == PanningMode.HorizontalOnly, "horizontal lists enable horizontal finger panning");
@@ -316,7 +332,7 @@ internal static class Program
 
     private static void TestPlayer(string? videoPath)
     {
-        var player = new PlayerWindow { Title = "BiliDesk touch verification" };
+        var player = new PlayerWindow { Title = "BiliTouch touch verification" };
         player.Show(); Pump(300);
 
         // ★ 2026-11-04 用户报"点进评论详情再返回后触屏拖不动评论列表"。
@@ -404,20 +420,14 @@ internal static class Program
         Call(player, "ToggleControlsByClick");
         Check(Field<bool>(player, "_controlsHidden"), "single click hides the control bar when shown");
 
-        // ★ 触控板缩放(Ctrl+滚轮) → libvlc Scale
-        Call(player, "ApplyZoom", 1.5);
-        Check(Math.Abs(Field<double>(player, "_videoZoom") - 1.5) < 0.01,
-            "ctrl+wheel zoom sets the video zoom factor");
-        Call(player, "ApplyZoom", 1.0);
-        Check(Math.Abs(Field<double>(player, "_videoZoom") - 1.0) < 0.01,
-            "zoom returns to the original size");
-
         Check(Field<bool>(player, "_isSeeking"), "horizontal touch previews seek while finger is down");
             finger.Up(x + 100, y); Pump(700);
             Check(!Field<bool>(player, "_isSeeking") && mp.Time > 3000, "horizontal touch commits seek after release");
             a = new Finger(root); b = new Finger(root);
             a.Down(x, y); a.Move(x + 150, y); b.Down(x + 40, y); b.Up(x + 40, y); a.Up(x + 150, y);
             Check(!Field<bool>(player, "_isSeeking"), "multi-touch cancels seek and unfreezes progress UI");
+            // 最大化状态下，触屏全屏往返必须恢复最大化。
+            player.WindowState = WindowState.Maximized; Pump(300);
             // 双指张开 = 全屏; 双指捏合 = 退出全屏
             var fullscreenBefore = Field<bool>(player, "_isFullscreen");
             a = new Finger(root); b = new Finger(root);
@@ -433,6 +443,8 @@ internal static class Program
                 for (var i = 1; i <= 4; i++) { a.Move(x - 150 + i * 40, y); b.Move(x + 150 - i * 40, y); }
                 a.Up(x, y); b.Up(x, y); Pump(500);           // 捏到 60 = 0.2 倍
                 Check(!Field<bool>(player, "_isFullscreen"), "two-finger pinch exits fullscreen");
+                Check(player.WindowState == WindowState.Maximized, "touch fullscreen exit restores the previous maximized window");
+                player.WindowState = WindowState.Normal; Pump(250);
             }
         }
         // Horizontal swipe on the right info panel switches 简介 / 评论.

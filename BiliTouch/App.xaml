@@ -1,0 +1,74 @@
+<Application x:Class="BiliTouch.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:helpers="clr-namespace:BiliTouch.Helpers"
+             ShutdownMode="OnMainWindowClose">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- 第 0 项会被 ThemeService 动态替换以实现深浅色切换 -->
+                <ResourceDictionary Source="Themes/Colors.Light.xaml" />
+                <!-- B 站官方图标几何(三连/评论): 播放器与动态卡共用同一份 -->
+                <ResourceDictionary Source="Themes/Icons.xaml" />
+                <ResourceDictionary Source="Themes/Styles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- 强调色笔刷(品牌粉) -->
+            <!--
+                这里只是"解析兜底": 真正生效的值由 ThemeService.ApplyAccent() 启动时写入
+                Application.Resources(直接项优先于字典项)。但兜底值也要跟品牌色一致 ——
+                万一注入流程整条失败, 界面至少还是 B 站粉而不是默认蓝。
+            -->
+            <SolidColorBrush x:Key="AccentBrush" Color="#FB7299" />
+            <SolidColorBrush x:Key="AccentHoverBrush" Color="#FB83A5" />
+            <SolidColorBrush x:Key="AccentPressedBrush" Color="#DD6487" />
+            <SolidColorBrush x:Key="AccentSoftFillBrush" Color="#1CFB7299" />
+            <SolidColorBrush x:Key="AccentSoftFillStrongBrush" Color="#2EFB7299" />
+            <SolidColorBrush x:Key="AccentBorderFillBrush" Color="#66FB7299" />
+            <SolidColorBrush x:Key="AccentTextBrush" Color="#FB7299" />
+            <SolidColorBrush x:Key="AccentTextStrongBrush" Color="#C4455F" />
+            <!--
+                强调色背景上的文字色。粉色是中间调, 品牌规定配白字(粉底白字是 B 站的标准搭配),
+                所以这里和 ThemeService.BrandOnAccent 一样写白色。
+            -->
+            <SolidColorBrush x:Key="TextOnAccentBrush" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="TextOnAccentSecondaryBrush" Color="#FFFFFF" />
+
+            <!-- ★ 压在**卡片底**药丸上的强调色文字(分段选择器选中态)。
+                 和 TextOnAccentBrush 一样只是"解析兜底" —— 真正生效的值由
+                 ThemeService.ApplyAccent() 按当前主题色算出来(浅色压深 35%)。
+                 兜底值取压深后的粉, 与 ThemeService 的算法保持一致,
+                 这样万一注入失败也不会退成"粉字压白底读不清"那种情况。 -->
+            <SolidColorBrush x:Key="AccentTextOnCardBrush" Color="#8A3F54" />
+
+            <!--
+                ★ NavVeilBrush 已删除(2026-10-11): 切页过渡不再用"自己上色的幕布",
+                  改为淡出 PageHost 本身(见 Helpers/PageTransition 与 MainWindow.xaml 的说明)。
+                  幕布在材质(云母/亚克力)模式下永远算不准底色 —— 那时真实底色是壁纸。
+            -->
+
+            <!-- 转换器 -->
+            <helpers:EnumEqualsConverter x:Key="EnumEquals" />
+            <helpers:InverseBoolConverter x:Key="InvBool" />
+            <helpers:InverseBoolToVisibilityConverter x:Key="InvBoolToVis" />
+            <helpers:StringToVisibilityConverter x:Key="StrToVis" />
+            <helpers:NotNullToVisibilityConverter x:Key="NotNullToVis" />
+            <helpers:InverseStringToVisibilityConverter x:Key="InvStrToVis" />
+            <helpers:CountToVisibilityConverter x:Key="CountToVis" />
+            <helpers:WidthClassToValueConverter x:Key="ClassToValue" />
+    <helpers:HexToBrushConverter x:Key="HexToBrush" />
+            <helpers:BoolToAngleConverter x:Key="BoolToAngle" />
+            <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+            <!-- 导航图标(用户提供的官方 SVG): 动态=风车描边 / 消息=信封填充。
+                 放应用级 —— 首页/动态页等页面里的 StaticResource 只能解析到这里。 -->
+<!-- 消息(信封): 轮廓与原 SVG 相同, 但改成**描边**画法 ——
+             旁边四个入口都是 Segoe 细线图标, 填充版信封明显比它们粗一截。 -->
+        <PathGeometry x:Key="MessageIconGeometry"
+            Figures="M4.6,2.9 H15.4 A2.6,2.6 0 0 1 18.1,5.5 V14.5 A2.6,2.6 0 0 1 15.4,17.1 H4.6 A2.6,2.6 0 0 1 2,14.5 V5.5 A2.6,2.6 0 0 1 4.6,2.9 Z M3.1,6.4 L9.5,10.9 C9.8,11.1 10.2,11.1 10.5,10.9 L16.9,6.4" />
+        <!-- 动态(风车): 用户提供的官方 SVG, 四段描边路径 -->
+        <PathGeometry x:Key="DynamicIconGeometry"
+            Figures="M10 10.743C7.69883 10.743 5.83333 8.87747 5.83333 6.5763C5.83333 4.27512 7.69883 2.40964 10 2.40964V10.743Z M10 10.743C10 13.0441 8.1345 14.9096 5.83333 14.9096C3.53217 14.9096 1.66667 13.0441 1.66667 10.743H10Z M10 10.743C10 8.44182 11.8655 6.57632 14.1667 6.57632C16.4679 6.57632 18.3333 8.44182 18.3333 10.743H10Z M9.99999 10.743C12.3012 10.743 14.1667 12.6085 14.1667 14.9096C14.1667 17.2108 12.3012 19.0763 9.99999 19.0763V10.743Z" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
