@@ -2,10 +2,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
-using BiliDesk.Models;
-using BiliDesk.Views.Controls;
+using BiliTouch.Models;
+using BiliTouch.Views.Controls;
 
-namespace BiliDesk.Views;
+namespace BiliTouch.Views;
 
 public partial class PlayerWindow
 {
@@ -63,7 +63,7 @@ public partial class PlayerWindow
         var width=Math.Max(120,(_commentImageGroup?.ActualWidth??0)-6);
         _commentImageSlot.Width=width;
         var height=_commentGallery.NaturalWidth>0?_commentGallery.NaturalHeight*Math.Min(1,width/_commentGallery.NaturalWidth):260;
-        _commentGallery.Height=Math.Clamp(height,120,Math.Max(320,PlayerStage.ActualHeight/BiliDesk.Helpers.UiScale.Factor*1.6));
+        _commentGallery.Height=Math.Clamp(height,120,Math.Max(320,PlayerStage.ActualHeight/BiliTouch.Helpers.UiScale.Factor*1.6));
     }
     private void UpdatePictureSplitGeometry()
     {

@@ -1,6 +1,6 @@
 param(
-    [string]$Source = (Join-Path $PSScriptRoot '..\BiliDesk\Assets\app.png'),
-    [string]$Destination = (Join-Path $PSScriptRoot '..\BiliDesk\Assets\app.ico')
+    [string]$Source = (Join-Path $PSScriptRoot '..\BiliTouch\Assets\app.png'),
+    [string]$Destination = (Join-Path $PSScriptRoot '..\BiliTouch\Assets\app.ico')
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing

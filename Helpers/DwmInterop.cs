@@ -2,9 +2,9 @@ using System;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
-using BiliDesk.Models;
+using BiliTouch.Models;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>DWM(桌面窗口管理器)互操作: 云母/Mica 背景、深色标题栏、亚克力等</summary>
 public static class DwmInterop

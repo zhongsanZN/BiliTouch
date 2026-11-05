@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
-using BiliDesk.Models;
+using BiliTouch.Models;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 public sealed class DynamicDetailViewModel : ObservableObject
 {

@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 评论正文里的 <c>@昵称</c> 扫描。

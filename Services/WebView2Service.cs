@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using BiliDesk.Helpers;
+using BiliTouch.Helpers;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// WebView2 服务: 全应用共享同一个浏览器环境(用户数据目录),
@@ -123,7 +123,7 @@ public class WebView2Service
     '{ display:none !important; visibility:hidden !important; }'
   ].join('\n');
 
-  var STYLE_ID = 'bilidesk-cleaner';
+  var STYLE_ID = 'bilitouch-cleaner';
   function injectCss(){
     try {
       var root = document.documentElement;

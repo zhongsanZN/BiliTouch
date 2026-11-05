@@ -1,10 +1,10 @@
 using System.Windows;
 using System.Windows.Controls;
-using BiliDesk.Helpers;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
+using BiliTouch.Helpers;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
 
-namespace BiliDesk.Views.Pages;
+namespace BiliTouch.Views.Pages;
 
 public partial class MineOverviewPage : UserControl
 {

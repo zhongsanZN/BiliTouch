@@ -5,7 +5,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Threading;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// Generates only the rows near the surrounding ScrollViewer's viewport. The full desired height

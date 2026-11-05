@@ -3,17 +3,31 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
 using LibVLCSharp.Shared;
+// ★ 必须写别名: 这个文件同时 using 了 System.Windows.Media(要用 VisualTreeHelper)
+//   和 LibVLCSharp.Shared, 而两边都有 MediaPlayer —— 不限定的话就是 CS0104 二义性。
+using MediaPlayer = LibVLCSharp.Shared.MediaPlayer;
 
-namespace BiliDesk.Views;
+namespace BiliTouch.Views;
 
-/// <summary>Live room owns its playback, websocket, chat and SC lifecycle. No VOD timeline or comments.</summary>
+/// <summary>
+/// 直播间: 自己负责播放、WebSocket、侧栏弹幕与 SC 生命周期, 没有进度轴与点播评论。
+///
+/// ★★★ 2026-11-05 与播放页对齐(用户报"直播间重做之后很多东西没有做到对齐"):
+///   · 控制栏的播放/暂停、清晰度、画面弹幕、弹幕设置、侧栏、全屏全部沿用播放页的
+///     样式(全局 PlayerRoundBtn / PlayerTextBtn / PlayerSlider)与图标(Helpers.PlayerGlyphs);
+///   · 音量改成"悬停/点一下才向上展开", 控制栏常驻宽度不变;
+///   · 顶栏右上角换成统一的 WindowButtons, 铺满窗口与播放器同位置同语义;
+///   · 播放中控制栏自动隐藏(与播放器同一套延迟), 鼠标移动/点画面唤出。
+/// </summary>
 public partial class LiveRoomWindow : FluentWindow
 {
     public LiveRoomViewModel Model { get; } = new();
@@ -24,11 +38,15 @@ public partial class LiveRoomWindow : FluentWindow
     private readonly LiveOverlayRenderer _overlay;
     private readonly SemaphoreSlim _mediaGate = new(1, 1);
     private readonly DispatcherTimer _health;
+    private readonly DispatcherTimer _controlsTimer;
     private int _request, _streamRequest, _quality, _retryCount;
     private long _chatRoom;
     private bool _qualityUpdating, _changingStream, _chatVisible = true, _full, _closeReady, _paused, _muted, _following;
     private bool _followLatest = true, _scrollScheduled;
     private bool _syncingOverlay;
+    private bool _fillWindow;
+    private bool _controlsHidden;
+    private bool _volumePinned, _volumeHover;
     private DanmakuKeywordFilter? _keywordFilter;
     private int _unread;
     private DateTimeOffset _nextRetry, _startedAt, _metadataAt;
@@ -36,6 +54,9 @@ public partial class LiveRoomWindow : FluentWindow
     private WindowState _previousState;
     private ResizeMode _previousResize;
     private sealed record QualityOption(int Qn, string Label);
+
+    /// <summary>控制栏自动隐藏延迟: 与播放器 ControlsHideDelay(2400ms) 对齐, 两个窗口手感一致</summary>
+    private static readonly TimeSpan ControlsHideDelay = TimeSpan.FromMilliseconds(2400);
 
     public LiveRoomWindow()
     {
@@ -54,11 +75,23 @@ public partial class LiveRoomWindow : FluentWindow
         _player.Playing += OnPlaying;
         _health = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(3) };
         _health.Tick += HealthTick;
-        LiveVolume.Value = Svc.Settings.PlayerVolume;
-        _player.Volume = (int)LiveVolume.Value;
+        _controlsTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = ControlsHideDelay };
+        _controlsTimer.Tick += (_, _) => { _controlsTimer.Stop(); if (ShouldHideControls()) ApplyControlsHidden(true); };
+        // 音量真源是 Svc.Settings.PlayerVolume, 与播放器共用同一个偏好:
+        // 用户在播放器里调到 40, 进直播间也应该是 40(原来就是如此, 别改成独立音量)。
+        _player.Volume = Svc.Settings.PlayerVolume;
+        VolumeSliderSync(Svc.Settings.PlayerVolume, updateSettings: false);
         PreviewKeyDown += OnKeyDown;
-        Loaded += (_, _) => { Model.Start(); _health.Start(); };
-        SizeChanged += (_, _) => { LiveVolume.Visibility = VideoPanel.ActualWidth < 600 ? Visibility.Collapsed : Visibility.Visible; if (!_full && _chatVisible) ChatColumn.Width = new GridLength(ActualWidth < 1100 ? 300 : 360); };
+        Loaded += (_, _) => { Model.Start(); _health.Start(); SyncVolumeGlyph(); EnsureVolumePopupAnchor(); };
+        SizeChanged += (_, _) =>
+        {
+            if (!_full && _chatVisible && !_fillWindow) ChatColumn.Width = new GridLength(ActualWidth < 1100 ? 300 : 360);
+            // 窗口变窄时把"弹幕设置"文字收成图标宽度, 避免挤掉全屏按钮(播放器用同样策略)
+            LiveSettingsButton.MinWidth = RoomLayout.ActualWidth < 760 ? 40 : 56;
+            if (VolumePopup.IsOpen) EnsureVolumePopupAnchor();
+        };
+        QualityPopup.PlacementTarget = QualityButton;
+        QualityPopup.Opened += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(RightAlignQualityPopup));
     }
 
     public void OpenRoom(long roomId, string? title = null)
@@ -70,7 +103,8 @@ public partial class LiveRoomWindow : FluentWindow
         Model.Reset(roomId); if (!string.IsNullOrEmpty(title)) Model.Title = title;
         ChatInput.Text = ""; _followLatest = true; _unread = 0; LatestButton.Visibility = Visibility.Collapsed;
         _quality = 0; _retryCount = 0; _paused = false; _changingStream = false; _startedAt = default; _nextRetry = DateTimeOffset.MaxValue;
-        _qualityUpdating = true; QualityBox.ItemsSource = null; _qualityUpdating = false;
+        _qualityUpdating = true; QualityList.ItemsSource = null; QualityList.SelectedItem = null; _qualityUpdating = false;
+        SetPauseGlyph(playing: true);
         ShowPlaybackState("正在获取直播间…");
         _ = LoadRoomAsync(roomId, _request);
     }
@@ -79,7 +113,7 @@ public partial class LiveRoomWindow : FluentWindow
     {
         try
         {
-            // Metadata resolves short IDs before websocket authentication and history are requested.
+            // 短号要先解析成真实房间号, 之后 WebSocket 认证与历史弹幕才能对上。
             var result = await Svc.Api.GetLiveRoomDetailsAsync(roomId);
             if (!Current(request)) return;
             _metadataAt = DateTimeOffset.UtcNow;
@@ -90,22 +124,30 @@ public partial class LiveRoomWindow : FluentWindow
             }
             else Model.Error = result.error ?? "部分房间信息暂时不可用";
             StartChat();
+            // ★ 历史弹幕与"取流"并行: 一进房间画面上就有最近几条弹幕(高权重预加载),
+            //   不必等 WebSocket 推第一条。
             _ = LoadRecentAsync(Model.RoomId, request);
             if (result.room is not { LiveStatus: 0 }) await LoadStreamAsync();
         }
         catch (Exception ex) { if (Current(request)) { StartChat(); Model.Error = ex.Message; ShowPlaybackState("连接失败，请重新连接"); _nextRetry = DateTimeOffset.UtcNow.AddSeconds(10); } }
     }
     private void StartChat() { _chatRoom = Model.RoomId; _chat.Start(_chatRoom); }
+
     private async Task LoadRecentAsync(long roomId, int request)
     {
         try
         {
             var recent = await Svc.Api.GetRecentLiveMessagesAsync(roomId);
             if (!Current(request)) return;
-            // History is marked in the sidebar and never emitted onto the live video.
-            foreach (var item in recent) Model.Enqueue(new LiveChatEntry { Id = item.Id, UserId = item.UserId, User = item.User, Text = item.Text, Badge = "最近发言", Kind = LiveChatKind.System });
+            // 历史弹幕**两侧都给**: 侧栏标成"最近发言", 画面层预加载(等画布量出尺寸就铺上去)。
+            foreach (var item in recent)
+            {
+                Model.Enqueue(new LiveChatEntry { Id = item.Id, UserId = item.UserId, User = item.User, Text = item.Text, Badge = "最近发言", Kind = LiveChatKind.System });
+                if (Model.OverlayEnabled && item.Text.Length > 0 && _keywordFilter?.IsBlocked(item.Text) != true)
+                    _overlay.Add(item.Text, Svc.Settings.DanmakuColorful ? item.Color : 0xFFFFFF);
+            }
         }
-        catch { /* History failure must not block the realtime connection or video. */ }
+        catch { /* 历史失败不能挡住实时连接与视频 */ }
     }
     private bool Current(int request) => !IsClosing && _request == request;
 
@@ -128,8 +170,9 @@ public partial class LiveRoomWindow : FluentWindow
             }
             _qualityUpdating = true;
             var options = result.options.Select(q => new QualityOption(q.qn, q.label)).ToList();
-            QualityBox.ItemsSource = options;
-            QualityBox.SelectedItem = options.FirstOrDefault(q => q.Qn == result.actualQn);
+            QualityList.ItemsSource = options;
+            QualityList.SelectedItem = options.FirstOrDefault(q => q.Qn == result.actualQn);
+            QualityText.Text = (options.FirstOrDefault(q => q.Qn == result.actualQn)?.Label) ?? "原画";
             _qualityUpdating = false;
             await _mediaGate.WaitAsync();
             try
@@ -141,9 +184,9 @@ public partial class LiveRoomWindow : FluentWindow
                 media.AddOption(":http-referrer=https://live.bilibili.com/");
                 media.AddOption(":http-user-agent=Mozilla/5.0");
                 media.AddOption(":network-caching=1000");
-                _paused = false; PauseButton.Content = "Ⅱ";
+                _paused = false; SetPauseGlyph(playing: true);
                 if (!_player.Play(media)) throw new InvalidOperationException("无法打开直播流");
-                _player.Volume = _muted ? 0 : (int)LiveVolume.Value;
+                _player.Volume = _muted ? 0 : Svc.Settings.PlayerVolume;
                 _startedAt = DateTimeOffset.UtcNow; Model.Error = ""; Model.StatusText = ""; if (Model.LiveState != 2) Model.SetLiveState(1);
             }
             finally { _mediaGate.Release(); }
@@ -158,6 +201,7 @@ public partial class LiveRoomWindow : FluentWindow
     {
         if (IsClosing) return;
         PlaybackState.Visibility = Visibility.Collapsed; _retryCount = 0; _nextRetry = DateTimeOffset.MaxValue;
+        StartControlsCountdown();
     });
     private void HealthTick(object? sender, EventArgs args)
     {
@@ -215,7 +259,8 @@ public partial class LiveRoomWindow : FluentWindow
     {
         if (IsClosing) return;
         if (Model.OverlayEnabled)
-            foreach (var item in batch.Where(m => m.Kind == LiveChatKind.Danmaku)) _overlay.Add(item.Text, Svc.Settings.DanmakuColorful ? item.Color : 0xFFFFFF);
+            foreach (var item in batch.Where(m => m.Kind == LiveChatKind.Danmaku))
+                _overlay.Add(item.Text, Svc.Settings.DanmakuColorful ? item.Color : 0xFFFFFF);
         if (_followLatest) ScheduleLatest();
         else
         {
@@ -272,23 +317,189 @@ public partial class LiveRoomWindow : FluentWindow
         finally { _following = false; FollowButton.IsEnabled = true; }
     }
     private void OpenBrowserClick(object sender, RoutedEventArgs e) { if (Model.RoomId > 0) Process.Start(new ProcessStartInfo($"https://live.bilibili.com/{Model.RoomId}") { UseShellExecute = true }); }
-    private void QualityChanged(object sender, SelectionChangedEventArgs e) { if (_qualityUpdating || QualityBox.SelectedItem is not QualityOption q) return; _quality = q.Qn; _ = LoadStreamAsync(); }
+
+    // ------------------------------------------------------------ 清晰度(与播放器同形态的按钮 + 弹层)
+
+    /// <summary>回到实时画面 / 重新连接(控制栏第二颗)。原方法名叫 ReconnectClick, XAML 里两处引用它。</summary>
     private void ReconnectClick(object sender, RoutedEventArgs e)
     {
         if (IsClosing) return;
         StartChat(); _ = LoadStreamAsync();
     }
+
+    private void QualityClick(object sender, RoutedEventArgs e)
+    {
+        if (QualityPopup.IsOpen) { QualityPopup.IsOpen = false; return; }
+        QualityPopup.PlacementTarget = QualityButton;
+        QualityPopup.IsOpen = true;
+    }
+    private void RightAlignQualityPopup()
+    {
+        // ★ Placement=Top 的语义是"以目标水平居中"。要右缘对齐, 只需把它往右推
+        //   (按钮半宽 - 弹层半宽): 弹层比按钮宽时这个值是负数, 自然向左溢出。
+        //   必须等 Popup 布局完成后再量 ActualWidth —— Opened 那一刻它还是 0(项目里踩过)。
+        if (QualityPopup.Child is not FrameworkElement child || QualityButton == null) return;
+        if (child.ActualWidth <= 0) return;
+        QualityPopup.HorizontalOffset = (QualityButton.ActualWidth - child.ActualWidth) / 2;
+    }
+    private void QualityChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_qualityUpdating || QualityList.SelectedItem is not QualityOption q) return;
+        QualityText.Text = q.Label;
+        _quality = q.Qn; QualityPopup.IsOpen = false;
+        _ = LoadStreamAsync();
+    }
+
+    // ------------------------------------------------------------ 音量(悬停/点击向上展开)
+
+    private void VolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => VolumeSliderSync((int)e.NewValue, updateSettings: true);
+
+    /// <summary>
+    /// 音量的唯一入口。真人拖滑杆、滚轮、按键、程序回灌全走这里, 保证三个账本
+    /// (原生音量 / 设置持久化 / 图标状态)不会漂移。
+    /// </summary>
+    private void VolumeSliderSync(int value, bool updateSettings)
+    {
+        if (_player == null) return;
+        value = Math.Clamp(value, 0, 100);
+        if (Math.Abs(LiveVolume.Value - value) > 0.5)
+        {
+            _syncingVolume = true;
+            LiveVolume.Value = value;
+            _syncingVolume = false;
+        }
+        if (value > 0) _muted = false;
+        _player.Volume = _muted ? 0 : value;
+        VolumePopupText.Text = _muted ? "静音" : value + "%";
+        SyncVolumeGlyph();
+        if (updateSettings && !_syncingVolume) Svc.Settings.SetPlayerVolume(value);
+    }
+    private bool _syncingVolume;
+
+    private void SyncVolumeGlyph()
+    {
+        if (VolumeGlyphText == null) return;
+        var silent = _muted || LiveVolume.Value <= 0;
+        VolumeGlyphText.Text = PlayerGlyphs.VolumeGlyph(silent);
+    }
+    private void MuteClick(object sender, RoutedEventArgs e)
+    {
+        // 触屏没有 hover: 第一下点喇叭=展开音量条, 已经在展开态时再点=静音切换。
+        if (!VolumePopup.IsOpen)
+        {
+            _volumePinned = true;
+            EnsureVolumePopupAnchor();
+            VolumePopup.IsOpen = true;
+            return;
+        }
+        _muted = !_muted;
+        VolumeSliderSync((int)LiveVolume.Value, updateSettings: false);
+    }
+    private void VolumeHoverEnter(object sender, MouseEventArgs e)
+    {
+        if (TouchSupport.IsTouchMouse(e)) return;   // 触屏由点击处理, 不要被合成鼠标事件抢
+        _volumeHover = true;
+        EnsureVolumePopupAnchor();
+        VolumePopup.IsOpen = true;
+    }
+    private void VolumeHoverLeave(object sender, MouseEventArgs e)
+    {
+        _volumeHover = false;
+        // 悬停离开且没被"点开"锁住时才收起。Popup 自己也收不到 MouseLeave, 这里靠按钮判定;
+        // 用延迟一拍的方式避免"从按钮挪到面板上"这一段被误收。
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+        {
+            if (IsClosing) return;
+            if (_volumeHover || _volumePinned || VolumePopup.IsMouseOver || MuteButton.IsMouseOver) return;
+            VolumePopup.IsOpen = false;
+        }));
+    }
+    private void EnsureVolumePopupAnchor()
+    {
+        // 面板必须锚在喇叭上: 窗口尺寸变化/全屏切换后 PlacementTarget 会失效, 重设一次。
+        VolumePopup.PlacementTarget = MuteButton;
+        VolumePopup.Placement = PlacementMode.Top;
+    }
+    private void CloseVolumePopup()
+    {
+        _volumeHover = false; _volumePinned = false;
+        VolumePopup.IsOpen = false;
+    }
+
+    // ------------------------------------------------------------ 控制栏显隐(与播放器同一套规则)
+
+    /// <summary>仅在"播放中 + 没有弹层/输入框/悬停"时才允许隐藏。暂停时控制栏常显。</summary>
+    private bool ShouldHideControls()
+    {
+        if (IsClosing || _paused) return false;
+        if (!_player.IsPlaying) return false;
+        if (_changingStream || PlaybackState.Visibility == Visibility.Visible) return false;
+        if (LiveSettingsPopup.IsOpen || QualityPopup.IsOpen || VolumePopup.IsOpen) return false;
+        if (ChatInput.IsKeyboardFocusWithin) return false;
+        if (LiveControls.IsMouseOver) return false;
+        return true;
+    }
+    private void StartControlsCountdown()
+    {
+        if (!ShouldHideControls()) { _controlsTimer.Stop(); return; }
+        _controlsTimer.Stop(); _controlsTimer.Start();
+    }
+    private void ApplyControlsHidden(bool hidden)
+    {
+        if (_controlsHidden == hidden || IsClosing) return;
+        _controlsHidden = hidden;
+        if (hidden) CloseVolumePopup();
+        LiveControls.IsHitTestVisible = !hidden;
+        VideoOverlay.Cursor = hidden ? Cursors.None : Cursors.Arrow;
+        var fade = new System.Windows.Media.Animation.DoubleAnimation(hidden ? 1 : 0, hidden ? 0 : 1, TimeSpan.FromMilliseconds(hidden ? 180 : 140))
+        { FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop };
+        LiveControls.BeginAnimation(OpacityProperty, fade);
+        LiveControls.Opacity = hidden ? 0 : 1;
+    }
+    private void ShowControls()
+    {
+        _controlsTimer.Stop();
+        ApplyControlsHidden(false);
+    }
+    private void VideoMouseMove(object sender, MouseEventArgs e)
+    {
+        if (TouchSupport.IsTouchMouse(e)) return;
+        ShowControls();
+        StartControlsCountdown();
+    }
+    private void VideoMouseLeave(object sender, MouseEventArgs e)
+    {
+        if (ShouldHideControls()) ApplyControlsHidden(true);
+    }
+    /// <summary>单击画面 = 切换控制栏显隐(与播放器 ToggleControlsByClick 完全一致)</summary>
+    private void ToggleControlsByClick()
+    {
+        if (_controlsHidden) { ShowControls(); StartControlsCountdown(); }
+        else { _controlsTimer.Stop(); ApplyControlsHidden(true); }
+    }
+
+    // ------------------------------------------------------------ 暂停 / 静音 / 画面弹幕
+
     private void PauseClick(object sender, RoutedEventArgs e) => TogglePause();
     private void TogglePause()
     {
         if (_changingStream || IsClosing) return;
-        if (_paused) { _paused = false; _ = LoadStreamAsync(); }
-        else if (_player.IsPlaying) { _paused = true; _player.SetPause(true); PauseButton.Content = "▶"; Model.StatusText = "画面已暂停，继续播放将回到实时画面"; }
+        if (_paused) { _paused = false; SetPauseGlyph(playing: true); ShowControls(); _ = LoadStreamAsync(); }
+        else if (_player.IsPlaying)
+        {
+            _paused = true; _player.SetPause(true); SetPauseGlyph(playing: false);
+            Model.StatusText = "画面已暂停，继续播放将回到实时画面";
+            ShowControls();   // 暂停时控制栏常显(用户多半要操作)
+        }
     }
-    private void MuteClick(object sender, RoutedEventArgs e) { _muted = !_muted; ApplyVolume(); }
-    private void VolumeChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    { if (_player == null) return; if (e.NewValue > 0) _muted = false; ApplyVolume(); Svc.Settings.SetPlayerVolume((int)e.NewValue); }
-    private void ApplyVolume() { _player.Volume = _muted ? 0 : (int)LiveVolume.Value; MuteButton.Content = _muted || LiveVolume.Value == 0 ? "静" : "♪"; }
+    /// <summary>播放/暂停图标: 与播放器 UpdatePlayButton 同一套矢量(Helpers.PlayerGlyphs)</summary>
+    private void SetPauseGlyph(bool playing)
+    {
+        if (PauseGlyph == null) return;
+        var glyph = playing ? PlayerGlyphs.Pause() : PlayerGlyphs.Play();
+        PauseGlyph.Data = glyph.Data;
+        PauseGlyph.Fill = glyph.Fill;
+    }
     private void OverlayClick(object sender, RoutedEventArgs e)
     { var s = Svc.Settings; s.UpdateDanmakuSettings(!s.DanmakuEnabled, s.DanmakuAreaPercent, s.DanmakuSmartFilter); }
     private void ReceiveChat(LiveChatEntry entry)
@@ -302,11 +513,18 @@ public partial class LiveRoomWindow : FluentWindow
         var s = Svc.Settings; _syncingOverlay = true;
         AreaSetting.Value = s.DanmakuAreaPercent; OpacitySetting.Value = s.DanmakuOpacityPercent;
         FontSetting.Value = s.DanmakuFontScalePercent; SpeedSetting.Value = s.DanmakuSpeedLevel; ColorSetting.IsChecked = s.DanmakuColorful;
+        AreaValue.Text = s.DanmakuAreaPercent + "%"; OpacityValue.Text = s.DanmakuOpacityPercent + "%";
+        FontValue.Text = s.DanmakuFontScalePercent + "%"; SpeedValue.Text = DanmakuMotion.SpeedLabel(s.DanmakuSpeedLevel);
         Model.OverlayEnabled = s.DanmakuEnabled; OverlayOff.Visibility = Model.OverlayEnabled ? Visibility.Collapsed : Visibility.Visible;
         _overlay.Configure(DanmakuMotion.FontSizeFromPercent(s.DanmakuFontScalePercent, 20), s.DanmakuAreaPercent / 100d, s.DanmakuOpacityPercent / 100d, s.DanmakuSpeedLevel);
         _keywordFilter = DanmakuKeywordFilter.Build(s.DanmakuBlockKeywords); _syncingOverlay = false;
     }
-    private void OverlaySettingsClick(object sender, RoutedEventArgs e) => LiveSettingsPopup.IsOpen = !LiveSettingsPopup.IsOpen;
+    private void OverlaySettingsClick(object sender, RoutedEventArgs e)
+    {
+        if (LiveSettingsPopup.IsOpen) { LiveSettingsPopup.IsOpen = false; return; }
+        LiveSettingsPopup.PlacementTarget = LiveSettingsButton;
+        LiveSettingsPopup.IsOpen = true;
+    }
     private void OverlaySettingChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => SaveOverlaySettings();
     private void ColorSettingChanged(object sender, RoutedEventArgs e) => SaveOverlaySettings();
     private void SaveOverlaySettings()
@@ -316,16 +534,44 @@ public partial class LiveRoomWindow : FluentWindow
         s.UpdateDanmakuSettings(s.DanmakuEnabled, (int)AreaSetting.Value, s.DanmakuSmartFilter,
             colorful: ColorSetting.IsChecked == true, opacityPercent: (int)OpacitySetting.Value, fontScalePercent: (int)FontSetting.Value, speedLevel: (int)SpeedSetting.Value);
     }
+
+    // ------------------------------------------------------------ 侧栏 / 铺满 / 全屏
+
     private void ChatToggleClick(object sender, RoutedEventArgs e) { _chatVisible = !_chatVisible; ApplyChatLayout(); }
     private void ApplyChatLayout()
     {
-        ChatPanel.Visibility = !_full && _chatVisible ? Visibility.Visible : Visibility.Collapsed;
-        ChatColumn.Width = new GridLength(!_full && _chatVisible ? ActualWidth < 1100 ? 300 : 360 : 0);
+        var show = !_full && !_fillWindow && _chatVisible;
+        ChatPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        ChatColumn.Width = new GridLength(show ? (ActualWidth < 1100 ? 300 : 360) : 0);
+    }
+
+    /// <summary>
+    /// 铺满窗口(2026-11-05, 与播放页 BtnFillWindow 同一语义):
+    /// 收起右侧弹幕栏, 让画面吃掉整块窗口宽度 —— 窗口尺寸本身不变。
+    /// ★ 与"全屏"是两件事: 全屏会收顶栏 + 最大化 + 盖任务栏。两者共用同一颗画面按钮的不同模式。
+    /// </summary>
+    private void FillWindowClick(object sender, RoutedEventArgs e) => ToggleFillWindow();
+    private void ToggleFillWindow()
+    {
+        if (IsClosing || _full) return;
+        _fillWindow = !_fillWindow;
+        FillWindowGlyph.Text = PlayerGlyphs.FillWindowGlyph(_fillWindow);
+        BtnFillWindow.ToolTip = _fillWindow ? "还原（退出铺满窗口）" : "铺满窗口（收起右侧弹幕栏）";
+        ApplyChatLayout();
     }
     private void VideoMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ClickCount == 2 && e.OriginalSource is DependencyObject source && !LiveControls.IsAncestorOf(source))
-        { ToggleFullscreen(); e.Handled = true; }
+        if (e.ClickCount == 2 && e.OriginalSource is DependencyObject source && !IsInsideControls(source))
+        { ToggleFullscreen(); e.Handled = true; return; }
+        // 单击(非双击)画面 = 控制栏显隐, 与播放器一致。
+        if (e.ClickCount == 1 && e.OriginalSource is DependencyObject single && !IsInsideControls(single))
+        { ToggleControlsByClick(); e.Handled = true; }
+    }
+    private bool IsInsideControls(DependencyObject source)
+    {
+        for (var d = source; d != null; d = d is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : null)
+            if (ReferenceEquals(d, LiveControls) || d is ButtonBase or Slider or TextBoxBase) return true;
+        return false;
     }
     private void FullscreenClick(object sender, RoutedEventArgs e) => ToggleFullscreen();
     private void ToggleFullscreen()
@@ -339,6 +585,7 @@ public partial class LiveRoomWindow : FluentWindow
         ApplyChatLayout();
         if (_full) { if (WindowState == WindowState.Maximized) RefreshMaximizedBounds(); else WindowState = WindowState.Maximized; }
         else if (_previousState == WindowState.Maximized) RefreshMaximizedBounds(); else WindowState = _previousState;
+        StartControlsCountdown();
     }
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
@@ -348,14 +595,13 @@ public partial class LiveRoomWindow : FluentWindow
             case Key.F: ToggleFullscreen(); break;
             case Key.Escape: if (_full) ToggleFullscreen(); else Close(); break;
             case Key.Space: TogglePause(); break;
-            case Key.M: _muted = !_muted; ApplyVolume(); break;
+            case Key.M: _muted = !_muted; VolumeSliderSync((int)LiveVolume.Value, updateSettings: false); break;
+            case Key.Enter: ToggleFillWindow(); break;
             default: return;
         }
         e.Handled = true;
     }
-    private void MinimizeClick(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
-    private void MaximizeClick(object sender, RoutedEventArgs e) => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
-    private void CloseClick(object sender, RoutedEventArgs e) => Close();
+
     protected override void OnClosing(CancelEventArgs e)
     {
         if (!_closeReady)
@@ -363,7 +609,9 @@ public partial class LiveRoomWindow : FluentWindow
             e.Cancel = true;
             if (!IsClosing)
             {
-                IsClosing = true; ++_request; ++_streamRequest; _health.Stop(); LiveSettingsPopup.IsOpen = false; Svc.Settings.DanmakuSettingsChanged -= ApplyOverlaySettings; Model.Dispose(); _chat.Dispose(); _overlay.Dispose();
+                IsClosing = true; ++_request; ++_streamRequest; _health.Stop(); _controlsTimer.Stop();
+                LiveSettingsPopup.IsOpen = false; QualityPopup.IsOpen = false; VolumePopup.IsOpen = false;
+                Svc.Settings.DanmakuSettingsChanged -= ApplyOverlaySettings; Model.Dispose(); _chat.Dispose(); _overlay.Dispose();
                 _player.Playing -= OnPlaying; _player.Volume = 0; Hide(); _ = TeardownAsync();
             }
         }

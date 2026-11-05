@@ -4,7 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using LibVLCSharp.Shared;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// LibVLC 原生实例的进程级单例。

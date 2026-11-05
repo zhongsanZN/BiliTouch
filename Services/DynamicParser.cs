@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
-using BiliDesk.Models;
+using BiliTouch.Models;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// 动态混合流解析(2026-11-04)。

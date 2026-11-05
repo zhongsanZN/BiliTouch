@@ -1,10 +1,10 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 public sealed class PersonalHomeViewModel : ObservableObject
 {

@@ -3,11 +3,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.Views.Controls;
+namespace BiliTouch.Views.Controls;
 
 /// <summary>Native in-page image gallery, shared by both video comment layouts.</summary>
 public sealed class InlineImageGallery:UserControl

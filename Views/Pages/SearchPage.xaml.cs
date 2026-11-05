@@ -6,11 +6,11 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
+using BiliTouch.Helpers;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
 
-namespace BiliDesk.Views.Pages;
+namespace BiliTouch.Views.Pages;
 
 /// <summary>
 /// 搜索页。

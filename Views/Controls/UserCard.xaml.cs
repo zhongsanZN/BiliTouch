@@ -1,10 +1,10 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.Views.Controls;
+namespace BiliTouch.Views.Controls;
 
 /// <summary>
 /// 搜索结果的用户卡。点整卡 = 进这个人/官方号的主页。

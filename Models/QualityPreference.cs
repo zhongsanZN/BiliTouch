@@ -1,4 +1,4 @@
-namespace BiliDesk.Models;
+namespace BiliTouch.Models;
 
 /// <summary>
 /// 「默认画质」可选项 —— 用户在设置页**开始播放前**选定的清晰度档位。

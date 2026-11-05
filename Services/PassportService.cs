@@ -4,9 +4,9 @@ using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
-using BiliDesk.Helpers;
+using BiliTouch.Helpers;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>扫码登录的状态(取值来自接口里的 data.code)</summary>
 public enum QrLoginState

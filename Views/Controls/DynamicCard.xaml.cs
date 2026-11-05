@@ -1,11 +1,11 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.Views.Controls;
+namespace BiliTouch.Views.Controls;
 
 /// <summary>
 /// 动态流里的一条视频动态卡: 顶部 [UP 头像 + 昵称 + 发布时间], 下方左侧封面(带时长角标)、

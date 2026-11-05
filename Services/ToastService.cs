@@ -1,6 +1,6 @@
 using System;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>轻量 Toast 通知(主窗口右上角浮动提示)</summary>
 public class ToastService

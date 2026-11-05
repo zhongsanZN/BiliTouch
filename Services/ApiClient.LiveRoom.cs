@@ -1,7 +1,7 @@
-using BiliDesk.Models;
-using BiliDesk.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Helpers;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 public partial class ApiClient
 {

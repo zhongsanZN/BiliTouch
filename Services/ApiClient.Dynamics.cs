@@ -1,9 +1,9 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using BiliDesk.Models;
+using BiliTouch.Models;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 public partial class ApiClient
 {

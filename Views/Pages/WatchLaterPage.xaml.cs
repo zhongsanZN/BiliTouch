@@ -1,11 +1,11 @@
-using BiliDesk.Models;
+using BiliTouch.Models;
 ﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
-using BiliDesk.ViewModels;
+using BiliTouch.Helpers;
+using BiliTouch.ViewModels;
 
-namespace BiliDesk.Views.Pages;
+namespace BiliTouch.Views.Pages;
 
 /// <summary>
 /// 「稍后再看」页(2026-09-28 新增): 卡片墙 + 编辑模式(批量移出/清空)。
@@ -83,5 +83,5 @@ public partial class WatchLaterPage : UserControl
 
     /// <summary>返回「我的」页(入口在那里)</summary>
     private void OnBackToMineClick(object sender, RoutedEventArgs e)
-        => BiliDesk.Services.SvcWindow.Main?.OpenMineOverview();
+        => BiliTouch.Services.SvcWindow.Main?.OpenMineOverview();
 }

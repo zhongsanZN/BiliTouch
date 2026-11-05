@@ -4,10 +4,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>应用设置存储(settings.json)</summary>
 public class SettingsStore
@@ -119,6 +119,26 @@ public class SettingsStore
     ///   与"卡片列数"同一类(改了立刻落盘, 不跟着片源/页面走)。
     /// </summary>
     public bool FollowCardWall { get; set; }
+
+    /// <summary>
+    /// 「动态」页**左栏 UP 主列表**的排序模式(2026-11-05):
+    /// 最近更新(默认) / 未读优先 / 关注顺序, 取值见 <see cref="Models.FollowSortMode"/>。
+    ///
+    /// ★ 与 FollowCardWall 同一类**用户偏好**: 点一次就落盘, 重启/切页回来还是他选的那档。
+    /// ★ 排序只作用于左栏的展示顺序, **不重新请求接口**(见 FollowViewModel.SortUsers)。
+    /// ★ 落盘字段是 int(见 AppSettings.FollowSortMode), 读回来先过 FollowSorting.Normalize ——
+    ///   手改配置塞进 99 时回落到默认, 而不是在下游枚举分支里默默走 default。
+    /// </summary>
+    public FollowSortMode FollowSortMode { get; set; } = FollowSorting.DefaultMode;
+
+    /// <summary>设置左栏排序模式并落盘。非法枚举值一律忽略(不写脏数据)</summary>
+    public void SetFollowSortMode(FollowSortMode mode)
+    {
+        if (!FollowSorting.IsDefined(mode)) return;
+        if (FollowSortMode == mode) return;
+        FollowSortMode = mode;
+        Save();
+    }
 
     /// <summary>
     /// 软件缩放百分比(默认 100 = 不缩放)。范围见 <see cref="Helpers.UiScale.MinPercent"/>。
@@ -483,6 +503,11 @@ public class SettingsStore
         // 动态页排版: 老配置没这个字段 ⇒ 默认 false(动态卡)。bool 没有越界值, 不需要夹取。
         FollowCardWall = s.FollowCardWall;
 
+        // 左栏排序: 老配置没这个字段 ⇒ 0 = 最近更新(正是默认档), 不需要版本兼容;
+        // 但仍要归一 —— 手改配置可能塞进 99 / -1, 不归一的话下游 switch 会默默落到 default,
+        // 界面上却三个 chip 全不亮(看起来像"排序坏了")。
+        FollowSortMode = FollowSorting.Normalize(s.FollowSortMode);
+
         // ★ 下载位置: 老配置没这个字段(默认空串 = 用系统下载文件夹)。
         //   非法/不存在的路径**不写进设置**(回落空串), 免得把脏路径带到 Path.Combine 下游 ——
         //   那种错的表现是"下载一直失败", 很难定位到是这行造成的。
@@ -717,6 +742,7 @@ public class SettingsStore
         CardColumns = CardColumns,
         UiScalePercent = UiScalePercent,
         FollowCardWall = FollowCardWall,
+        FollowSortMode = (int)FollowSortMode,
         DownloadDir = DownloadDir,
         DanmakuEnabled = DanmakuEnabled,
         DanmakuAreaPercent = DanmakuAreaPercent,

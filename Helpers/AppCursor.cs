@@ -7,7 +7,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Interop;
 using Microsoft.Win32.SafeHandles;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>App-local pointer assets; text editing, resizing and hidden video cursors keep their purpose.</summary>
 public static class AppCursor
@@ -19,7 +19,7 @@ public static class AppCursor
     public static Cursor Pressed=>_pressed??=Load("Cursor_down.cur");
     private static Cursor Load(string name)
     {
-        using var stream=Application.GetResourceStream(new Uri("pack://application:,,,/BiliDesk;component/Assets/Cursors/"+name))!.Stream;
+        using var stream=Application.GetResourceStream(new Uri("pack://application:,,,/BiliTouch;component/Assets/Cursors/"+name))!.Stream;
         var path=Path.Combine(Path.GetTempPath(),"BiliTouch-cursor-"+Guid.NewGuid().ToString("N")+".cur");
         try
         {
@@ -37,7 +37,7 @@ public static class AppCursor
         {
             string Pointer(string name)
             {
-                using var stream=Application.GetResourceStream(new Uri("pack://application:,,,/BiliDesk;component/Assets/Cursors/"+name))!.Stream;
+                using var stream=Application.GetResourceStream(new Uri("pack://application:,,,/BiliTouch;component/Assets/Cursors/"+name))!.Stream;
                 using var bytes=new System.IO.MemoryStream();stream.CopyTo(bytes);
                 // CUR contains the untouched source PNG after its 22-byte directory/header.
                 var png="data:image/png;base64,"+Convert.ToBase64String(bytes.ToArray()[22..]);

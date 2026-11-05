@@ -1,7 +1,7 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                    xmlns:controls="clr-namespace:BiliDesk.Views.Controls"
-                    xmlns:helpers="clr-namespace:BiliDesk.Helpers">
+                    xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
+                    xmlns:helpers="clr-namespace:BiliTouch.Helpers">
     <!--
         设置页四个 Tab 的内容模板(2026-10-03 重做)。
         由 SettingsPage.xaml 的 ContentControl 按 TabIndex 切换。
@@ -1010,7 +1010,7 @@
                             <StackPanel>
                                 <TextBlock Text="作者 · 中三" Style="{StaticResource SettingsRowTitleStyle}" />
                                 <TextBlock Text="查看 B 站主页 ›" Style="{StaticResource SettingsRowDescStyle}" />
-                                <TextBlock Text="以 BiliDesk 为基础，独立演进触控体验。" Style="{StaticResource SettingsRowDescStyle}" />
+                                <TextBlock Text="以 BiliTouch 为基础，独立演进触控体验。" Style="{StaticResource SettingsRowDescStyle}" />
                             </StackPanel>
                         </Button>
                         <TextBlock Text="{Binding RuntimeInfo}" Style="{StaticResource SettingsRowDescStyle}" />
@@ -1030,22 +1030,22 @@
                 <Border Style="{StaticResource SettingsCardStyle}">
                     <StackPanel Margin="0,14">
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                            <Image Source="/BiliDesk;component/Assets/bilidesk-original.png" Width="36" Height="36" />
+                            <Image Source="/BiliTouch;component/Assets/upstream-original.png" Width="36" Height="36" />
                             <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
-                                <TextBlock Text="BiliDesk" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
+                                <TextBlock Text="BiliTouch" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
                                 <TextBlock Text="原始项目" Style="{StaticResource MetaTextStyle}" />
                             </StackPanel>
                         </StackPanel>
-                        <TextBlock Text="感谢 BiliDesk 为播放器、浏览与桌面客户端提供的开源基础。" Style="{StaticResource SettingsRowDescStyle}" />
+                        <TextBlock Text="感谢 BiliTouch 为播放器、浏览与桌面客户端提供的开源基础。" Style="{StaticResource SettingsRowDescStyle}" />
                         <TextBlock Text="{Binding UpstreamVersionNumber}" Style="{StaticResource SettingsRowDescStyle}" Margin="0,12,0,12" />
                         <Border Style="{StaticResource SettingsRowDivider}" />
-                        <Button Style="{StaticResource AuthorCardButtonStyle}" HorizontalContentAlignment="Stretch" MinHeight="64" Margin="0,8" Command="{Binding OpenAuthorCommand}" ToolTip="在应用内打开 BiliDesk 原作者的 B 站主页">
+                        <Button Style="{StaticResource AuthorCardButtonStyle}" HorizontalContentAlignment="Stretch" MinHeight="64" Margin="0,8" Command="{Binding OpenAuthorCommand}" ToolTip="在应用内打开 BiliTouch 原作者的 B 站主页">
                             <StackPanel>
                                 <TextBlock Text="ABing" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
-                                <TextBlock Text="BiliDesk 原作者 · 查看 B 站主页 ›" Style="{StaticResource SettingsRowDescStyle}" />
+                                <TextBlock Text="BiliTouch 原作者 · 查看 B 站主页 ›" Style="{StaticResource SettingsRowDescStyle}" />
                             </StackPanel>
                         </Button>
-                        <TextBlock Text="原版本 · BiliDesk v1.5.4 / 触控分支 touch.9" Style="{StaticResource SettingsRowDescStyle}" />
+                        <TextBlock Text="原版本 · BiliTouch v1.5.4 / 触控分支 touch.9" Style="{StaticResource SettingsRowDescStyle}" />
                     </StackPanel>
                 </Border>
                 <ContentControl ContentTemplate="{StaticResource SectionHeaderTemplate}" Content="开源与声明" />

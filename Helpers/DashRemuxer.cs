@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 把 B 站 DASH 的两路分片流(视频/音频各一个 .m4s)**纯拷贝**合成一个本地 mp4。

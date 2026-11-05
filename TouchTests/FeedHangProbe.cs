@@ -4,12 +4,12 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views.Pages;
-using BiliDesk.Views.Controls;
+using BiliTouch;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views.Pages;
+using BiliTouch.Views.Controls;
 
 /// <summary>
 /// 定位"动态流卡死"到底是哪一条数据(2026-11-04)。
@@ -29,7 +29,7 @@ internal static class FeedHangProbe
     {
         OutputDir = output;
         var sessionFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "AppData", "Local", "BiliDesk", "session.json");
+            "AppData", "Local", "BiliTouch", "session.json");
         if (!File.Exists(sessionFile)) { Console.WriteLine("HANG unavailable: no session"); return; }
         var session = JsonSerializer.Deserialize<Session>(File.ReadAllText(sessionFile),
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });

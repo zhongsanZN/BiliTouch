@@ -16,4 +16,4 @@
 
 验证与实现记录见 `LIVE-ROOM-REBUILD-2026-11-05.md`。真实直播在游客与现有登录态下都已通过只读画面播放及弹幕接收；没有发送真实弹幕、关注或支付。SC 的真实付费事件没有主动制造，以协议/界面夹具验证；多设备触摸及长时间高流量直播尚需使用反馈。
 
-本地打包，不上传远程发布。主题美术与代码权利分别见 `BiliDesk/Assets/Skins/StarParty/SOURCES.md` 和 `LICENSE`。
+本地打包，不上传远程发布。主题美术与代码权利分别见 `BiliTouch/Assets/Skins/StarParty/SOURCES.md` 和 `LICENSE`。

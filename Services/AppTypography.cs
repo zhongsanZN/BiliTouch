@@ -1,7 +1,7 @@
 using System.Windows;
 using System.Windows.Media;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 public sealed record FontChoice(string Id,string Name);
 
@@ -13,8 +13,8 @@ public static class AppTypography
     public static string Normalize(string? id)=>Choices.Any(c=>c.Id==id)?id!:"System";
     public static FontFamily Family(string? id)=>Normalize(id) switch
     {
-        "HarmonyOS"=>new(new Uri("pack://application:,,,/BiliDesk;component/Assets/Fonts/"),"./#HarmonyOS Sans SC"),
-        "JingNan"=>new(new Uri("pack://application:,,,/BiliDesk;component/Assets/Fonts/"),"./#荆南波波黑"),
+        "HarmonyOS"=>new(new Uri("pack://application:,,,/BiliTouch;component/Assets/Fonts/"),"./#HarmonyOS Sans SC"),
+        "JingNan"=>new(new Uri("pack://application:,,,/BiliTouch;component/Assets/Fonts/"),"./#荆南波波黑"),
         _=>new("Segoe UI Variable Text, Microsoft YaHei UI, Segoe UI, Microsoft YaHei")
     };
     public static void Apply(string id)

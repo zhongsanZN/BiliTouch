@@ -5,11 +5,11 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.ViewModels;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.ViewModels;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 public enum OfflineState { Queued, Downloading, Paused, Failed, Completed }
 

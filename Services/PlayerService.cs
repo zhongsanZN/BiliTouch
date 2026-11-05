@@ -1,8 +1,8 @@
 using System;
 using System.Windows;
-using BiliDesk.Views;
+using BiliTouch.Views;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// 原生播放器窗口管理(LibVLC 内核): 复用同一个窗口, 切换视频不重新加载 LibVLC。
@@ -131,7 +131,7 @@ public class PlayerService
         if (win == null) return;
 
         start(win);
-        if (!string.IsNullOrEmpty(title)) win.Title = title + " - BiliDesk";
+        if (!string.IsNullOrEmpty(title)) win.Title = title + " - BiliTouch";
 
         // ★★★ 2026-11-04 删除这里的"强制显形兜底"(它曾是桌面上那块黑的来源之一)。
         //

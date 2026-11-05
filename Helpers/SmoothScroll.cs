@@ -5,7 +5,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// ScrollViewer 平滑滚动(鼠标滚轮)。
@@ -94,7 +94,12 @@ public static class SmoothScroll
     {
         var sv = (ScrollViewer)sender;
         if (e.Handled || sv.ScrollableHeight <= 0 || !TrackpadScroll.OwnsWheel(sv,e)) return;
-        if (TrackpadScroll.Handle(sv,e,includeNotches:true)) return;
+        // ★ 整格只有**信息流**交给 TrackpadScroll: 与全局类处理器用同一个判据(IsFeed)。
+        //   非信息流容器(播放器网页布局的 WebLeftScroll 就属于这种)必须原样落回下面的
+        //   DoubleAnimation 路径 —— 那条路径是按 DurationMs=280 + QuadraticEase 调过手感的,
+        //   若在这里也传 includeNotches:true, TrackpadScroll 会抢先接管, 手感被换成指数逼近,
+        //   而且 SmoothScroll 自己的动画再也不会执行(看起来"改了参数"却毫无作用)。
+        if (TrackpadScroll.Handle(sv,e,includeNotches:TrackpadScroll.GetIsFeed(sv))) return;
         TrackpadScroll.Cancel(sv);
         e.Handled = true;
 

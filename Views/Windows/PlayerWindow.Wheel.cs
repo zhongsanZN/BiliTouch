@@ -1,7 +1,7 @@
 using System;
 using System.Windows.Threading;
 
-namespace BiliDesk.Views;
+namespace BiliTouch.Views;
 
 /// <summary>
 /// 播放器窗口的**触控板横向双指滑动 / 鼠标横向滚轮**(2026-11-04)。

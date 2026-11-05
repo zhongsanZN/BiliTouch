@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.Windows.Data;
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 public sealed class MessageCardWidthConverter : IValueConverter
 {
  public object Convert(object value,Type targetType,object parameter,CultureInfo culture)

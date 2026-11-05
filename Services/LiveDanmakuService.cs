@@ -10,9 +10,9 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
-using BiliDesk.Models;
+using BiliTouch.Models;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// 直播间弹幕(2026-11-04)。

@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 面向用户的下载文件名规则。

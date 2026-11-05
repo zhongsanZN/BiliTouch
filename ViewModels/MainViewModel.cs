@@ -1,12 +1,12 @@
 using System;
 using System.Windows;
 using System.Windows.Input;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.Views;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.Views;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 public enum PageKey
 {

@@ -6,10 +6,10 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Windows.Data;
 using System.Windows.Threading;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 全局列表**屏蔽**: 把标题或 UP 主里含指定词的视频从列表中隐藏掉。

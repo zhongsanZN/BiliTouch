@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using System.Windows.Input;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 /// <summary>首页 ViewModel: 推荐 + 热门 + 排行榜 + 直播 + 追番 五个 tab</summary>
 public class HomeViewModel : ObservableObject

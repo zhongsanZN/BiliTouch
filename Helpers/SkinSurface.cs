@@ -1,9 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using BiliDesk.Services;
+using BiliTouch.Services;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>Code-native extension of the original pattern; never participates in input.</summary>
 public sealed class SkinSurface : FrameworkElement

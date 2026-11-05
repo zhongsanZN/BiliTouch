@@ -1,8 +1,8 @@
-<UserControl helpers:TrackpadScroll.IsFeed="True" x:Class="BiliDesk.Views.Pages.FollowPage"
+<UserControl helpers:TrackpadScroll.IsFeed="True" x:Class="BiliTouch.Views.Pages.FollowPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:controls="clr-namespace:BiliDesk.Views.Controls"
-             xmlns:helpers="clr-namespace:BiliDesk.Helpers"
+             xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
+             xmlns:helpers="clr-namespace:BiliTouch.Helpers"
              Background="{DynamicResource AppBackgroundBrush}">
     <UserControl.Resources>
         <!--
@@ -41,6 +41,97 @@
                                 <Setter Property="Foreground" Value="{DynamicResource AccentTextStrongBrush}" />
                                 <Setter Property="FontWeight" Value="SemiBold" />
                             </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!--
+            ★ 2026-11-05 左栏 UP 主排序用的三枚 chip(最近更新 / 未读优先 / 关注顺序)。
+
+            为什么另起一个 key 而不是直接复用上面那个:
+              上面那枚的 Padding 是 9,3 —— 在左栏(252 宽)里三枚并排会挤到换行。
+              这里收窄到 7,4 并压掉最小宽度, 三枚正好落在一行内(RUN 时量过 232 可用宽)。
+              触发器/配色完全照抄, 只在 Tag="on" 时的观感与它保持一致 —— 用户看上去是同一套控件。
+
+            ★ 文字必须是**显式 TextBlock** 而不是 Content="…":
+              全局隐式 <Style TargetType="TextBlock"> 带 Foreground setter, 而 WPF 的优先级是
+              Style setter > 继承, 于是它会压过 ContentPresenter 透传下来的 TextElement.Foreground ——
+              chip 选中时粉字会被吃成灰字。这里 Content 是显式 TextBlock, 它的 Foreground 走
+              RelativeSource 绑定到 Button.Foreground(局部值), 优先级最高, 不会被隐式样式盖掉。
+              播放页评论排序的 chip 就是这么写的, 照抄。
+        -->
+        <Style x:Key="FollowSortChipStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="7,4" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="6"
+                                Background="Transparent"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource ControlFillHoverBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                            </Trigger>
+                            <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="on">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource AccentSoftFillBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource AccentTextStrongBrush}" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 左栏「全部标记已读」的小按钮: 无底, 悬停才铺一层浅灰 —— 它是辅助操作, 不该抢排序 chip 的注意力。
+             ★ 文字同样显式写 TextBlock + Foreground 绑定, 理由同上(隐式 TextBlock 样式会吃前景色)。
+             ★ MarkAllReadFlash 由 VM 在点完 1.6 秒内保持 true, 那时整块变粉底(确认感)。 -->
+        <Style x:Key="FollowMarkReadButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="Padding" Value="7,3" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" CornerRadius="6" Background="Transparent"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource ControlFillHoverBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource ControlFillPressedBrush}" />
+                            </Trigger>
+                            <DataTrigger Binding="{Binding MarkAllReadFlash}" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource AccentSoftFillBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource AccentTextStrongBrush}" />
+                            </DataTrigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -137,6 +228,55 @@
                               ScrollChanged="UpListScroll_OnScrollChanged"
                               Margin="12,4,0,20">
                     <StackPanel Margin="8,0,8,0">
+                        <!-- ===== 排序 + 未读汇总(2026-11-05 新增) =====
+                             用户原话"没看懂动态的 up 主排序怎么做的, 未读已读机制好像也没做好"。
+                             所以这里把规则**摆在界面上**: 三枚 chip 直接写明这档怎么排(悬浮说明说全),
+                             下面一行汇总"几个 UP 有更新" + 一键全部标记已读。
+                             ★ 位置在左栏**顶部、全部动态入口之前**: 排序作用于整个列表,
+                               放列表中间会让人以为只管下面那几个。
+                             ★ 选中态由 VM 的 SortTagXxx 三件套驱动(只在一处决定), 见 FollowViewModel。 -->
+                        <StackPanel Margin="28,6,2,2">
+                            <StackPanel Orientation="Horizontal" ToolTip="{Binding SortModeTip}">
+                                <Button x:Name="SortRecentChip" Style="{StaticResource FollowSortChipStyle}"
+                                        Tag="{Binding SortTagRecent}" Command="{Binding SortRecentCommand}"
+                                        ToolTip="按每个 UP 最近一条动态的发布时间排，没抓到的排后面">
+                                    <TextBlock Text="最近更新" FontSize="12"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                </Button>
+                                <Button x:Name="SortUnreadChip" Style="{StaticResource FollowSortChipStyle}" Margin="2,0,0,0"
+                                        Tag="{Binding SortTagUnread}" Command="{Binding SortUnreadCommand}"
+                                        ToolTip="有未读红点的 UP 排最前，组内仍按最近更新时间排">
+                                    <TextBlock Text="未读优先" FontSize="12"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                </Button>
+                                <Button x:Name="SortOrderChip" Style="{StaticResource FollowSortChipStyle}" Margin="2,0,0,0"
+                                        Tag="{Binding SortTagOrder}" Command="{Binding SortOrderCommand}"
+                                        ToolTip="按关注先后排（接口原序），不随动态变化">
+                                    <TextBlock Text="关注顺序" FontSize="12"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                </Button>
+                            </StackPanel>
+
+                            <!-- 汇总徽标 + 全部标记已读: 同一行, 没有未读时徽标整块隐藏但按钮留着
+                                 (按钮是"我确认都看过了"的手动出口, 不该跟着红点有无而忽隐忽现)。 -->
+                            <DockPanel Margin="0,4,0,0" LastChildFill="False">
+                                <Border DockPanel.Dock="Left" CornerRadius="8" Padding="7,2" VerticalAlignment="Center"
+                                        Background="{DynamicResource DangerBrush}"
+                                        ToolTip="这些 UP 有未读动态（点开某个 UP 才算已读）"
+                                        Visibility="{Binding HasUnreadSummary, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding UnreadSummary}" FontSize="10.5" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextOnDangerBrush}" />                                </Border>
+                                <Button DockPanel.Dock="Right" HorizontalAlignment="Right"
+                                        x:Name="MarkAllReadButton" Style="{StaticResource FollowMarkReadButtonStyle}"
+                                        Command="{Binding MarkAllReadCommand}"
+                                        IsEnabled="{Binding HasFollowUsers}"
+                                        ToolTip="把当前所有 UP 的已读基准推到各自最新一条">
+                                    <TextBlock x:Name="MarkAllReadLabel" Text="{Binding MarkAllReadText}" FontSize="11.5"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                </Button>
+                            </DockPanel>
+                        </StackPanel>
+
                         <!-- 全部动态入口: 选中高亮跟 VM.IsAllSelected 走 -->
                         <!-- 选中/悬停观感与左侧导航栏一致: 悬停灰(NavItemHoverBrush),
                              选中粉底(AccentSoftFillBrush) + 粉字(AccentTextBrush)。 -->

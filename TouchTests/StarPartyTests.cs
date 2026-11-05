@@ -8,14 +8,14 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views;
-using BiliDesk.Views.Controls;
-using BiliDesk.Views.Pages;
+using BiliTouch;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views;
+using BiliTouch.Views.Controls;
+using BiliTouch.Views.Pages;
 
 internal static class StarPartyTests
 {
@@ -116,12 +116,17 @@ internal static class StarPartyTests
             Action<string> recordToast = message => toasts.Add(message);
             Svc.Toast.Shown += recordToast;
             var pendingLike = new TaskCompletionSource<HttpResponseMessage>(); handler.Pending = pendingLike;
+            // ★ 2026-11-05: 用"上一次动效开始时刻"判"这一下点赞有没有触发过动效", 而不是只看 IsPlaying。
+            //   动效本身 740ms, 而"请求返回 + 按钮重新可用"这段在夹具里可能超过一秒 ——
+            //   等断言跑到时动效已经自然收场, 于是出现"八次挂两次"的假失败(实测)。
+            //   语义不变: 我们要证明的是"点赞成功会庆祝", 不是"庆祝还在屏幕上"。
+            long likeReactionTick = reactions.LastStartedTick;
             Call(player, "OnLikeClick", button, new RoutedEventArgs()); Pump(40);
             check(!reactions.IsPlaying && !button.IsEnabled, "pending like neither celebrates nor allows overlapping requests");
             pendingLike.SetResult(Fixture.Response("{\"code\":0}")); Until(() => button.IsEnabled);
-            check(reactions.IsPlaying && Field<bool>(player, "_isLiked"), $"successful video like triggers a character beside the original button (liked={Field<bool>(player,"_isLiked")}, playing={reactions.IsPlaying}, host={reactions.RenderSize}, loaded={reactions.IsLoaded}, buttonVisible={button.IsVisible}, bounds={button.TransformToVisual(reactions).TransformBounds(new Rect(button.RenderSize))}, effects={SkinService.Instance.EffectsEnabled}, systemAnimation={SystemParameters.ClientAreaAnimation}, toasts={string.Join(';',toasts)})");
+            check(reactions.LastStartedTick > likeReactionTick && Field<bool>(player, "_isLiked"), $"successful video like triggers a character beside the original button (liked={Field<bool>(player,"_isLiked")}, playing={reactions.IsPlaying}, host={reactions.RenderSize}, loaded={reactions.IsLoaded}, buttonVisible={button.IsVisible}, bounds={button.TransformToVisual(reactions).TransformBounds(new Rect(button.RenderSize))}, effects={SkinService.Instance.EffectsEnabled}, systemAnimation={SystemParameters.ClientAreaAnimation}, toasts={string.Join(';',toasts)})");
             check(!toasts.Contains("点赞成功"), "successful like has no duplicate text toast");
-            check(!reactions.IsHitTestVisible && new Rect(reactions.RenderSize).Contains(reactions.SpriteBounds), "reaction stays within the information panel and never captures input");
+            check(!reactions.IsHitTestVisible && new Rect(reactions.RenderSize).Contains(reactions.LastSpriteBounds) && !reactions.LastSpriteBounds.IsEmpty, "reaction stays within the information panel and never captures input");
             Pump(80);
             Save(player, Path.Combine(artifacts, "star-party-player-like.png"));
             Pump(820); check(!reactions.IsPlaying, "reaction clock removes itself after the short animation");
@@ -133,8 +138,10 @@ internal static class StarPartyTests
             Set(player, "_currentBvid", "BVfixture2"); Set(player, "_aid", 2L);
             pendingLike.SetResult(Fixture.Response("{\"code\":0}")); Until(() => button.IsEnabled);
             check(!reactions.IsPlaying && !Field<bool>(player, "_isLiked"), "late success for a previous video cannot mutate or celebrate the new video");
+            var coinTick = reactions.LastStartedTick;
             var coin = (Task)Call(player, "CoinAsync", 1, true)!; Until(() => coin.IsCompleted); coin.GetAwaiter().GetResult();
-            check(reactions.IsPlaying && Field<bool>(player, "_isCoined") && Field<bool>(player, "_isLiked"), "coin with bundled like emits one successful reaction"); Pump(950);
+            // 同上: 判"触发过"而不是"还在播"(动效 740ms, 可能已经收场)。
+            check(reactions.LastStartedTick > coinTick && Field<bool>(player, "_isCoined") && Field<bool>(player, "_isLiked"), "coin with bundled like emits one successful reaction"); Pump(950);
             check(!toasts.Any(t => t is "投币成功" or "已投 2 枚币"), "successful coin has no duplicate text toast");
 
             // Exercise the real favorite picker and real success path with local HTTP responses.
@@ -145,8 +152,9 @@ internal static class StarPartyTests
                 pickerTimer.Stop(); var item = ((ItemsControl)picker.FindName("FolderList")).Items[0]; item.GetType().GetProperty("IsChecked")!.SetValue(item, true);
                 Call(picker, "OnConfirmClick", picker, new RoutedEventArgs());
             };
+            var favTick = reactions.LastStartedTick;
             pickerTimer.Start(); Call(player, "OnFavoriteClick", player.FindName("BtnFavorite"), new RoutedEventArgs()); Until(() => !Field<bool>(player, "_favBusy"));
-            check(reactions.IsPlaying && Field<bool>(player, "_isFavorited"), "adding a favorite celebrates only after the confirmed folder update succeeds");
+            check(reactions.LastStartedTick > favTick && Field<bool>(player, "_isFavorited"), "adding a favorite celebrates only after the confirmed folder update succeeds");
             check(!toasts.Any(t => t.StartsWith("已收藏到")), "successful favorite has no duplicate text toast");
             Svc.Toast.Shown -= recordToast;
             Pump(130);

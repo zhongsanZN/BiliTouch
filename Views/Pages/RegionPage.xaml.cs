@@ -4,10 +4,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
-using BiliDesk.ViewModels;
+using BiliTouch.Helpers;
+using BiliTouch.ViewModels;
 
-namespace BiliDesk.Views.Pages;
+namespace BiliTouch.Views.Pages;
 
 /// <summary>
 /// 分区页。入口: 首页左上角 logo 的分区面板(MainWindow.NavigateToRegion)。

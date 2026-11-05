@@ -1,6 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
-namespace BiliDesk.Views.Controls;
+namespace BiliTouch.Views.Controls;
 public partial class ContactListRow : UserControl
 {
  public ContactListRow()=>InitializeComponent();

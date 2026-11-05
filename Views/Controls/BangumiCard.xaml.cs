@@ -5,11 +5,11 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.Views.Controls;
+namespace BiliTouch.Views.Controls;
 
 /// <summary>
 /// 番剧海报卡(竖版 3:4): 入场淡入 + 悬停放大 + 点击打开**选集页**。

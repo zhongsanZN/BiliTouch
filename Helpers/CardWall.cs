@@ -3,7 +3,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Threading;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 卡片墙"铺满宽度"的规则：按容器实际宽度算出一行放几张、每张多宽，让卡片**随窗口大小一起变**，

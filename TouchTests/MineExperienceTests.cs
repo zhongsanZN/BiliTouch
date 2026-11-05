@@ -10,13 +10,13 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views.Controls;
-using BiliDesk.Views.Pages;
+using BiliTouch;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views.Controls;
+using BiliTouch.Views.Pages;
 
 internal static class MineExperienceTests
 {
@@ -63,9 +63,9 @@ internal static class MineExperienceTests
             var host=new Window {Width=1100,Height=760,Content=cachePage};host.Show();Pump(120);
             Save(host,Path.Combine(artifacts,"mine-cache-completed.png"));
             host.Width=680;Pump(100);Save(host,Path.Combine(artifacts,"mine-cache-compact.png"));host.Width=1100;Pump(100);
-            Application.Current.Resources.MergedDictionaries[0]=new ResourceDictionary {Source=new Uri("/BiliDesk;component/Themes/Colors.Dark.xaml",UriKind.Relative)};Pump(80);
+            Application.Current.Resources.MergedDictionaries[0]=new ResourceDictionary {Source=new Uri("/BiliTouch;component/Themes/Colors.Dark.xaml",UriKind.Relative)};Pump(80);
             Save(host,Path.Combine(artifacts,"mine-cache-dark.png"));
-            Application.Current.Resources.MergedDictionaries[0]=new ResourceDictionary {Source=new Uri("/BiliDesk;component/Themes/Colors.Light.xaml",UriKind.Relative)};Pump(80);
+            Application.Current.Resources.MergedDictionaries[0]=new ResourceDictionary {Source=new Uri("/BiliTouch;component/Themes/Colors.Light.xaml",UriKind.Relative)};Pump(80);
             check(Descendants<TextBlock>(cachePage).Any(t=>t.Text=="第一集" || t.Text.Contains("第一集")),"cache renders episode identity instead of raw filenames");
             cacheVm.BeginEdit(resume);check(cacheVm.IsEditMode && resume.IsSelected,"holding an offline item enters selection");
             cacheVm.ExitEditCommand.Execute(null);
@@ -84,7 +84,7 @@ internal static class MineExperienceTests
             bool preferred=false,cancelVisible=false;
             Application.Current.Dispatcher.BeginInvoke(DispatcherPriority.Loaded,new Action(()=>
             {
-                var dialog=Application.Current.Windows.OfType<BiliDesk.Views.FluentWindow>().Single(w=>w.Title=="缓存视频");
+                var dialog=Application.Current.Windows.OfType<BiliTouch.Views.FluentWindow>().Single(w=>w.Title=="缓存视频");
                 preferred=Descendants<CheckBox>(dialog).Any(c=>c.Tag is VideoPage {Cid:2} && c.IsChecked==true);
                 var cancel=Descendants<Button>(dialog).Single(b=>b.Content?.ToString()=="取消");cancelVisible=cancel.IsCancel && cancel.MinHeight>=44;
                 Save(dialog,Path.Combine(artifacts,"mine-cache-picker.png"));cancel.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

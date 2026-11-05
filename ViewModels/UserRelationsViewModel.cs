@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
-using BiliDesk.Models;
-using BiliDesk.Services;
-namespace BiliDesk.ViewModels;
+using BiliTouch.Models;
+using BiliTouch.Services;
+namespace BiliTouch.ViewModels;
 public sealed class UserRelationsViewModel : ObservableObject
 {
  private readonly long _mid;private readonly bool _followers;private int _page;private bool _loading,_more=true;private string _error="";

@@ -1,8 +1,8 @@
-<UserControl x:Class="BiliDesk.Views.Pages.BangumiPage"
+<UserControl x:Class="BiliTouch.Views.Pages.BangumiPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:behaviors="clr-namespace:BiliDesk.Helpers"
-             xmlns:controls="clr-namespace:BiliDesk.Views.Controls"
+             xmlns:behaviors="clr-namespace:BiliTouch.Helpers"
+             xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
              Background="{DynamicResource AppBackgroundBrush}">
     <!--
         番剧详情 + 选集页。

@@ -4,7 +4,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Media;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 全局「软件缩放」(2026-10-06 新增): 把整个界面按百分比放大/缩小, 与系统 DPI 无关。

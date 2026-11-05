@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>这条媒体属于哪一类播放源(决定缓冲策略走哪条规则)</summary>
 public enum BufferMediaKind

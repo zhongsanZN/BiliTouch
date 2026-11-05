@@ -9,12 +9,12 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>BiliDesk</RootNamespace>
-    <AssemblyName>BiliDesk</AssemblyName>
+    <RootNamespace>BiliTouch</RootNamespace>
+    <AssemblyName>BiliTouch</AssemblyName>
     <AssemblyTitle>BiliTouch</AssemblyTitle>
     <Product>BiliTouch</Product>
     <Authors>中三</Authors>
-    <Version>0.1.5</Version>
+    <Version>0.1.6</Version>
     <PlatformTarget>x64</PlatformTarget>
     <!--
       RollForward=Major: 框架依赖版(安装器)在机器上没有 .NET 10 桌面运行时、
@@ -73,7 +73,7 @@
     <Resource Include="Assets\app.png" />
     <Resource Include="Assets\app.ico" />
     <Content Include="Assets\app.ico" Link="Assets\BiliTouch-$(Version).ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Resource Include="Assets\bilidesk-original.png" />
+    <Resource Include="Assets\upstream-original.png" />
     <Resource Include="Assets\Fonts\*.ttf" />
     <Resource Include="Assets\Fonts\HarmonyOS-LICENSE.txt" />
     <Content Include="Assets\Fonts\HarmonyOS-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
@@ -163,7 +163,7 @@
                            $(PublishDir)libvlc\win-x64\libvlccore.lib;
                            $(PublishDir)libvlc\win-x64\libvlc.exp;
                            $(PublishDir)libvlc\win-x64\libvlccore.exp;
-                           $(PublishDir)BiliDesk.pdb" />
+                           $(PublishDir)BiliTouch.pdb" />
     </ItemGroup>
     <RemoveDir Directories="@(_VlcTrimDir)" />
     <Delete Files="@(_VlcTrimFile)" />

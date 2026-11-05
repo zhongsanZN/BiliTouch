@@ -3,9 +3,9 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading.Tasks;
-using BiliDesk.Helpers;
+using BiliTouch.Helpers;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// 一次检查更新的结果。没发现新版本时调用方拿到 null(见 <see cref="UpdateChecker.CheckAsync"/>)。
@@ -43,7 +43,7 @@ public static class UpdateChecker
 
     /// <summary>Release 数据所在的仓库(owner/repo)。改名要连着 ReleasePageUrl 一起改。</summary>
     public const string RepoOwner = "ABING1111";
-    public const string RepoName = "BiliDesk";
+    public const string RepoName = "BiliTouch";
 
     /// <summary>releases/latest 网页地址(弹窗里「前往 GitHub 下载」按钮的落点)。</summary>
     public const string ReleasePageUrl =

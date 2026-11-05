@@ -12,12 +12,12 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views;
+using BiliTouch;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views;
 
 internal static class LiveRoomTests
 {
@@ -111,7 +111,24 @@ internal static class LiveRoomTests
             var player = Field<LibVLCSharp.Shared.MediaPlayer>(window, "_player"); player.Volume = 0;
             window.OpenRoom(6); Until(() => window.Model.RoomId == 123 && fixture.PlayRequests >= 3); Pump(1000);
             check(window.FindName("ProgressSlider") == null && window.FindName("BtnCoin") == null && window.FindName("CommentList") == null, "live room has no VOD timeline, coin buttons or replay comments");
-            check(((ComboBox)window.FindName("QualityBox")).Items.Count == 2, "independent live controls expose real stream quality choices");
+            // ★ 2026-11-05 直播间对齐播放页后, 清晰度从 ComboBox 换成"按钮 + 弹层"(与播放器同一形态),
+            //   所以这里查 QualityList。断言的含义不变: 真实取到的档位数量必须来自流本身。
+            var qualityList = (ListBox)window.FindName("QualityList");
+            check(qualityList.Items.Count == 2, "independent live controls expose real stream quality choices");
+            // ★ 新控件: 音量改成"悬停/点击向上展开"的弹层, 播放按钮与播放器同款矢量图标。
+            //   注意直播间里这个弹层的 x:Name 是 VolumePopup(与播放器同名)。
+            //   ★ 不断言"初始一定关着": 鼠标真实光标可能正好落在喇叭上, MouseEnter 会把弹层打开 ——
+            //     那是正确行为, 拿它当回归点会变成看运气的假失败。这里只验"滑杆确实住在弹层里"。
+            var volumePopup = (System.Windows.Controls.Primitives.Popup)window.FindName("VolumePopup");
+            var volumeSlider = (Slider)window.FindName("LiveVolume");
+            var pauseGlyph = (System.Windows.Shapes.Path)window.FindName("PauseGlyph");
+            check(volumePopup != null && volumePopup.Child != null && volumeSlider != null &&
+                  volumePopup.Child.IsAncestorOf(volumeSlider),
+                "live volume slider lives in an upward popup instead of occupying the control bar");
+            Call(window, "MuteClick", (Button)window.FindName("MuteButton"), new RoutedEventArgs()); Pump(60);
+            check(volumePopup!.IsOpen, "tapping the speaker expands the volume slider upward");
+            volumePopup.IsOpen = false;
+            check(pauseGlyph != null && pauseGlyph.Data != null, "live play/pause uses the same vector glyph as the player");
             var nativeReady = player.IsPlaying; check(nativeReady, "independent live player actually decodes the local silent video fixture");
             var model = window.Model;
             settings.UpdateDanmakuSettings(true, 50, true, "屏蔽词", true, opacityPercent: 60, fontScalePercent: 150, speedLevel: 3);
@@ -136,8 +153,13 @@ internal static class LiveRoomTests
             Svc.Theme.SetMode(AppTheme.Light); Pump(100); Save(window, Path.Combine(artifacts, "live-room-light.png")); Save((FrameworkElement)window.FindName("VideoOverlay"), Path.Combine(artifacts, "live-room-video-overlay.png"));
             Svc.Theme.SetMode(AppTheme.Dark); Pump(100); Save(window, Path.Combine(artifacts, "live-room-dark.png"));
             window.Width = 850; window.Height = 650; Pump(150); Save(window, Path.Combine(artifacts, "live-room-compact.png"));
-            var controls = (Border)window.FindName("LiveControls"); var grid = (Grid)controls.Child; var last = (FrameworkElement)grid.Children[grid.Children.Count - 1];
-            check(last.TranslatePoint(new Point(last.ActualWidth, 0), controls).X <= controls.ActualWidth, "all live controls fit on one row in the compact layout");
+            var controls = (Border)window.FindName("LiveControls");
+            // ★ 2026-11-05: LiveControls 的直接子元素从 Grid 变成 StackPanel(上面多了一行"直播中/人气"),
+            //   所以这里按名字取真正的最右一颗按钮(全屏), 再断言它没被裁出去。
+            var fullButton = (FrameworkElement)window.FindName("FullscreenButton");
+            var rightEdge = fullButton.TranslatePoint(new Point(fullButton.ActualWidth, 0), controls).X;
+            check(rightEdge <= controls.ActualWidth + 0.5,
+                $"all live controls fit on one row in the compact layout (right={rightEdge:F0}, bar={controls.ActualWidth:F0})");
             var input = (TextBox)window.FindName("ChatInput"); fixture.FailSend = true; input.Text = "失败保留草稿"; Wait((Task)Call(window, "SendMessageAsync")!);
             check(input.Text == "失败保留草稿" && window.Model.Error.Contains("频率"), "live send error retains the draft and displays the server reason");
             fixture.FailSend = false; fixture.SendPending = new TaskCompletionSource<HttpResponseMessage>();

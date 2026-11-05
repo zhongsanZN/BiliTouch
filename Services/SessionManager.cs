@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
-using BiliDesk.Models;
+using BiliTouch.Models;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>登录会话管理: 负责登录 Cookie 的持久化与分发</summary>
 public class SessionManager
@@ -33,7 +33,7 @@ public class SessionManager
     /// ★★ 它和 `!_loaded` 是两回事, 必须分开记, 否则会造出一个"用户永远登不上"的死局:
     ///   解析失败时既不置 _loaded(怕拿空会话覆盖那份还能人工救的文件), 又会把之后
     ///   **真实登录**的写入一起挡掉 —— 扫码明明成功了, 凭据却一个字落不了盘, 重启还是未登录,
-    ///   而用户自己没有任何办法(得手动去 `%LocalAppData%\BiliDesk` 删那个文件)。
+    ///   而用户自己没有任何办法(得手动去 `%LocalAppData%\BiliTouch` 删那个文件)。
     ///   (2026-10-02 探针 `bd-probe-sessionguard` 场景 G 实测: SessData 长度 0、文件始终是坏的那段。)
     ///
     ///   真正的解法是"把坏文件挪到一边、然后正常写": 坏数据保留下来(人工还有救),

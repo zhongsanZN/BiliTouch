@@ -5,11 +5,11 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.Views.Controls;
+namespace BiliTouch.Views.Controls;
 
 /// <summary>
 /// 视频卡片: 入场淡入上浮动画 + 悬停放大 + 点击播放。
@@ -56,12 +56,12 @@ public partial class VideoCard : UserControl
     /// 集合同知能让菜单自动刷新。
     /// </summary>
     public static readonly DependencyProperty ExtraMenuItemsProperty = DependencyProperty.Register(
-        nameof(ExtraMenuItems), typeof(System.Collections.ObjectModel.ObservableCollection<BiliDesk.Models.CardMenuItem>),
+        nameof(ExtraMenuItems), typeof(System.Collections.ObjectModel.ObservableCollection<BiliTouch.Models.CardMenuItem>),
         typeof(VideoCard), new PropertyMetadata(null, OnExtraMenuItemsChanged));
 
-    public System.Collections.ObjectModel.ObservableCollection<BiliDesk.Models.CardMenuItem>? ExtraMenuItems
+    public System.Collections.ObjectModel.ObservableCollection<BiliTouch.Models.CardMenuItem>? ExtraMenuItems
     {
-        get => (System.Collections.ObjectModel.ObservableCollection<BiliDesk.Models.CardMenuItem>?)GetValue(ExtraMenuItemsProperty);
+        get => (System.Collections.ObjectModel.ObservableCollection<BiliTouch.Models.CardMenuItem>?)GetValue(ExtraMenuItemsProperty);
         set => SetValue(ExtraMenuItemsProperty, value);
     }
 
@@ -69,7 +69,7 @@ public partial class VideoCard : UserControl
     {
         if (d is not VideoCard card) return;
         card.RebuildExtraMenuItems(
-            e.NewValue as System.Collections.ObjectModel.ObservableCollection<BiliDesk.Models.CardMenuItem>);
+            e.NewValue as System.Collections.ObjectModel.ObservableCollection<BiliTouch.Models.CardMenuItem>);
     }
 
     // 当前插进 ContextMenu 的"额外项壳", 重建时先整体摘掉
@@ -84,7 +84,7 @@ public partial class VideoCard : UserControl
     /// CommandParameter 绑到卡片 DataContext(= 被右键的那条 VideoItem), 和旧模板行为一致;
     /// 绑定 Source 直接指向卡片本身 —— 菜单弹出在别处, AncestorType 解析不到卡片会失效。
     /// </summary>
-    private void RebuildExtraMenuItems(System.Collections.ObjectModel.ObservableCollection<BiliDesk.Models.CardMenuItem>? items)
+    private void RebuildExtraMenuItems(System.Collections.ObjectModel.ObservableCollection<BiliTouch.Models.CardMenuItem>? items)
     {
         var menu = ContextMenu;
         if (menu == null) return;
@@ -108,8 +108,8 @@ public partial class VideoCard : UserControl
         foreach (var def in items)
         {
             var shell = new MenuItem();
-            shell.SetBinding(MenuItem.HeaderProperty, new System.Windows.Data.Binding(nameof(BiliDesk.Models.CardMenuItem.Header)) { Source = def });
-            shell.SetBinding(MenuItem.CommandProperty, new System.Windows.Data.Binding(nameof(BiliDesk.Models.CardMenuItem.Command)) { Source = def });
+            shell.SetBinding(MenuItem.HeaderProperty, new System.Windows.Data.Binding(nameof(BiliTouch.Models.CardMenuItem.Header)) { Source = def });
+            shell.SetBinding(MenuItem.CommandProperty, new System.Windows.Data.Binding(nameof(BiliTouch.Models.CardMenuItem.Command)) { Source = def });
             shell.SetBinding(MenuItem.CommandParameterProperty, new System.Windows.Data.Binding("DataContext") { Source = this });
             var icon = new TextBlock
             {
@@ -117,7 +117,7 @@ public partial class VideoCard : UserControl
                 FontSize = 13,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            icon.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(BiliDesk.Models.CardMenuItem.Glyph)) { Source = def });
+            icon.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(BiliTouch.Models.CardMenuItem.Glyph)) { Source = def });
             shell.Icon = icon;
             menu.Items.Add(shell);
             _extraMenuShells.Add(shell);
@@ -129,7 +129,7 @@ public partial class VideoCard : UserControl
 
     private void OnExtraSourceChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
-        RebuildExtraMenuItems(sender as System.Collections.ObjectModel.ObservableCollection<BiliDesk.Models.CardMenuItem>);
+        RebuildExtraMenuItems(sender as System.Collections.ObjectModel.ObservableCollection<BiliTouch.Models.CardMenuItem>);
     }
 
     /// <summary>

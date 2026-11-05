@@ -1,10 +1,10 @@
 ﻿using System;
 using System.Windows;
-using BiliDesk.Utils;
-using BiliDesk.Views;
-using BiliDesk.Views.Pages;
+using BiliTouch.Utils;
+using BiliTouch.Views;
+using BiliTouch.Views.Pages;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>导航调度: 拦截 WebView2 跳转, 把 B 站原生页面(视频/UP主空间/搜索) 路由到 WPF 原生窗口/页面</summary>
 public class NavigationDispatcher
@@ -67,7 +67,7 @@ public class NavigationDispatcher
         else new Window {Title=followers?"粉丝":"关注",Content=page,Width=680,Height=800,Owner=_owner,Background=ThemeBackground()}.Show();
     }
 
-    public void OpenDynamic(BiliDesk.Models.DynamicItem item,bool repost=false)
+    public void OpenDynamic(BiliTouch.Models.DynamicItem item,bool repost=false)
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
@@ -157,7 +157,7 @@ public class NavigationDispatcher
     ///
     /// 主窗口不可用时(应用正在退出的边缘场景)退回新开窗口, 与 OpenUserSpace 一致。
     /// </summary>
-    public void OpenBangumi(BiliDesk.Models.BangumiItem item)
+    public void OpenBangumi(BiliTouch.Models.BangumiItem item)
     {
         if (item == null || item.SeasonId <= 0) return;
         Application.Current.Dispatcher.Invoke(() =>

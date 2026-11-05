@@ -5,9 +5,9 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
-using BiliDesk.Views.Controls;
+using BiliTouch.Views.Controls;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>Module refresh and card selection share cancellation rules for every pointing device.</summary>
 internal sealed class ModuleGestures
@@ -98,7 +98,7 @@ internal sealed class ModuleGestures
         _hold.Stop();if(!_down || _pull || _item==null || _edit==null)return;
         if(_touchDevice!=null && (_touchDevice.GetTouchPoint(null).Position-_start).Length>10)return;
         if(_scroll!=null && Math.Abs(_scroll.VerticalOffset-_scrollAtDown)>1)return;
-        _held=true;Ancestor<BiliDesk.Views.Pages.MinePage>(_page)?.CancelPendingSwipe();_card?.CancelGestureTap();TouchSupport.CancelPendingTap();_edit(_item);Hint("已选择，轻点其他卡片可多选");
+        _held=true;Ancestor<BiliTouch.Views.Pages.MinePage>(_page)?.CancelPendingSwipe();_card?.CancelGestureTap();TouchSupport.CancelPendingTap();_edit(_item);Hint("已选择，轻点其他卡片可多选");
     }
     private bool End()
     {

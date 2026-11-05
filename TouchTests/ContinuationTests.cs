@@ -9,12 +9,12 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.Views;
-using BiliDesk.Views.Controls;
+using BiliTouch;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.Views;
+using BiliTouch.Views.Controls;
 
 internal static class ContinuationTests
 {
@@ -97,8 +97,8 @@ internal static class ContinuationTests
 
             // Exercise actual card thumbnails, with local cached artwork and no external network.
             var url="https://example.invalid/viewport-cover.png";Directory.CreateDirectory(AppPaths.CacheDir);
-            File.Copy("BiliDesk/Assets/app.png",Path.Combine(AppPaths.CacheDir,Hashing.Md5Hex(url)+".jpg"),true);
-            var queueType=typeof(CoverLoader).Assembly.GetType("BiliDesk.Helpers.ViewportImageQueue")!;
+            File.Copy("BiliTouch/Assets/app.png",Path.Combine(AppPaths.CacheDir,Hashing.Md5Hex(url)+".jpg"),true);
+            var queueType=typeof(CoverLoader).Assembly.GetType("BiliTouch.Helpers.ViewportImageQueue")!;
             int Count()=>(int)queueType.GetProperty("Started",BindingFlags.Static|BindingFlags.NonPublic)!.GetValue(null)!;
             var cards=new StackPanel();for(int i=0;i<180;i++)cards.Children.Add(new VideoCard{DataContext=new VideoItem{Bvid="BV"+i,Title="信息流卡片 "+i,Cover=url}});
             var viewer=new ScrollViewer{Content=cards,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};SmoothScroll.SetEnabled(viewer,true);TrackpadScroll.SetIsFeed(viewer,true);
@@ -107,7 +107,13 @@ internal static class ContinuationTests
             viewer.ScrollToVerticalOffset(12000);Pump(650);check(Count()-before>initiallyStarted && Count()-before<55,"scrolling prefetches the next nearby cards without decoding the entire feed");
             SmoothScroll.Stop(viewer);viewer.ScrollToVerticalOffset(0);Pump(70);
             for(int i=0;i<5;i++)Wheel(cards,-120);Pump(1000);
-            check(Math.Abs(viewer.VerticalOffset-450)<3,"a burst of five mouse notches retains all accumulated scroll distance");
+                        // ★ 2026-11-05: 整格滚轮现在也吃"信息流灵敏度"(与触控板共用同一把尺子)。
+            //   旧断言写死 450 = 5 格 × 90px, 那是"整格不被接管"时的语义。
+            //   现在按默认灵敏度 75% 算: 5 × 90 × 0.75 = 337.5px。断言改成按设置算, 不再写死数字。
+            var notchStep=90.0*Svc.Settings.TouchpadFeedSensitivity/100.0;
+            var expectedDistance=5*notchStep;
+            check(Math.Abs(viewer.VerticalOffset-expectedDistance)<3,
+                $"a burst of five mouse notches retains all accumulated scroll distance (offset={viewer.VerticalOffset:F1}, expected={expectedDistance:F1})");
             Console.WriteLine($"FEED thumbnails initial={initiallyStarted}/180 after-scroll={Count()-before}/180; five-notch distance={viewer.VerticalOffset:F1}");
             Save(host,Path.Combine(artifacts,"continuation-feed-viewport.png"));host.Close();host=null;
         }

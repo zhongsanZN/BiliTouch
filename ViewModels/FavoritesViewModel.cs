@@ -6,11 +6,11 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 /// <summary>
 /// 收藏页 ViewModel。
@@ -348,7 +348,7 @@ public class FavoritesViewModel : VideoListSelectionViewModel
             return;
         }
 
-        var r = MessageBox.Show($"确定要把选中的 {targets.Count} 个视频移出「{CurrentFolderTitle}」吗?", "BiliDesk",
+        var r = MessageBox.Show($"确定要把选中的 {targets.Count} 个视频移出「{CurrentFolderTitle}」吗?", "BiliTouch",
             MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (r != MessageBoxResult.Yes) return;
 
@@ -421,7 +421,7 @@ public class FavoritesViewModel : VideoListSelectionViewModel
         var r = MessageBox.Show(
             $"确定要清空收藏夹「{CurrentFolderTitle}」吗?\n\n" +
             "夹内**全部**内容都会被移出(不只是当前已加载的), 且无法撤销。",
-            "BiliDesk", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            "BiliTouch", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (r != MessageBoxResult.Yes) return;
 
         const int MaxRounds = 80;   // 每轮最多 30 条 → 上限约 2400 条, 远超正常收藏夹规模

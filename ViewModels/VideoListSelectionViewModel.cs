@@ -4,10 +4,10 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 /// <summary>
 /// 「视频列表 + 编辑模式(多选 / 全选 / 批量操作)」的公共底座。

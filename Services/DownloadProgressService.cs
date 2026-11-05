@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// 下载进度中心(2026-11-04, issue #38: 同时下载多个视频时进度提示每 1% 闪烁、来回交替)。

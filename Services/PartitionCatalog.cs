@@ -33,7 +33,7 @@ using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Media;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>分区面板里的一项。</summary>
 public sealed record PartitionItem(string Name, int Tid, ImageSource Icon);

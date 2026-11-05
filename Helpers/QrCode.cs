@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 二维码(QR Code Model 2)编码器: **字节模式(UTF-8) + 纠错等级 M + 版本 1..10 自动选择**。

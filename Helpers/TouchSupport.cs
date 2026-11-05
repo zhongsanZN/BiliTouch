@@ -6,9 +6,9 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
-using BiliDesk.Views.Controls;
+using BiliTouch.Views.Controls;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>Native WPF finger panning and sliders; mouse and pen keep their existing behavior.</summary>
 public static class TouchSupport
@@ -226,9 +226,23 @@ public static class TouchSupport
             new MouseWheelEventHandler(OnTouchpadWheel), true);
     }
 
+    /// <summary>
+    /// 全局滚轮入口(**所有** ScrollViewer 的 PreviewMouseWheel 都会走到这里)。
+    ///
+    /// ★ 精密包(|delta|&lt;120)一律交给 TrackpadScroll 累积平滑 —— 这条在信息流之外也成立,
+    ///   因为触控板本来就该顺, 而且是对旧行为的保持。
+    /// ★ 整格包(±120)只对**信息流**放开(<c>helpers:TrackpadScroll.IsFeed="True"</c>, DP 是 Inherits,
+    ///   所以信息流 ScrollViewer 的祖先 UserControl 上写一次就够)。
+    ///   为什么必须用 IsFeed 判定而不能在这里一刀切: 这个类处理器是**全局**的, 一刀切会把
+    ///   设置页 / 播放器右侧信息栏 / 任意列表里的整格滚轮全部改成"90px 起步的缓动",
+    ///   那些页面的原语义是"一格走一段"、且没有按灵敏度标定过 —— 手感会当场退步。
+    ///   非信息流的整格包原样返回(false 且不设 Handled), WPF 照旧瞬移, SmoothScroll 若在该容器
+    ///   上显式 Enabled 也有机会接着处理(它自己再调一次 Handle 时同样只对 IsFeed 生效)。
+    /// </summary>
     private static void OnTouchpadWheel(object? sender, MouseWheelEventArgs e)
     {
-        if (sender is ScrollViewer viewer) TrackpadScroll.Handle(viewer,e);
+        if (sender is not ScrollViewer viewer) return;
+        TrackpadScroll.Handle(viewer, e, includeNotches: TrackpadScroll.GetIsFeed(viewer));
     }
 
     private static void ConfigureScrollViewer(ScrollViewer viewer)
@@ -244,7 +258,14 @@ public static class TouchSupport
             horizontal && !vertical ? PanningMode.HorizontalOnly : PanningMode.VerticalFirst);
         // 75% of the finger travel: full-strength WPF panning felt twitchy on precision touchpads
         // that stream their gesture as touch input. Inertia is unaffected.
-        viewer.SetCurrentValue(ScrollViewer.PanningRatioProperty, 0.375);
+        //
+        // ★★★ 2026-11-05 把这个常数改回 0.75 —— 它曾被误改成 0.375(注释还留着 0.75 的说法,
+        //   两边已经对不上)。PanningRatio 的语义是"内容位移 / 手指位移", 0.375 意味着
+        //   手指要走 2.67 倍距离才能滚过一屏, 这正是用户说的"触屏比触控板差一截":
+        //   触控板走的是 TrackpadScroll(逐帧累积 + 灵敏度), 而触屏走的是 WPF 原生平移,
+        //   把后者砍到 37.5% 等于给手指绑了沙袋。
+        //   0.75 与历史版本(0.1.3)一致, 也是探针断言的值 —— 别再单方面调小。
+        viewer.SetCurrentValue(ScrollViewer.PanningRatioProperty, 0.75);
     }
 
     private static bool IsPen(StylusEventArgs e) =>

@@ -1,6 +1,6 @@
-<UserControl x:Class="BiliDesk.Views.Pages.CachePage"
+<UserControl x:Class="BiliTouch.Views.Pages.CachePage"
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- xmlns:helpers="clr-namespace:BiliDesk.Helpers" Background="{DynamicResource AppBackgroundBrush}">
+ xmlns:helpers="clr-namespace:BiliTouch.Helpers" Background="{DynamicResource AppBackgroundBrush}">
  <Grid>
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
   <Grid Margin="36,4,36,12">

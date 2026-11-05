@@ -1,8 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Windows.Threading;
-using BiliDesk.Models;
+using BiliTouch.Models;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 /// <summary>Bounded live chat state, independent from VOD comments, timelines and video actions.</summary>
 public sealed class LiveRoomViewModel : ObservableObject, IDisposable

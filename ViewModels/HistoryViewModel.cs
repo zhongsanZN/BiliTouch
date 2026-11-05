@@ -8,11 +8,11 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 /// <summary>
 /// 历史页 ViewModel —— 只看 B 站账号的**云端历史**。
@@ -276,7 +276,7 @@ public class HistoryViewModel : VideoListSelectionViewModel
             return;
         }
 
-        var r = MessageBox.Show($"确定要删除选中的 {targets.Count} 条观看记录吗?", "BiliDesk",
+        var r = MessageBox.Show($"确定要删除选中的 {targets.Count} 条观看记录吗?", "BiliTouch",
             MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (r != MessageBoxResult.Yes) return;
 
@@ -338,7 +338,7 @@ public class HistoryViewModel : VideoListSelectionViewModel
         //   以为只清直播记录 —— 那是数据损失。
         var r = MessageBox.Show(
             "确定要清空**全部**云端观看历史吗?\n\n这会删除账号下所有观看记录(视频与直播都包含, 不只是当前已加载的), 且无法撤销。",
-            "BiliDesk", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            "BiliTouch", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (r != MessageBoxResult.Yes) return;
 
         Busy = true;

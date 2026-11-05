@@ -1,9 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
-using BiliDesk.Models;
-using BiliDesk.ViewModels;
+using BiliTouch.Models;
+using BiliTouch.ViewModels;
 
-namespace BiliDesk.Views.Pages;
+namespace BiliTouch.Views.Pages;
 
 /// <summary>
 /// 番剧详情 + 选集页。由追番页点海报进来, 在主窗口内容区里内嵌(见 NavigationDispatcher.OpenBangumi)。

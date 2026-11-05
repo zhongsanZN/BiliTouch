@@ -1,7 +1,7 @@
 using System.Windows;
 using System.Windows.Input;
 
-namespace BiliDesk.Views;
+namespace BiliTouch.Views;
 
 public partial class PlayerWindow
 {

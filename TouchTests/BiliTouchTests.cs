@@ -8,12 +8,12 @@ using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using BiliDesk;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views.Controls;
+using BiliTouch;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views.Controls;
 
 internal static class BiliTouchTests
 {
@@ -71,23 +71,23 @@ internal static class BiliTouchTests
         var tap=typeof(TouchSupport).GetMethod("TapCard",BindingFlags.Static|BindingFlags.NonPublic)!;
         check(tap.Invoke(null,new object[]{more})==null, "tapping card action never forwards to video playback");
 
-        var player = new BiliDesk.Views.PlayerWindow();
+        var player = new BiliTouch.Views.PlayerWindow();
         var flags=BindingFlags.Instance|BindingFlags.NonPublic;
         var root=new CommentItem();
         root.Replies.Add(new CommentItem { Rpid=1, Ctime=100, LikeCount=10 });
         root.Replies.Add(new CommentItem { Rpid=2, Ctime=300, LikeCount=1 });
         root.Replies.Add(new CommentItem { Rpid=3, Ctime=200, LikeCount=20 });
-        typeof(BiliDesk.Views.PlayerWindow).GetField("_detailThreadRoot",flags)!.SetValue(player,root);
+        typeof(BiliTouch.Views.PlayerWindow).GetField("_detailThreadRoot",flags)!.SetValue(player,root);
         var detail=(FrameworkElement)player.FindName("CommentDetailPanel");
         detail.Visibility=Visibility.Visible;
-        var sort=typeof(BiliDesk.Views.PlayerWindow).GetMethod("SetCommentSort",flags)!;
+        var sort=typeof(BiliTouch.Views.PlayerWindow).GetMethod("SetCommentSort",flags)!;
         sort.Invoke(player,new object[]{2});
         check(detail.Visibility==Visibility.Visible && root.Replies.Select(r=>r.Rpid).SequenceEqual(new long[]{2,3,1}), "time sort reorders replies without leaving detail");
         sort.Invoke(player,new object[]{3});
         check(detail.Visibility==Visibility.Visible && root.Replies.Select(r=>r.Rpid).SequenceEqual(new long[]{3,1,2}), "hot sort reorders replies without leaving detail");
         player.Close();
 
-        var dict=new ResourceDictionary { Source=new Uri("/BiliDesk;component/Views/Pages/Settings/SettingsTabs.xaml",UriKind.Relative) };
+        var dict=new ResourceDictionary { Source=new Uri("/BiliTouch;component/Views/Pages/Settings/SettingsTabs.xaml",UriKind.Relative) };
         var template=(DataTemplate)dict["AboutTabTemplate"];
         foreach(var width in new[]{640,1100})
         {

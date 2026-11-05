@@ -6,7 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 全局「中键自动滚动」(浏览器同款手感): 在任何可滚动区域点按/按住鼠标中键, 出现方向锚点,

@@ -3,21 +3,21 @@ using System.Collections.Generic;
 using System.IO;
 using System.Windows;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views;
+using BiliTouch.Helpers;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views;
 
-namespace BiliDesk;
+namespace BiliTouch;
 
 public partial class App : Application
 {
     /// <summary>
     /// 程序版本号 —— **单一来源**, 改版本只动这一处。
     /// 同步点(漏一个就会出现"关于页写 1.2.3、安装包文件名还是 1.2.2"这种不一致):
-    ///   BiliDesk.csproj 的 &lt;Version&gt;、Publish\installer.iss 的 MyAppVersion、发布.ps1 的默认 $Version。
+    ///   BiliTouch.csproj 的 &lt;Version&gt;、Publish\installer.iss 的 MyAppVersion、发布.ps1 的默认 $Version。
     /// </summary>
-    public const string AppVersion = "0.1.5";
+    public const string AppVersion = "0.1.6";
 
     public static MainViewModel MainVm { get; } = new();
 

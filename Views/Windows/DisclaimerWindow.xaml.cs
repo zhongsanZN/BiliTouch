@@ -1,8 +1,8 @@
 using System.ComponentModel;
 using System.Windows;
-using BiliDesk.Views;
+using BiliTouch.Views;
 
-namespace BiliDesk.Views.Windows;
+namespace BiliTouch.Views.Windows;
 
 /// <summary>
 /// "非官方软件 / 免责声明"窗口。两种用法共用这一份 XAML 与同一段正文:

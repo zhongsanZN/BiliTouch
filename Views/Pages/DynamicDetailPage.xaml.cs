@@ -2,11 +2,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.ViewModels;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.ViewModels;
 
-namespace BiliDesk.Views.Pages;
+namespace BiliTouch.Views.Pages;
 
 public partial class DynamicDetailPage : UserControl
 {
@@ -117,8 +117,8 @@ public partial class DynamicDetailPage : UserControl
         InlineImageNext.IsEnabled=_inlineIndex<urls.Count-1;
 
         InlineImageError.Visibility=Visibility.Collapsed;
-        InlineImageSurface.SetValue(BiliDesk.Helpers.Cover.SourceProperty,null);
-        InlineImageSurface.SetValue(BiliDesk.Helpers.Cover.SourceProperty,urls[_inlineIndex]);
+        InlineImageSurface.SetValue(BiliTouch.Helpers.Cover.SourceProperty,null);
+        InlineImageSurface.SetValue(BiliTouch.Helpers.Cover.SourceProperty,urls[_inlineIndex]);
         InlineImageHost.BringIntoView();
     }
 
@@ -131,7 +131,7 @@ public partial class DynamicDetailPage : UserControl
     private void OnInlineImageClose(object sender,RoutedEventArgs e)
     {
         InlineImageHost.Visibility=Visibility.Collapsed;
-        InlineImageSurface.SetValue(BiliDesk.Helpers.Cover.SourceProperty,null);
+        InlineImageSurface.SetValue(BiliTouch.Helpers.Cover.SourceProperty,null);
         _inlineImages=new List<string>();
         _inlineIndex=0;
     }

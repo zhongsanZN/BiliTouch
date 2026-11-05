@@ -4,10 +4,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
-/// 单实例守卫: 保证同一台机器上只跑**一个** BiliDesk 进程。
+/// 单实例守卫: 保证同一台机器上只跑**一个** BiliTouch 进程。
 ///
 /// 为什么需要它(2026-10-06 用户反馈): 双击 exe / 点开始菜单图标时, 又起了一个全新进程 ——
 ///   于是托盘里出现两个图标、两个窗口抢同一个 session.json(设置/登录态互相覆盖),
@@ -29,10 +29,10 @@ namespace BiliDesk.Services;
 public static class SingleInstance
 {
     /// <summary>互斥体专名。带产品名 + 版本无关, 避免和别的程序撞</summary>
-    private const string MutexName = @"Local\BiliDesk.SingleInstance.Mutex";
+    private const string MutexName = @"Local\BiliTouch.SingleInstance.Mutex";
 
     /// <summary>管道的名字(第二个实例通过它发"请显形"指令)</summary>
-    private const string PipeName = "BiliDesk.SingleInstance.Pipe";
+    private const string PipeName = "BiliTouch.SingleInstance.Pipe";
 
     /// <summary>
     /// 持有 Mutex 的引用。**必须是静态字段** —— 局部变量会被 GC 回收, 那样锁就释放了。

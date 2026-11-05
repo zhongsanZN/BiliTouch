@@ -5,11 +5,11 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.Views.Windows;
+namespace BiliTouch.Views.Windows;
 
 /// <summary>
 /// 图片预览窗: 双击/右键"查看大图"时打开, 支持缩放/拖动/另存为。

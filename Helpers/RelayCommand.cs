@@ -2,7 +2,7 @@ using System;
 using System.Threading.Tasks;
 using System.Windows.Input;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 public class RelayCommand : ICommand
 {

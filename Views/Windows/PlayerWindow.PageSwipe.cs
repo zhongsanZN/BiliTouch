@@ -6,7 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 
-namespace BiliDesk.Views;
+namespace BiliTouch.Views;
 
 /// <summary>
 /// 右栏「简介 / 评论」的手机式横滑翻页。

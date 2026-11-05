@@ -1,10 +1,10 @@
-<views:FluentWindow x:Class="BiliDesk.Views.PlayerWindow"
+<views:FluentWindow x:Class="BiliTouch.Views.PlayerWindow"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:views="clr-namespace:BiliDesk.Views"
-             xmlns:controls="clr-namespace:BiliDesk.Views.Controls"
-             xmlns:helpers="clr-namespace:BiliDesk.Helpers"
-             xmlns:behaviors="clr-namespace:BiliDesk.Helpers"
+             xmlns:views="clr-namespace:BiliTouch.Views"
+             xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
+             xmlns:helpers="clr-namespace:BiliTouch.Helpers"
+             xmlns:behaviors="clr-namespace:BiliTouch.Helpers"
              xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
              xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF"
      xmlns:sys="clr-namespace:System;assembly=mscorlib"
@@ -47,133 +47,11 @@
              ★ 这里**不要**再定义同名键: 局部字典会覆盖全局, 一旦两边图形漂移,
                就会出现"播放器的赞和动态页的赞长得不一样"。 -->
 
-        <!-- 播放器滑条(进度/音量): 细轨道 + 白色圆点, 深底更清晰 -->
-        <Style x:Key="PlayerSlider" TargetType="Slider">
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="IsMoveToPointEnabled" Value="True" />
-            <!-- 不吃键盘焦点, 保证空格键始终控制播放/暂停 -->
-            <Setter Property="Focusable" Value="False" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Slider">
-                        <Grid MinHeight="40" Background="Transparent">
-                            <Track x:Name="PART_Track">
-                                <Track.DecreaseRepeatButton>
-                                    <RepeatButton Command="{x:Static Slider.DecreaseLarge}" Focusable="False">
-                                        <RepeatButton.Template>
-                                            <ControlTemplate TargetType="RepeatButton">
-                                                <Grid Background="Transparent" Height="40">
-                                                    <Border Height="3" CornerRadius="1.5"
-                                                            Background="#F2FFFFFF" VerticalAlignment="Center" />
-                                                </Grid>
-                                            </ControlTemplate>
-                                        </RepeatButton.Template>
-                                    </RepeatButton>
-                                </Track.DecreaseRepeatButton>
-                                <Track.IncreaseRepeatButton>
-                                    <RepeatButton Command="{x:Static Slider.IncreaseLarge}" Focusable="False">
-                                        <RepeatButton.Template>
-                                            <ControlTemplate TargetType="RepeatButton">
-                                                <Grid Background="Transparent" Height="40">
-                                                    <Border Height="3" CornerRadius="1.5"
-                                                            Background="#4DFFFFFF" VerticalAlignment="Center" />
-                                                </Grid>
-                                            </ControlTemplate>
-                                        </RepeatButton.Template>
-                                    </RepeatButton>
-                                </Track.IncreaseRepeatButton>
-                                <Track.Thumb>
-                                    <Thumb Focusable="False">
-                                        <Thumb.Template>
-                                            <ControlTemplate TargetType="Thumb">
-                                                <Grid Background="Transparent" Width="28">
-                                                    <Ellipse Width="11" Height="11" Fill="White"
-                                                            Margin="-2,0" />
-                                                </Grid>
-                                            </ControlTemplate>
-                                        </Thumb.Template>
-                                    </Thumb>
-                                </Track.Thumb>
-                            </Track>
-                        </Grid>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <!-- 弹幕外观弹层里的两行文字(2026-10-12 新增): 标签左 / 数值右。
-             ★ 颜色必须**写死**成白系而不是用主题刷子: 这块弹层永远浮在视频画面上,
-               跟着主题走的话浅色主题下会变成深色字压在亮画面上, 直接看不见。
-             ★ 必须显式设 Foreground(项目里那条全局隐式 TextBlock 样式带 Foreground setter,
-               优先级高于继承) —— 这是本项目的老坑, 省略就等于什么都没写。 -->
-        <Style x:Key="DanmakuRowLabelStyle" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#E6FFFFFF" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-        </Style>
-        <Style x:Key="DanmakuRowValueStyle" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#99FFFFFF" />
-            <Setter Property="FontSize" Value="11" />
-            <Setter Property="TextAlignment" Value="Right" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-        </Style>
-
-        <!-- 播放器圆形图标按钮 -->
-        <Style x:Key="PlayerRoundBtn" TargetType="Button">
-            <Setter Property="MinWidth" Value="40" />
-            <Setter Property="MinHeight" Value="40" />
-            <Setter Property="Focusable" Value="False" />
-            <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" Background="Transparent" CornerRadius="16">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#26FFFFFF" />
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#40FFFFFF" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <!-- 播放器文字按钮(清晰度/倍速等): 半透明底衬, 与任意视频画面区分开 -->
-        <Style x:Key="PlayerTextBtn" TargetType="Button">
-            <Setter Property="MinWidth" Value="40" />
-            <Setter Property="MinHeight" Value="40" />
-            <Setter Property="Focusable" Value="False" />
-            <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Foreground" Value="#F2FFFFFF" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Padding" Value="8,4" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" Background="#40000000" CornerRadius="5"
-                                BorderBrush="#22FFFFFF" BorderThickness="1"
-                                Padding="{TemplateBinding Padding}">
-                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center" />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#5C000000" />
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#66000000" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
+        <!-- 播放器滑条(PlayerSlider) / 圆形按钮(PlayerRoundBtn) / 文字按钮(PlayerTextBtn) /
+             弹幕弹层文字(DanmakuRowLabelStyle / DanmakuRowValueStyle)
+             已于 2026-11-05 全部提到 Themes/Styles.xaml —— 直播间与播放器现在共用同一套。
+             ★ 这里**不要**再写同名键: 局部字典会覆盖全局, 两边一旦漂移,
+               就会出现"播放器的暂停键和直播间的暂停键长得不一样"。 -->
             <!-- 评论里的等级徽章(LV6) 与 UP 标。
                  ★ 这两个是**身份标**, 不是主题强调色, 所以色值写死、不跟主题色变 ——
                    和导航选中项/按钮那种"交互反馈色"是两回事: 用户把主题色调成绿色,
@@ -972,8 +850,15 @@
                                  ★ 背景用深色渐变(不跟主题走): 它替代的是视频画面, 浅色主题下
                                    用浅底会看着像"画面坏了"。 -->
                             <Border x:Name="DockTransitionCover" Visibility="Collapsed" Background="#17171C" IsHitTestVisible="False" Panel.ZIndex="80">
-                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <Image Source="/BiliDesk;component/Assets/app.png" Width="64" Height="64" Stretch="Uniform"/>
+                                <!-- ★★★ 2026-11-05 小窗过渡重做: 这块遮罩现在是**动画的主角**。
+                                     原生视频窗口(HwndHost)不参与 WPF 合成, 逐帧改它的宽高等于逐帧让
+                                     libvlc 重建交换链 —— 那正是用户看到的"边框一直在变、画面抖"。
+                                     现在过渡期间原生窗口一次都不动, 由这块纯 WPF 遮罩做等比缩放;
+                                     动画结束的那一帧才把原生窗口一次性移到目标位置(见 PlayerWindow.WebLayout.cs)。
+                                     ★ BrandMark 会被反向缩放, 保证文字图标始终原始大小、不糊。 -->
+                                <StackPanel x:Name="BrandMark" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                            RenderTransformOrigin="0.5,0.5">
+                                    <Image Source="/BiliTouch;component/Assets/app.png" Width="64" Height="64" Stretch="Uniform"/>
                                     <TextBlock Text="BiliTouch" Foreground="#CCFFFFFF" FontSize="12" HorizontalAlignment="Center" Margin="0,8,0,0"/>
                                 </StackPanel>
                             </Border>
@@ -1135,12 +1020,19 @@
                             </Border>
 
                             <!-- 播放控件栏(底部覆盖在视频上, 渐变底更沉浸) -->
+                            <!-- 小窗(网页布局停靠后)的紧凑控制条。
+                                 ★ 2026-11-05 对齐: 这三颗按钮的图标与主控制栏**完全一致**
+                                   (播放/暂停用矢量 Path、回到视频 E70E、全屏 E92D)。
+                                   以前小窗的全屏是 E740、主播的暂停还是矢量三角, 两套字形并排就露馅。
+                                 ★ 为什么这里不直接复用 ControlBar: 停靠后宽度只有右栏那 360px,
+                                   主控制栏的 12 列塞不进去。所以只保留"最小可操作三件套",
+                                   但**外观与图标**必须一致。 -->
                             <Border x:Name="WebMiniControls" Visibility="Collapsed" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Margin="8" Padding="4" CornerRadius="10" Background="#B8000000" Panel.ZIndex="15">
                                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <Button x:Name="WebMiniPlay" Width="36" Height="36" Style="{StaticResource PlayerRoundBtn}" Click="OnPlayPauseClick" ToolTip="播放/暂停"><Path x:Name="WebMiniPlayGlyph" Width="14" Height="14" Stretch="Uniform" Fill="White"/></Button>
+                                    <Button x:Name="WebMiniPlay" Width="36" Height="36" Style="{StaticResource PlayerRoundBtn}" Click="OnPlayPauseClick" ToolTip="播放/暂停"><Path x:Name="WebMiniPlayGlyph" Width="15" Height="15" Stretch="Uniform" Fill="White" Data="M 7,4 L 18,11 L 7,18 Z"/></Button>
                                     <TextBlock x:Name="WebMiniTime" Grid.Column="1" FontSize="11" Foreground="White" VerticalAlignment="Center" Margin="4,0" TextTrimming="CharacterEllipsis"/>
                                     <Button Grid.Column="2" Width="36" Height="36" Style="{StaticResource PlayerRoundBtn}" Click="OnWebRestoreVideo" ToolTip="回到视频"><TextBlock Text="&#xE70E;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15" Foreground="White"/></Button>
-                                    <Button Grid.Column="3" Width="36" Height="36" Style="{StaticResource PlayerRoundBtn}" Click="OnFullscreenClick" ToolTip="全屏"><TextBlock Text="&#xE740;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15" Foreground="White"/></Button>
+                                    <Button Grid.Column="3" Width="36" Height="36" Style="{StaticResource PlayerRoundBtn}" Click="OnFullscreenClick" ToolTip="全屏"><TextBlock Text="&#xE92D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15" Foreground="White"/></Button>
                                 </Grid>
                             </Border>
                             <Border x:Name="ControlBar" VerticalAlignment="Bottom"
@@ -1176,17 +1068,24 @@
                                     </Grid>
                                     <!-- 操作行 -->
                                     <Grid Margin="0,2,0,0">
+                                        <!-- ★★★ 2026-11-05: 列数从 10 增到 12。
+                                             原因: 音量滑杆收进弹层后腾出一列, 而"音质角标"与"直播弹幕状态"
+                                             这两颗**必须**有显式列号(它们原来都漏了 Grid.Column, 默认落
+                                             第 0 列, 直接压在播放/暂停键上 —— 用户报的"hires 标志跑到左下角
+                                             和播放按钮重叠"就是这个)。列号一一对应, 别再靠"默认第 0 列"。 -->
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" /><!-- 0 播放/暂停 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 1 时间 -->
+                                            <ColumnDefinition Width="*" /><!-- 2 弹幕输入(吃掉剩余宽度) -->
+                                            <ColumnDefinition Width="Auto" /><!-- 3 音量喇叭 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 4 预留(原音量滑杆位) -->
+                                            <ColumnDefinition Width="Auto" /><!-- 5 倍速 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 6 清晰度 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 7 音质角标 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 8 直播弹幕状态 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 9 弹幕开关 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 10 弹幕设置 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 11 全屏 -->
                                         </Grid.ColumnDefinitions>
 
                                         <!-- 播放/暂停 -->
@@ -1208,12 +1107,37 @@
                                              "查看手势说明"的入口, 却长得像开关, 还占着控制栏一格。
                                              现在改成: 首次用手指点时自动弹一次说明(见 Touch.cs)。 -->
 
-                                        <!-- 音量 -->
-                                        <TextBlock x:Name="VolumeIcon" Grid.Column="3" Text="&#xE767;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                                   Foreground="#E6FFFFFF" FontSize="14" VerticalAlignment="Center" Margin="10,0,6,0" />
-                                        <Slider Grid.Column="4" x:Name="VolumeSlider" Style="{StaticResource PlayerSlider}"
-                                                Minimum="0" Maximum="100" Value="80" Width="78"
-                                                ValueChanged="OnVolumeChanged" />
+                                        <!-- 音量(2026-11-05 与直播间对齐): 常驻只有一颗喇叭,
+                                             悬停(鼠标)或点一下(触屏)才**向上**展开音量条。
+                                             ★ 为什么改: 78px 的滑杆常驻在控制栏里, 窄窗口时会把
+                                               倍速/清晰度/弹幕按钮一路往右挤。翻上去只借用画面空白,
+                                               控制栏宽度不变 —— 与直播间同一个思路同一套交互。
+                                             ★ 收起状态那颗按钮仍然是静音开关(用户最常用的动作),
+                                               展开后才用滑杆微调。 -->
+                                        <Button Grid.Column="3" x:Name="BtnVolume" Style="{StaticResource PlayerRoundBtn}"
+                                                Width="36" Height="36" Margin="6,0,0,0" Click="OnMuteClick"
+                                                MouseEnter="OnVolumeHoverEnter" MouseLeave="OnVolumeHoverLeave"
+                                                ToolTip="静音 / 展开音量条">
+                                            <TextBlock x:Name="VolumeIcon" Text="&#xE767;"
+                                                       FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                                       FontSize="14" Foreground="White"/>
+                                        </Button>
+                                        <Popup x:Name="VolumePopup" Placement="Top" StaysOpen="True"
+                                               AllowsTransparency="True" PopupAnimation="Fade" VerticalOffset="-10">
+                                            <Border Background="#F0202226" CornerRadius="10" Padding="12,10"
+                                                    BorderBrush="#33FFFFFF" BorderThickness="1" Width="196">
+                                                <StackPanel>
+                                                    <DockPanel Margin="0,0,0,6">
+                                                        <TextBlock x:Name="VolumePopupText" DockPanel.Dock="Right" Text="80%"
+                                                                   Foreground="#99FFFFFF" FontSize="11" VerticalAlignment="Center"/>
+                                                        <TextBlock Text="音量" Foreground="#E6FFFFFF" FontSize="12" VerticalAlignment="Center"/>
+                                                    </DockPanel>
+                                                    <Slider Grid.Column="4" x:Name="VolumeSlider" Style="{StaticResource PlayerSlider}"
+                                                            Minimum="0" Maximum="100" Value="80"
+                                                            ValueChanged="OnVolumeChanged" />
+                                                </StackPanel>
+                                            </Border>
+                                        </Popup>
 
                                         <!-- 倍速 -->
                                         <Button Grid.Column="5" x:Name="SpeedBtn" Style="{StaticResource PlayerTextBtn}"
@@ -1312,8 +1236,15 @@
                                              ★ 用户要求「只作为显示, 不应切回 aac」——
                                                所以它**不是按钮**(TextBlock + Border), 点不了,
                                                也就不会被误以为能降回 AAC。
-                                             只有真的在用无损/杜比时才显示, 普通 AAC 不占位置。 -->
-                                        <Border x:Name="BtnAudioBadge" Margin="4,0,0,0"
+                                             只有真的在用无损/杜比时才显示, 普通 AAC 不占位置。
+                                             ★★★ 2026-11-05 修"hires 标志跑到左下角和播放按钮重叠":
+                                               这个 Border **原来漏了 Grid.Column**, 于是默认落在第 0 列 ——
+                                               而第 0 列就是播放/暂停按钮, 两者直接叠在一起(用户截图里
+                                               "Hi-Res" 正好压在三角图标上)。现在显式给 7 列(清晰度右边),
+                                               弹幕开关/弹幕设置/全屏各自顺延一位。
+                                               ★ 教训: 这个操作行是 Auto 列 + 显式 Grid.Column 的混合布局,
+                                                 任何新增子元素都必须写列号, 漏写就等于"叠到播放键上"。 -->
+                                        <Border Grid.Column="7" x:Name="BtnAudioBadge" Margin="4,0,0,0"
                                                 VerticalAlignment="Center"
                                                 IsHitTestVisible="False"
                                                 Background="#33FF6B9D" CornerRadius="3" Padding="5,1"
@@ -1321,8 +1252,9 @@
                                             <TextBlock x:Name="AudioBadgeText" Text="Hi-Res"
                                                        FontSize="10.5" FontWeight="SemiBold" Foreground="#FFFFD9E6" />
                                         </Border>
-                                        <!-- 直播弹幕连接状态(只在直播时显示): 用户看不到弹幕时靠它定位问题 -->
-                                        <TextBlock x:Name="LiveDanmakuStatus" FontSize="11" Margin="8,0,0,0"
+                                        <!-- 直播弹幕连接状态(只在直播时显示): 用户看不到弹幕时靠它定位问题。
+                                             ★ 同样漏过 Grid.Column(会在左上角压住播放键) —— 现在挂在第 8 列。 -->
+                                        <TextBlock Grid.Column="8" x:Name="LiveDanmakuStatus" FontSize="11" Margin="8,0,0,0"
                                                    VerticalAlignment="Center" Foreground="#99FFFFFF"
                                                    Visibility="Collapsed" Text="" />
                                         <Popup x:Name="QualityPopup"
@@ -1376,7 +1308,7 @@
                                         <!-- 弹幕开关。以前只能按快捷键 D, 界面上没有入口 ——
                                              看视频时想随手关掉刷屏弹幕是很常见的操作, 这里必须有个按钮。
                                              文案用"弹幕开/关"而不是图标: 开关状态一眼可读, 不用猜图标含义。 -->
-                                        <Button Grid.Column="7" x:Name="BtnDanmaku" Style="{StaticResource PlayerTextBtn}"
+                                        <Button Grid.Column="9" x:Name="BtnDanmaku" Style="{StaticResource PlayerTextBtn}"
                                                 Margin="4,0,0,0" Click="OnDanmakuToggleClick" ToolTip="开关弹幕 (D)">
                                             <Grid Width="22" Height="20">
                                                 <Path x:Name="DanmakuGlyph" Stroke="White" StrokeThickness="1.6" StrokeLineJoin="Round" Data="M2,2 H20 V15 H14 L10,19 V15 H2 Z M6,6 H9 M12,6 H16 M6,10 H15"/>
@@ -1385,7 +1317,7 @@
                                         </Button>
 
                                         <!-- 弹幕区域占比 -->
-                                        <Button Grid.Column="8" x:Name="BtnDanmakuArea" Style="{StaticResource PlayerTextBtn}"
+                                        <Button Grid.Column="10" x:Name="BtnDanmakuArea" Style="{StaticResource PlayerTextBtn}"
                                                 Margin="4,0,0,0" Click="OnDanmakuAreaClick" ToolTip="弹幕设置" AutomationProperties.Name="弹幕设置">
                                             <TextBlock Text="弹幕设置" Foreground="#F2FFFFFF"/>
                                         </Button>
@@ -1477,7 +1409,7 @@
                                         </Popup>
 
                                         <!-- 全屏(离线缓存已挪到右侧信息面板的操作栏, 2026-09-26) -->
-                                        <Button Grid.Column="9" x:Name="BtnFullscreen2" Style="{StaticResource PlayerRoundBtn}"
+                                        <Button Grid.Column="11" x:Name="BtnFullscreen2" Style="{StaticResource PlayerRoundBtn}"
                                                 Width="36" Height="36" Click="OnFullscreenClick" ToolTip="全屏 (F)">
                                             <TextBlock Text="&#xE92D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                                        FontSize="14" Foreground="White" />

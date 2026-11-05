@@ -1,7 +1,7 @@
 using System;
 using System.Windows;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// 系统托盘图标(基于 WinForms NotifyIcon)。

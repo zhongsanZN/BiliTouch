@@ -29,4 +29,19 @@
             </PathGeometry.Transform>
         </PathGeometry>
 <Geometry x:Key="ShareIconGeometry">M12,15 V3.5 M8.2,7.3 L12,3.5 L15.8,7.3 M4.5,12.5 V18.5 A2,2 0 0 0 6.5,20.5 H17.5 A2,2 0 0 0 19.5,18.5 V12.5</Geometry>
+
+<!--
+    控制栏的两个图标(2026-11-05 提到全局)。
+
+    ★ 为什么搬到这里: 播放器与直播间的底部控制条现在是**同一套**, 而"弹幕开关"这颗
+      两边原来各画一份 path —— 直播间那份的墨迹比例与播放器不同, 并排看能看出粗细不一样。
+      提到全局后两个窗口引用同一份几何, 想改只改一处。
+    ★ 都是**描边**图形: 上色要用 Path.Stroke(不是 Fill), 线宽由调用方给(现在 1.6 / 2)。
+-->
+<Geometry x:Key="DanmakuIconGeometry">M2,2 H20 V15 H14 L10,19 V15 H2 Z M6,6 H9 M12,6 H16 M6,10 H15</Geometry>
+<Geometry x:Key="DanmakuOffSlashGeometry">M2,0 L21,19</Geometry>
+
+<!-- 铺满窗口: 进入前 = 虚线框(E9A6 的矢量版) / 已铺满 = 向内的双箭头。 
+     ★ 这两个用的是 Segoe 码位而不是 path: 播放器顶栏与直播间顶栏都按同一对码位渲染,
+       字体缺失时会退化成方块 —— 但项目全局字体栈里已带 Segoe Fluent Icons 回退, 可接受。 -->
 </ResourceDictionary>

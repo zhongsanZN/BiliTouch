@@ -1,9 +1,9 @@
 using System;
 using System.IO;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
-/// <summary>应用数据目录管理(位于 %LocalAppData%\BiliDesk)</summary>
+/// <summary>应用数据目录管理(位于 %LocalAppData%\BiliTouch)</summary>
 public static class AppPaths
 {
     public static string DataDir { get; private set; } = "";
@@ -89,7 +89,8 @@ public static class AppPaths
     public static void Init()
     {
         DataDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BiliDesk");
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BiliTouch");
+        ImportPreviousProfile();
         // 先落到默认值: 配置还没读(SettingsStore.Load 在后面), 这段时间内任何缓存路径
         // 都必须是个可用路径 —— 不能是空串, 否则 Path.Combine("", "imgcache") 会得到相对路径,
         // 缓存就落到进程当前目录(启动方式不同还会换地方)。
@@ -105,6 +106,23 @@ public static class AppPaths
         {
             // 目录创建失败不应阻止启动
         }
+    }
+
+    private static void ImportPreviousProfile()
+    {
+        var legacy = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Acknowledgements.UpstreamName);
+        if (!Directory.Exists(legacy) || string.Equals(legacy, DataDir, StringComparison.OrdinalIgnoreCase)) return;
+        try
+        {
+            Directory.CreateDirectory(DataDir);
+            // Keep the old profile intact and never replace a newer BiliTouch preference.
+            foreach (var file in Directory.EnumerateFiles(legacy))
+            {
+                var destination = Path.Combine(DataDir, Path.GetFileName(file));
+                if (!File.Exists(destination)) { try { File.Copy(file, destination, false); } catch { } }
+            }
+        }
+        catch { }
     }
 
     /// <summary>

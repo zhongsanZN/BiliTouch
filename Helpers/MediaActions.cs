@@ -2,11 +2,11 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.Views.Windows;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.Views.Windows;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 图片/视频相关的通用用户操作(查看大图、下载到本地)。

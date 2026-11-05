@@ -2,9 +2,9 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Windows;
-using BiliDesk.Models;
+using BiliTouch.Models;
 
-namespace BiliDesk.Views
+namespace BiliTouch.Views
 {
     /// <summary>
     /// 收藏夹勾选窗(播放器"收藏"按钮的二级浮层):

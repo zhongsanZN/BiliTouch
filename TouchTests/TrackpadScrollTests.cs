@@ -9,10 +9,10 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Data;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Helpers;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
+using BiliTouch;
+using BiliTouch.Helpers;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
 
 internal static class TrackpadScrollTests
 {
@@ -40,7 +40,7 @@ internal static class TrackpadScrollTests
     lastValueSaved &= saved.RootElement.GetProperty("TouchpadFeedSensitivity").GetInt32()==75;
    }
    check(lastValueSaved,"rapid slider changes cannot let an older queued save overwrite the final value");
-   var dictionary=new ResourceDictionary{Source=new Uri("/BiliDesk;component/Views/Pages/Settings/SettingsTabs.xaml",UriKind.Relative)};
+   var dictionary=new ResourceDictionary{Source=new Uri("/BiliTouch;component/Views/Pages/Settings/SettingsTabs.xaml",UriKind.Relative)};
    var general=(FrameworkElement)((DataTemplate)dictionary["GeneralTabTemplate"]).LoadContent();general.DataContext=settings;
    window=new Window{Width=1000,Height=760,Content=new ScrollViewer{Content=general}};window.Show();Pump(150);
    var slider=Descendants<Slider>(general).Single(s=>BindingOperations.GetBinding(s,Slider.ValueProperty)?.Path.Path=="TouchpadFeedSensitivity");
@@ -73,13 +73,61 @@ internal static class TrackpadScrollTests
    TrackpadScroll.SetIsFeed(outer,false);Wheel(innerContent,-30);Pump(350);
    check(Math.Abs(inner.VerticalOffset-18)<2,"non-feed precision scrolling keeps its existing scale");
    TrackpadScroll.SetIsFeed(outer,true);
-   var mouseDistances=new List<double>();
-   foreach(var sensitivity in new[]{25,175})
+   // ---- 整格滚轮(±120)必须也走同一套累积平滑, 且距离吃灵敏度 ----
+   // ★ 这条断言在 2026-11-05 改过语义: 旧版是"普通鼠标整格距离在灵敏度两端都恒为 90px"
+   //   (那时信息流的整格根本没被接管, 直接落到 WPF 瞬移, 所以量到的其实是不变的 90)。
+   //   用户明确要求"鼠标滚轮最差、也要平滑", 于是整格也进了 TrackpadScroll, 并和精密输入
+   //   共用同一把灵敏度尺子(90 × 灵敏度%) —— 25% 时 22.5px/格, 175% 时 157.5px/格。
+   //   若这条还按旧语义断言"两端都 90", 它会把这次修复判成回归。
+   var notchDistances=new List<double>();
+   foreach(var sensitivity in new[]{25,75,175})
    {
     SmoothScroll.Stop(inner);inner.ScrollToVerticalOffset(0);Pump(100);settings.TouchpadFeedSensitivity=sensitivity;
-    Wheel(innerContent,-120);Pump(450);mouseDistances.Add(inner.VerticalOffset);
+    Wheel(innerContent,-120);Pump(1000);
+    notchDistances.Add(inner.VerticalOffset);
    }
-   check(Math.Abs(mouseDistances[0]-90)<2 && Math.Abs(mouseDistances[1]-90)<2,"ordinary mouse notches keep the same distance at both sensitivity limits");
+   check(Math.Abs(notchDistances[1]-90*0.75)<3 && Math.Abs(notchDistances[0]-90*0.25)<3
+         && Math.Abs(notchDistances[2]-90*1.75)<3,
+     "whole-notch wheel distance follows feed sensitivity (90px per notch at 100 percent)");
+   check(notchDistances[2]>notchDistances[1]*2,"low and high sensitivity scale whole notches proportionally");
+   // 一格必须"滑过去"而不是"跳过去":
+   //   ① 滚轮事件当场**不动** offset(不是瞬移, 只是记了个目标);
+   //   ② 600ms 之内由**多帧**补齐到整格距离(写入次数 > 2 说明真的分了帧)。
+   // ★ 为什么这样断言而不是"第一帧只走了几像素": 第一帧的 dt 取决于机器负载(掉帧时 dt 可以
+   //   到 0.1s 的钳位上限), 按它做阈值必然在慢机器上假失败; 而"事件当场不动 + 多帧补完"是
+   //   平滑的必要条件, 且与时序无关。
+   SmoothScroll.Stop(inner);inner.ScrollToVerticalOffset(0);Pump(80);settings.TouchpadFeedSensitivity=75;
+   var writesBeforeNotch=Counter("OffsetWrites");
+   Wheel(innerContent,-120);
+   check(inner.VerticalOffset<0.5,"a whole notch does not teleport the viewport inside the event handler");
+   Pump(900);
+   var notchWrites=Counter("OffsetWrites")-writesBeforeNotch;
+   check(Math.Abs(inner.VerticalOffset-67.5)<3,"the whole notch lands exactly one notch step after easing");
+   // ★ 上界给到 150 而不是几十: tau=0.12 的指数逼近要 ~40 帧才把剩余量压到 0.5px 以下,
+   //   而 Pump 的帧率依机器而定; 这条断言要证的是"分了帧"(>2), 不是"恰好几帧"。
+   check(notchWrites>2 && notchWrites<150,"the whole notch is committed across several frames, not one jump");
+   // 连滚累积: 三格 = 三倍单格距离, 且中途不跳回(每帧位置单调不减)。
+   SmoothScroll.Stop(inner);inner.ScrollToVerticalOffset(0);Pump(80);
+   var monotonic=true;var lastOffset=0.0;
+   for(var i=0;i<3;i++){Wheel(innerContent,-120);Pump(40);if(inner.VerticalOffset<lastOffset-0.01)monotonic=false;lastOffset=inner.VerticalOffset;}
+   Pump(1000);
+   check(monotonic,"rapid whole notches continue from the live offset and never jump back");
+   check(Math.Abs(inner.VerticalOffset-3*67.5)<5,"three whole notches accumulate to three notch steps at 75 percent");
+   // 按下立刻取消: 整格滚动中途按下鼠标, 不能再自己往前飘。
+   SmoothScroll.Stop(inner);inner.ScrollToVerticalOffset(0);Pump(80);
+   Wheel(innerContent,-120);Pump(16);
+   inner.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice,Environment.TickCount,MouseButton.Left)
+     {RoutedEvent=UIElement.PreviewMouseDownEvent,Source=inner});
+   var atCancel=inner.VerticalOffset;Pump(400);
+   check(Math.Abs(inner.VerticalOffset-atCancel)<1.5,"mouse down cancels a running whole-notch scroll without drift");
+   // 非信息流容器: 类处理器不会接管整格(不设 Handled), WPF 保留原语义 —— 绝不因为这次改动变慢变飘。
+   var plain=new ScrollViewer{Height=200,Content=new Border{Height=9000},VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+   var plainPanel=new StackPanel();plainPanel.Children.Add(plain);window.Content=new ScrollViewer{Content=plainPanel};Pump(200);
+   TrackpadScroll.SetIsFeed(plain,false);
+   var notchEvent=Wheel((UIElement)plain.Content,-120);
+   check(!notchEvent.Handled,"whole notches outside the feed are left to WPF instead of being smoothed globally");
+   window.Content=outer;Pump(200);
+   TrackpadScroll.SetIsFeed(outer,true);
    SmoothScroll.Stop(inner);inner.ScrollToVerticalOffset(0);Pump(80);
    Wheel(innerContent,-60);SmoothScroll.Stop(inner);Pump(250);
    check(inner.VerticalOffset<1,"touch takeover cancels pending precision scroll without a delayed jump");

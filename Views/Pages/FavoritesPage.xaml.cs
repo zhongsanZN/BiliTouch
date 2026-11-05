@@ -4,11 +4,11 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.ViewModels;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.ViewModels;
 
-namespace BiliDesk.Views.Pages;
+namespace BiliTouch.Views.Pages;
 
 /// <summary>
 /// 收藏页: 只展示 B 站账号的云端收藏夹。
@@ -208,7 +208,7 @@ public partial class FavoritesPage : UserControl
 
     /// <summary>右上角返回按钮: 历史/收藏/缓存的入口都在「我的」页, 统一回那里</summary>
     private void OnBackToMineClick(object sender, RoutedEventArgs e)
-        => BiliDesk.Services.SvcWindow.Main?.OpenMineOverview();
+        => BiliTouch.Services.SvcWindow.Main?.OpenMineOverview();
 
     /// <summary>列表滚动到底部自动加载下一页</summary>
     private async void OnListScrollChanged(object sender, ScrollChangedEventArgs e)

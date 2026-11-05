@@ -2,9 +2,9 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using BiliDesk.Services;
+using BiliTouch.Services;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>Decoration settings are independent of the user's saved accent and color mode.</summary>
 public sealed class SkinService : INotifyPropertyChanged
@@ -33,7 +33,7 @@ public sealed class SkinService : INotifyPropertyChanged
     public BitmapSource Image(string name)
     {
         if (_images.TryGetValue(name, out var image)) return image;
-        var bitmap = new BitmapImage(new Uri($"pack://application:,,,/BiliDesk;component/Assets/Skins/StarParty/{name}.png"));
+        var bitmap = new BitmapImage(new Uri($"pack://application:,,,/BiliTouch;component/Assets/Skins/StarParty/{name}.png"));
         bitmap.Freeze();
         _images[name] = bitmap;
         return bitmap;

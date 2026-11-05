@@ -34,7 +34,7 @@
 
 设置 → 通用新增应用字体：系统默认、HarmonyOS Sans、荆南波波黑。即时应用到现有窗口和弹幕；弹幕切换字体后清理旧尺寸的泳道记录。原生视频浮层、菜单和提示也引用应用字体资源。图标字体、评论 emoji 的安全字体路径保留。
 
-HarmonyOS Sans SC Regular/Bold 取自华为官方字体包，文件未修改；许可原文随资源和输出保存，设置页显示字体使用声明。荆南波波黑使用用户给定目录中的 Bold TTF，未修改，也不要求用户在系统中安装字体。来源见 `BiliDesk/Assets/Fonts/SOURCES.md`。
+HarmonyOS Sans SC Regular/Bold 取自华为官方字体包，文件未修改；许可原文随资源和输出保存，设置页显示字体使用声明。荆南波波黑使用用户给定目录中的 Bold TTF，未修改，也不要求用户在系统中安装字体。来源见 `BiliTouch/Assets/Fonts/SOURCES.md`。
 
 鼠标使用用户提供的 `Cursor_up.png` 和 `Cursor_down.png`，将原始 PNG 原样封装为原生 CUR：粉色常态、蓝色按下态，热点统一为 (8,7)。仅改变本应用指针，不更改 Windows 全局设置。文字编辑、调整尺寸、视频隐藏鼠标等用途保留。应用内 WebView2 页面同样注入对应指针与按下反馈，并保留文字/尺寸光标。
 

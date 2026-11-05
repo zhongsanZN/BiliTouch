@@ -2,11 +2,11 @@ using System.Collections.Specialized;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-namespace BiliDesk.Views.Pages;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+namespace BiliTouch.Views.Pages;
 public partial class MessagesPage : UserControl
 {
  private MessagesViewModel? Vm=>DataContext as MessagesViewModel;
@@ -32,7 +32,7 @@ public partial class MessagesPage : UserControl
   if(!Uri.TryCreate(url,UriKind.Absolute,out var uri))return;
   if(uri.Scheme=="bilibili"){Svc.Toast.Show("请在哔哩哔哩官方客户端查看此通知入口");return;}
   if(uri.Scheme!="https" && uri.Scheme!="http")return;
-  var bvid=BiliDesk.Utils.UrlParser.ExtractBvid(url);
+  var bvid=BiliTouch.Utils.UrlParser.ExtractBvid(url);
   if(!string.IsNullOrEmpty(bvid)){Svc.Navigate?.OpenVideoPlayer(bvid);return;}
   Svc.Navigate?.OpenWebViewWindow(url,"私信链接");
  }

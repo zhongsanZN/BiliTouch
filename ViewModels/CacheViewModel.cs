@@ -4,10 +4,10 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Input;
-using BiliDesk.Helpers;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Services;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 public sealed class CacheViewModel : ObservableObject
 {

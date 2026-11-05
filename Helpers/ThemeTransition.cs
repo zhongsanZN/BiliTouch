@@ -5,9 +5,9 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using BiliDesk.Models;
+using BiliTouch.Models;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 深浅色切换的"圆形扩散"过渡动画。

@@ -6,9 +6,9 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using BiliDesk.Models;
+using BiliTouch.Models;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// SponsorBlock 片段数据源(就是"小电视空降助手"背后那套服务端)。
@@ -16,7 +16,7 @@ namespace BiliDesk.Services;
 /// 为什么自己实现、而不是把那个开源项目移植进来:
 ///   上游是浏览器扩展(TypeScript, 操作 DOM / video 元素), 而我们要的只是
 ///   "按 bvid 问一句、拿回一串时间区间"这一件事 —— 按 HTTP 协议自己写几十行更短、更直白。
-///   而且它就是 GPL-3.0, 搬代码会把整个 BiliDesk 拖进传染性许可。
+///   而且它就是 GPL-3.0, 搬代码会把整个 BiliTouch 拖进传染性许可。
 ///
 /// 三条硬约束(全部是 2026-09-27 实测出来的, 详见根目录 SponsorBlock集成可行性.md):
 ///   1. 只能用自建服务端 www.bsbsb.top —— 官方的 sponsor.ajay.app 不认 BV 号, 直接 Not Found。

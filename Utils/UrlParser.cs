@@ -1,7 +1,7 @@
 using System;
 using System.Text.RegularExpressions;
 
-namespace BiliDesk.Utils;
+namespace BiliTouch.Utils;
 
 /// <summary>B 站 URL 解析器: 提取 bvid / uid / keyword 等参数</summary>
 public static class UrlParser

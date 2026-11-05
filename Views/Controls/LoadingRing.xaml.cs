@@ -1,6 +1,6 @@
 using System.Windows.Controls;
 
-namespace BiliDesk.Views.Controls;
+namespace BiliTouch.Views.Controls;
 
 public partial class LoadingRing : UserControl
 {

@@ -1,4 +1,4 @@
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 internal enum PlayerTouchAction { Pending, Seek, Volume, Brightness, Hold, Canceled }
 

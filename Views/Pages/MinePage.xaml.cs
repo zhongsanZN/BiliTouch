@@ -5,12 +5,12 @@ using System.Windows.Input;
 using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using BiliDesk.Models;
-using BiliDesk.Helpers;
-using BiliDesk.Views.Controls;
-using BiliDesk.ViewModels;
+using BiliTouch.Models;
+using BiliTouch.Helpers;
+using BiliTouch.Views.Controls;
+using BiliTouch.ViewModels;
 
-namespace BiliDesk.Views.Pages;
+namespace BiliTouch.Views.Pages;
 
 public partial class MinePage : UserControl
 {
@@ -92,7 +92,7 @@ public partial class MinePage : UserControl
         TouchSupport.CancelPendingTap();_gestureCard?.CancelGestureTap();
         if(_frozen==null && _sections.TryGetValue(CurrentTabIndex,out var page))
         {
-            _frozen=FindScroll(page);if(_frozen!=null){_panning=_frozen.PanningMode;_frozenOffset=_frozen.VerticalOffset;_frozen.PanningMode=PanningMode.None;BiliDesk.Helpers.SmoothScroll.Stop(_frozen);}
+            _frozen=FindScroll(page);if(_frozen!=null){_panning=_frozen.PanningMode;_frozenOffset=_frozen.VerticalOffset;_frozen.PanningMode=PanningMode.None;BiliTouch.Helpers.SmoothScroll.Stop(_frozen);}
         }
         if(_frozen!=null && Math.Abs(_frozen.VerticalOffset-_frozenOffset)>0.5)_frozen.ScrollToVerticalOffset(_frozenOffset);
         var edge=CurrentTabIndex==0 && _dx>0 || CurrentTabIndex==4 && _dx<0;

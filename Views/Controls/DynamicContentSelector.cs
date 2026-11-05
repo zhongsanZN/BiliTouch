@@ -5,10 +5,10 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.Views.Controls;
+namespace BiliTouch.Views.Controls;
 
 /// <summary>
 /// 动态卡内容区的模板选择器(2026-11-04)。
@@ -123,7 +123,7 @@ public static class DynamicActions
     public static void OpenPicture(DynamicPicture pic)
     {
         if (pic == null || string.IsNullOrEmpty(pic.Url)) return;
-        BiliDesk.Helpers.MediaActions.ShowImage(pic.Url, "动态图片");
+        BiliTouch.Helpers.MediaActions.ShowImage(pic.Url, "动态图片");
     }
 }
 

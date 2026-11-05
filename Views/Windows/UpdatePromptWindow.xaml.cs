@@ -1,8 +1,8 @@
 using System.Windows;
-using BiliDesk.Services;
-using BiliDesk.Views;
+using BiliTouch.Services;
+using BiliTouch.Views;
 
-namespace BiliDesk.Views.Windows;
+namespace BiliTouch.Views.Windows;
 
 /// <summary>
 /// 「发现新版本」弹窗。自动检查(启动后)与手动检查(设置页「检查更新」按钮)共用这一个窗口。

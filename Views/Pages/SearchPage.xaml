@@ -1,8 +1,8 @@
-<UserControl helpers:TrackpadScroll.IsFeed="True" x:Class="BiliDesk.Views.Pages.SearchPage"
+<UserControl helpers:TrackpadScroll.IsFeed="True" x:Class="BiliTouch.Views.Pages.SearchPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:helpers="clr-namespace:BiliDesk.Helpers"
-             xmlns:controls="clr-namespace:BiliDesk.Views.Controls"
+             xmlns:helpers="clr-namespace:BiliTouch.Helpers"
+             xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
              Background="{DynamicResource AppBackgroundBrush}"
              PreviewMouseDown="OnPagePreviewMouseDown">
     <Grid>

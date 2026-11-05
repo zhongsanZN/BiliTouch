@@ -1,9 +1,9 @@
 using System;
 using System.Windows;
-using BiliDesk.Helpers;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Services;
 
-namespace BiliDesk.Views;
+namespace BiliTouch.Views;
 
 /// <summary>通用 WebView2 浏览窗口: 用户主动触发的回退入口(排行榜网页版、网页搜索等)
 /// 内部跳转不再自动拦截, 由用户主动关闭此窗口回主界面</summary>

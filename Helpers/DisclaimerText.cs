@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>声明里的一行。Level: 0=大标题, 1=小节标题, 2=正文, 3=列表项</summary>
 public readonly record struct DisclaimerLine(int Level, string Text);
@@ -33,7 +33,7 @@ public static class DisclaimerText
 
 ## 1. 非官方与无授权
 
-BiliTouch（以 BiliDesk 为基础，以下简称“本项目”）是第三方开发者个人发起的实验性项目，与哔哩哔哩（Bilibili，简称“B站”）及其关联公司、运营方没有任何隶属、代理、合作、赞助、授权或认可关系。本项目未获得 B 站官方授权。
+BiliTouch（以 BiliTouch 为基础，以下简称“本项目”）是第三方开发者个人发起的实验性项目，与哔哩哔哩（Bilibili，简称“B站”）及其关联公司、运营方没有任何隶属、代理、合作、赞助、授权或认可关系。本项目未获得 B 站官方授权。
 
 “哔哩哔哩”“Bilibili”“B站”等商标、标识、名称归其各自权利人所有。本项目仅在描述性意义上提及，不主张任何商标权或其他权利。
 

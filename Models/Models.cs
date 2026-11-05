@@ -4,7 +4,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text.Json;
 
-namespace BiliDesk.Models;
+namespace BiliTouch.Models;
 
 /// <summary>视频卡片信息(跨页面通用)</summary>
 public class VideoItem : System.ComponentModel.INotifyPropertyChanged
@@ -1518,6 +1518,17 @@ public class AppSettings
     /// ★ 与 Services/SettingsStore.cs 的同名属性是**读写契约**, 两处必须一致。
     /// </summary>
     public bool FollowCardWall { get; set; }
+
+    /// <summary>
+    /// 「动态」页**左栏 UP 主列表**的排序模式(2026-11-05), 取值见
+    /// <see cref="FollowSortMode"/>: 0=最近更新(默认) / 1=未读优先 / 2=关注顺序。
+    ///
+    /// ★ 存 int 而不是枚举: 与 <see cref="LastSearchKind"/> 同一套理由 ——
+    ///   JSON 里枚举本来就按数字走; 老配置没有这个字段时拿到 0, 正好是默认的"最近更新",
+    ///   不需要任何版本兼容代码。越界值由 SettingsStore 读取时归一到默认(见 FollowSorting.Normalize)。
+    /// ★ 与 Services/SettingsStore.cs 的同名属性是**读写契约**, 两处必须一致。
+    /// </summary>
+    public int FollowSortMode { get; set; }
 
     /// <summary>
     /// 软件缩放百分比(80~150, 默认 100)。把整个界面按比例放大/缩小, 与系统 DPI 无关。

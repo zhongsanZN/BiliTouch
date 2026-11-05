@@ -1,10 +1,10 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using BiliDesk.Helpers;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-namespace BiliDesk.Views.Pages;
+using BiliTouch.Helpers;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+namespace BiliTouch.Views.Pages;
 public partial class CachePage : UserControl
 {
     private CacheViewModel? Vm=>DataContext as CacheViewModel;

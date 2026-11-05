@@ -1,10 +1,10 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.Views.Controls;
+namespace BiliTouch.Views.Controls;
 
 /// <summary>
 /// 动态混合流卡片的交互(2026-11-04)。
@@ -40,7 +40,7 @@ public partial class DynamicFeedCard : UserControl
     private void OnBlockUp(object sender, RoutedEventArgs e)
     {
         if (DataContext is not DynamicItem d) return;
-        BiliDesk.Helpers.FilterService.Instance.BlockUp(d.AuthorName, d.AuthorMid);
+        BiliTouch.Helpers.FilterService.Instance.BlockUp(d.AuthorName, d.AuthorMid);
         Svc.Toast.Show("已屏蔽此 UP 主，可在首页屏蔽面板撤销");
         e.Handled = true;
     }
@@ -49,7 +49,7 @@ public partial class DynamicFeedCard : UserControl
     {
         if (DataContext is DynamicItem { Video: { } v })
         {
-            BiliDesk.Helpers.FilterService.Instance.BlockTitle(v.Title);
+            BiliTouch.Helpers.FilterService.Instance.BlockTitle(v.Title);
             Svc.Toast.Show("已屏蔽此视频标题，可在首页屏蔽面板撤销");
         }
         e.Handled = true;
@@ -268,7 +268,7 @@ public partial class DynamicFeedCard : UserControl
             var pictures=item?.Pictures.Contains(pic)==true?item.Pictures:item?.Original?.Pictures;
             if(pictures is {Count:>0})
             {
-                var preview=new BiliDesk.Views.Windows.ImagePreviewWindow {Owner=Window.GetWindow(this)};
+                var preview=new BiliTouch.Views.Windows.ImagePreviewWindow {Owner=Window.GetWindow(this)};
                 preview.Show();
                 _=preview.LoadGalleryAsync(pictures.Select(p=>p.Url).ToList(),Math.Max(0,pictures.IndexOf(pic)));
             }

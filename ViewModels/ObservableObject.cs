@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 /// <summary>INotifyPropertyChanged 基类</summary>
 public abstract class ObservableObject : INotifyPropertyChanged

@@ -1,4 +1,4 @@
-<UserControl x:Class="BiliDesk.Views.Pages.UserRelationsPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:controls="clr-namespace:BiliDesk.Views.Controls" Background="{DynamicResource AppBackgroundBrush}">
+<UserControl x:Class="BiliTouch.Views.Pages.UserRelationsPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:controls="clr-namespace:BiliTouch.Views.Controls" Background="{DynamicResource AppBackgroundBrush}">
  <Grid Margin="24,12"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
   <TextBlock Text="{Binding Title}" FontSize="24" FontWeight="SemiBold" Margin="8,0,0,14"/>
   <Grid Grid.Row="1">

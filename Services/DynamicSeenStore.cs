@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// 动态页左栏「未读红点」的**本地基准**: 每个 UP 主上次看到的最新一条动态的 bvid。
@@ -20,7 +20,7 @@ namespace BiliDesk.Services;
 /// ★ 首次运行只会建立基准、不显示红点: 没有基准时若直接判定"全是新的", 第一次打开动态页
 ///   会满屏红点 —— 那不是"有更新", 那只是"以前没记过"。
 ///
-/// 落盘位置: %LocalAppData%\BiliDesk\dynamic_seen.json(与其它数据文件同一处)。
+/// 落盘位置: %LocalAppData%\BiliTouch\dynamic_seen.json(与其它数据文件同一处)。
 /// 读写全部包在 try/catch 里: 红点是锦上添花, 文件损坏/无权限都不能影响动态页本身。
 ///
 /// ★ **只允许在 UI 线程调用**(Set/Flush/TryGet 都一样): 静态的 _map/_dirty 没有任何锁,

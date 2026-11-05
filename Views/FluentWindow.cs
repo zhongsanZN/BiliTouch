@@ -5,11 +5,11 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.Views;
+namespace BiliTouch.Views;
 
 /// <summary>
 /// Fluent 窗口基类: 圆角 + 深色标题栏 + 跟随主题的纯色背景

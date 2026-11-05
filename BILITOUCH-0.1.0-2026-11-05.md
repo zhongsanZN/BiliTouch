@@ -1,11 +1,11 @@
 # BiliTouch 0.1.0（2026-11-05）
 
-作者：中三。基于 BiliDesk，独立演进触屏手势与人体工学体验。
+作者：中三。基于 BiliTouch，独立演进触屏手势与人体工学体验。
 
 ## 比对依据
 
 - 本地起点：`0d0448d` / `1.5.4-touch.9`，已有原生混合动态、触控板横滑、播放器手势及公共图标。
-- 上游： https://github.com/ABING1111/BiliDesk/releases/tag/v1.6.1
+- 上游： https://github.com/ABING1111/BiliTouch/releases/tag/v1.6.1
 - 真实拉取的标签提交：`bf6802dd305d2245225cc60a8c270ea5b1921e08`。
 - 初次 web 工具给出缓存的 1.5.4 页面；经用户纠正，使用本机既有代理 fetch 标签，并读取 GitHub releases/latest API，确认为 1.6.1。发布说明快照：`artifacts/upstream-release.json`。
 
@@ -20,10 +20,10 @@
 
 ## 品牌与关于
 
-- 左栏：BiliTouch v0.1.0、作者中三、以 BiliDesk 为基础、触屏与人体工学定位。
-- 右栏：鸣谢 BiliDesk / ABing（原 B 站主页命令保留）、原 1.5.4 / touch.9 版本、吸收上游 1.6.1、开源库与许可。
+- 左栏：BiliTouch v0.1.0、作者中三、以 BiliTouch 为基础、触屏与人体工学定位。
+- 右栏：鸣谢 BiliTouch / ABing（原 B 站主页命令保留）、原 1.5.4 / touch.9 版本、吸收上游 1.6.1、开源库与许可。
 - 窗口、托盘、产品元信息与发行包改为 BiliTouch；独立安装器 AppId。
-- 程序内部程序集/命名空间仍为 BiliDesk，发布的启动程序为 BiliTouch.exe。继续使用旧数据目录和单实例锁，以保留既有登录与设置并防止两种品牌同时写入。此次不迁移用户数据。
+- 程序内部程序集/命名空间仍为 BiliTouch，发布的启动程序为 BiliTouch.exe。继续使用旧数据目录和单实例锁，以保留既有登录与设置并防止两种品牌同时写入。此次不迁移用户数据。
 - 独立发布仓库尚未指定，暂停上游升级检查；按用户最新要求删除关于页整个“版本更新”区块。
 - GPL-3.0 与原项目许可保留；免责声明仅修改项目品牌并更新正文版本号。
 

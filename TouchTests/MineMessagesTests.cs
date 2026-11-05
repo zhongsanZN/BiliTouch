@@ -9,13 +9,13 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views.Controls;
-using BiliDesk.Views.Pages;
+using BiliTouch;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views.Controls;
+using BiliTouch.Views.Pages;
 
 internal static class MineMessagesTests
 {
@@ -30,7 +30,7 @@ internal static class MineMessagesTests
   try
   {
    Directory.CreateDirectory(AppPaths.CacheDir);
-   foreach(var url in new[]{"https://example.invalid/cover.png","https://example.invalid/official.png"})File.Copy("BiliDesk/Assets/app.png",Path.Combine(AppPaths.CacheDir,Hashing.Md5Hex(url)+".jpg"),true);
+   foreach(var url in new[]{"https://example.invalid/cover.png","https://example.invalid/official.png"})File.Copy("BiliTouch/Assets/app.png",Path.Combine(AppPaths.CacheDir,Hashing.Md5Hex(url)+".jpg"),true);
    var result=Wait(Svc.Api.GetSpaceInfoAsync(42));
    check(result.ok && result.data!.Following==37 && result.data.Follower==1629,"space profile combines WBI info with relation statistics");
    check(result.data!.VideoCount==64 && result.data.VideoCountKnown,"space profile keeps the archive count from the public card");
@@ -88,7 +88,7 @@ internal static class MineMessagesTests
  {
   var original=Svc.Session.Current;var httpField=typeof(ApiClient).GetField("_http",Hidden)!;var oldHttp=httpField.GetValue(Svc.Api);
   using var http=new HttpClient(new HttpClientHandler {Proxy=new WebProxy("http://127.0.0.1:7897"),UseProxy=true});http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent","Mozilla/5.0");
-  var stored=JsonSerializer.Deserialize<Session>(File.ReadAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"AppData/Local/BiliDesk/session.json")))!;
+  var stored=JsonSerializer.Deserialize<Session>(File.ReadAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"AppData/Local/BiliTouch/session.json")))!;
   try
   {
    typeof(SessionManager).GetProperty(nameof(SessionManager.Current))!.SetValue(Svc.Session,stored);httpField.SetValue(Svc.Api,http);

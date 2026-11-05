@@ -5,9 +5,9 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
+using BiliTouch.Helpers;
 
-namespace BiliDesk.Views;
+namespace BiliTouch.Views;
 
 public partial class PlayerWindow
 {

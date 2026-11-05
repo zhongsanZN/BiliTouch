@@ -8,10 +8,10 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
 
-namespace BiliDesk.Views.Controls;
+namespace BiliTouch.Views.Controls;
 
 /// <summary>
 /// 评论正文(带 B 站表情), 支持**拖选复制**。

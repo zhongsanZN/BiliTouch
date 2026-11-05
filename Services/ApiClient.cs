@@ -7,10 +7,10 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// 哔哩哔哩 API 客户端: 带浏览器 UA、Cookie、WBI 签名与风控降级逻辑
@@ -3790,7 +3790,7 @@ public partial class ApiClient
             App.ReportError(ex);
             // 堆栈首行一起带出去: "invalid format"这类错误只有堆栈才能定位到具体字段
             var stackTop = (ex.StackTrace ?? "").Split('\n')
-                .FirstOrDefault(l => l.Contains("BiliDesk") && !l.Contains("ThrowHelper")) ?? "";
+                .FirstOrDefault(l => l.Contains("BiliTouch") && !l.Contains("ThrowHelper")) ?? "";
             return (false, "解析评论失败: " + ex.Message + (stackTop.Length > 0 ? " @ " + stackTop.Trim() : ""), result, 0);
         }
         return (true, null, result, total);
@@ -5553,7 +5553,7 @@ public partial class ApiClient
     /// 参数: aid / cid / progress(秒) / type=3(投稿视频)
     ///
     /// 调用时机由播放器控制: 起播后节流上报 + 暂停/关闭时补报一次,
-    /// 这样"用 BiliDesk 看过的视频"会出现在 App 与网页端的观看记录里。
+    /// 这样"用 BiliTouch 看过的视频"会出现在 App 与网页端的观看记录里。
     /// 未登录直接返回 ok=false, 不产生任何网络请求。
     ///
     /// ★ 2026-10-01 由 <c>Task&lt;bool&gt;</c> 改为 (ok, err): 上报是 fire-and-forget,

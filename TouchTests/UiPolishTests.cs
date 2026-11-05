@@ -10,13 +10,13 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views;
-using BiliDesk.Views.Controls;
-using BiliDesk.Views.Pages;
+using BiliTouch;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views;
+using BiliTouch.Views.Controls;
+using BiliTouch.Views.Pages;
 
 internal static class UiPolishTests
 {
@@ -93,7 +93,7 @@ internal static class UiPolishTests
             Until(()=>detail.ViewModel.Comments.Count>=100 && !detail.ViewModel.Loading);
             check(detail.ViewModel.Comments.Count>=100,"approaching the comment bottom automatically fetches more comments");
             Save(host,System.IO.Path.Combine(artifacts,"ui-dynamic-detail-light.png"));
-            Application.Current.Resources.MergedDictionaries[0]=new ResourceDictionary {Source=new Uri("/BiliDesk;component/Themes/Colors.Dark.xaml",UriKind.Relative)};Pump(80);
+            Application.Current.Resources.MergedDictionaries[0]=new ResourceDictionary {Source=new Uri("/BiliTouch;component/Themes/Colors.Dark.xaml",UriKind.Relative)};Pump(80);
             Save(host,System.IO.Path.Combine(artifacts,"ui-dynamic-detail-dark.png"));
             host.Width=760;host.Height=560;Pump(100);
             check(composer.ActualHeight<90 && list.ActualHeight>250,"compact detail layout preserves room for reading comments");
@@ -158,11 +158,11 @@ internal static class UiPolishTests
     }
     private static void CheckSettings(Action<bool,string> check,string artifacts)
     {
-        var dict=new ResourceDictionary { Source=new Uri("/BiliDesk;component/Views/Pages/Settings/SettingsTabs.xaml",UriKind.Relative) };
+        var dict=new ResourceDictionary { Source=new Uri("/BiliTouch;component/Views/Pages/Settings/SettingsTabs.xaml",UriKind.Relative) };
         var vm=new SettingsViewModel();
         var general=(FrameworkElement)((DataTemplate)dict["GeneralTabTemplate"]).LoadContent();general.DataContext=vm;
         var host=new Window {Width=850,Height=800,Content=new ScrollViewer {Content=general}};host.Show();Pump(120);
-        var filter=BiliDesk.Helpers.FilterService.Instance;var oldTitle=filter.TitleKeyword;var oldUp=filter.UpKeyword;
+        var filter=BiliTouch.Helpers.FilterService.Instance;var oldTitle=filter.TitleKeyword;var oldUp=filter.UpKeyword;
         try
         {
             check(Descendants<TextBlock>(general).Any(t=>t.Text=="屏蔽内容"),"global content blocking lives in General settings");
@@ -185,7 +185,7 @@ internal static class UiPolishTests
         var author=Descendants<Button>(about).Single(b=>b.ToolTip?.ToString()=="在应用内打开中三的 B 站主页");
         check(author.Command==vm.OpenBiliTouchAuthorCommand && SettingsViewModel.BiliTouchAuthorMid==349921038,"About links the BiliTouch author to the verified personal UID");
         check(Descendants<TextBlock>(about).Any(t=>t.Text.StartsWith("围绕触摸屏、触控板手势")),"About describes touchscreen and touchpad gestures explicitly");
-        check(Descendants<System.Windows.Controls.Image>(about).Any(i=>i.Source?.ToString().Contains("bilidesk-original.png")==true),"the original app icon is retained in acknowledgements");
+        check(Descendants<System.Windows.Controls.Image>(about).Any(i=>i.Source?.ToString().Contains("upstream-original.png")==true),"the original app icon is retained in acknowledgements");
         Save(aboutHost,System.IO.Path.Combine(artifacts,"release-about.png"));aboutHost.Close();
     }
     private static void Invoke(object target,string method,params object[] args)=>target.GetType().GetMethod(method,Private)!.Invoke(target,args);

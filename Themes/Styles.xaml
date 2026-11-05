@@ -2086,6 +2086,161 @@
         未选中: 半透明黑底 + 白描边(在深浅两种封面上都看得见)
         已选中: 强调色底 + 白色对勾
     -->
+    <!-- ============================================================
+         播放器控制条样式(2026-11-05 由 PlayerWindow.xaml 提到全局)
+
+         ★★★ 为什么必须提到全局: 直播间与视频播放器的底部控制条**必须是同一套** ——
+           同一颗播放/暂停、同一个音量、同一个清晰度弹层。原先直播间自己画了一套
+           (Segoe 字形 + 主题浅底按钮), 而播放器用的是这些"深色半透明 + 白色墨迹"的样式,
+           两个窗口一对比就能看出是两个人做的。用户原话:
+           "直播间重做之后很多东西没有做到对齐, 播放暂停按钮、声音等等…右上角三大金刚键也是自己乱做一套"。
+
+         ★ 这些样式**故意不跟主题走**: 它们压在视频画面上, 浅色主题下用浅底按钮会糊成一片。
+           颜色写死成黑底白墨, 深浅主题都成立。
+         ★ 提到全局后,**不要**再在 PlayerWindow.xaml / LiveRoomWindow.xaml 的局部资源里
+           定义同名键: 局部字典会覆盖全局, 一旦两边图形/尺寸漂移, 两个窗口又会不一致。
+         ============================================================ -->
+
+    <!-- 控制条滑条(进度/音量/弹幕外观共用): 细轨道 + 白色圆点 -->
+    <Style x:Key="PlayerSlider" TargetType="Slider">
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="IsMoveToPointEnabled" Value="True" />
+        <!-- 不吃键盘焦点, 保证空格键始终控制播放/暂停 -->
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Slider">
+                    <Grid MinHeight="40" Background="Transparent">
+                        <Track x:Name="PART_Track">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="{x:Static Slider.DecreaseLarge}" Focusable="False">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="RepeatButton">
+                                            <Grid Background="Transparent" Height="40">
+                                                <Border Height="3" CornerRadius="1.5"
+                                                        Background="#F2FFFFFF" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.DecreaseRepeatButton>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="{x:Static Slider.IncreaseLarge}" Focusable="False">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="RepeatButton">
+                                            <Grid Background="Transparent" Height="40">
+                                                <Border Height="3" CornerRadius="1.5"
+                                                        Background="#4DFFFFFF" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.IncreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Focusable="False">
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Grid Background="Transparent" Width="28">
+                                                <Ellipse Width="11" Height="11" Fill="White"
+                                                         Margin="-2,0" />
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                        </Track>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 控制条圆形图标按钮(播放/暂停、全屏、侧栏…) -->
+    <Style x:Key="PlayerRoundBtn" TargetType="Button">
+        <Setter Property="MinWidth" Value="40" />
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd" Background="Transparent" CornerRadius="16">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="#26FFFFFF" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="#40FFFFFF" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.4" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 控制条文字按钮(清晰度、倍速、弹幕设置…) -->
+    <Style x:Key="PlayerTextBtn" TargetType="Button">
+        <Setter Property="MinWidth" Value="40" />
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Foreground" Value="#F2FFFFFF" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Padding" Value="8,4" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd" Background="#40000000" CornerRadius="5"
+                            BorderBrush="#22FFFFFF" BorderThickness="1"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="#5C000000" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="#66000000" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.4" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 弹幕外观弹层里的"标签 / 数值"两列文字。
+         ★ 颜色必须写死成白系: 这块弹层永远浮在视频画面上, 跟主题走会在浅色主题下看不见。
+         ★ 必须显式 Foreground —— 全局隐式 TextBlock 样式带 Foreground setter, 优先级高于继承。 -->
+    <Style x:Key="DanmakuRowLabelStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="#E6FFFFFF" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="DanmakuRowValueStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="#99FFFFFF" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="TextAlignment" Value="Right" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!-- 控制条左侧的"直播中"胶囊: 直播没有进度条, 这个位置要有东西占住, 否则操作行会往上跳 -->
+    <Style x:Key="LiveOnAirBadgeStyle" TargetType="Border">
+        <Setter Property="Background" Value="#33FF5C8A" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="Padding" Value="7,2" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Margin" Value="10,0,0,0" />
+    </Style>
+
     <Style x:Key="SelectionBubbleStyle" TargetType="Border">
         <Setter Property="Width" Value="26" />
         <Setter Property="Height" Value="26" />

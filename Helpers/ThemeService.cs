@@ -2,11 +2,11 @@ using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Models;
+using BiliTouch.Services;
 using Microsoft.Win32;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 主题服务: 跟随系统深浅色自动切换 / 手动浅色 / 手动深色, 并注入强调色笔刷。
@@ -342,8 +342,8 @@ public class ThemeService
         var colors = new ResourceDictionary
         {
             Source = new Uri(IsDark
-                ? "/BiliDesk;component/Themes/Colors.Dark.xaml"
-                : "/BiliDesk;component/Themes/Colors.Light.xaml", UriKind.Relative)
+                ? "/BiliTouch;component/Themes/Colors.Dark.xaml"
+                : "/BiliTouch;component/Themes/Colors.Light.xaml", UriKind.Relative)
         };
 
         var merged = app.Resources.MergedDictionaries;

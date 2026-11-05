@@ -1,7 +1,7 @@
 using System;
 using System.Globalization;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 字节数 → 人类可读的容量文本(如 "1.5 GB")。

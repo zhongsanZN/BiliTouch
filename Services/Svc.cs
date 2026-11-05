@@ -1,7 +1,7 @@
-using BiliDesk.Helpers;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Services;
 
-namespace BiliDesk;
+namespace BiliTouch;
 
 /// <summary>全局服务入口(简易服务容器)</summary>
 public static class Svc

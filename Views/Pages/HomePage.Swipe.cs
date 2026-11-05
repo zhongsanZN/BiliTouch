@@ -6,9 +6,9 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using BiliDesk.Views.Controls;
+using BiliTouch.Views.Controls;
 
-namespace BiliDesk.Views.Pages;
+namespace BiliTouch.Views.Pages;
 
 /// <summary>
 /// 首页五个 tab 的**手机式跟手翻页**(2026-11-04 重写)。

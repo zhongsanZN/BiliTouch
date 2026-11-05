@@ -40,7 +40,7 @@
 
 截图位于 `artifacts/touch-tests/star-party-*.png`：首页浅/深/紧凑、个人卡宽/窄、设置、点赞、收藏、网页布局和 2400 DIP 纹样延展（2 倍渲染）。图片来自实际 WPF 控件的渲染；数据与网络是受控夹具，截图不代表真实账号线上操作或设备长时测试。
 
-原图与来源：`BiliDesk/Assets/Skins/StarParty/SOURCES.md`；研究目录 `../theme-research/star-party/` 保留官方 ZIP、MD5、PNG 清单和接口原始响应。
+原图与来源：`BiliTouch/Assets/Skins/StarParty/SOURCES.md`；研究目录 `../theme-research/star-party/` 保留官方 ZIP、MD5、PNG 清单和接口原始响应。
 
 ## 暂未扩展
 

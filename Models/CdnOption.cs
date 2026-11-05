@@ -1,4 +1,4 @@
-namespace BiliDesk.Models;
+namespace BiliTouch.Models;
 
 /// <summary>
 /// 视频 CDN(线路)选择策略。★ 2026-10-03 新增。

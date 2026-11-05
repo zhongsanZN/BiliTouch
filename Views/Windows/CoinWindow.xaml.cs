@@ -1,6 +1,6 @@
 ﻿using System.Windows;
 
-namespace BiliDesk.Views;
+namespace BiliTouch.Views;
 
 /// <summary>
 /// 投币数量选择窗(播放器"投币"按钮弹出的模态对话框)。

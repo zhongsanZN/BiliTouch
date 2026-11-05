@@ -5,10 +5,10 @@ using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// 短视频的"本地合流缓存": 把 DASH 的 1080P 音视频下到本地、合成一个 mp4 存起来,
@@ -24,7 +24,7 @@ namespace BiliDesk.Services;
 /// (遮罩上"正在下载高清视频 N%"), 下完合流再播。曾试过"先用远端 DASH 开播、后台合流、就绪后换源",
 /// 真机上换源那一下暴露了容器定位问题(见 DashRemuxer 的说明), 已删除。
 ///
-/// 磁盘策略("允许写盘但要清理"): 目录默认 <c>%LocalAppData%\BiliDesk\vcache</c>
+/// 磁盘策略("允许写盘但要清理"): 目录默认 <c>%LocalAppData%\BiliTouch\vcache</c>
 /// (2026-10-11 起内部缓存不再随用户设置移动, 固定在 AppPaths.CacheRoot = 数据目录下),
 /// 每次写完都 Prune —— 超过 14 天、超过 50 个、总量超 500MB 的一律按"最久没动过"先删;
 /// 中断残留的 .part/.tmp 也会被清掉。单片按码率估算超过 8MB 的直接不做(不值得占盘)。

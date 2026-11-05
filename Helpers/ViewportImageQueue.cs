@@ -4,9 +4,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
-using BiliDesk.Views.Controls;
+using BiliTouch.Views.Controls;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>Start only nearby card images, in bounded UI batches; one scroll subscription per viewport.</summary>
 internal static class ViewportImageQueue

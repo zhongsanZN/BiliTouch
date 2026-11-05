@@ -2,8 +2,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using BiliDesk.Views.Controls;
-namespace BiliDesk.Helpers;
+using BiliTouch.Views.Controls;
+namespace BiliTouch.Helpers;
 
 /// <summary>Contact selection commits on a stationary touch release; native scrolling keeps ownership of drags.</summary>
 internal sealed class ContactSelection

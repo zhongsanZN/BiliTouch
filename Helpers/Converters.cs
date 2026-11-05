@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Data;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>枚举相等比较(用于 RadioButton 的 IsChecked 双向绑定, 参数传枚举值名称)</summary>
 public class EnumEqualsConverter : IValueConverter

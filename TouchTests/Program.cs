@@ -8,14 +8,14 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using System.Windows.Markup;
 using System.Xml.Linq;
-using BiliDesk;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views;
-using BiliDesk.Views.Controls;
-using BiliDesk.Views.Pages;
+using BiliTouch;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views;
+using BiliTouch.Views.Controls;
+using BiliTouch.Views.Pages;
 
 internal static class Program
 {
@@ -30,15 +30,15 @@ internal static class Program
         typeof(AppPaths).GetProperty(nameof(AppPaths.DataDir))!.SetValue(null, Artifacts);
         typeof(AppPaths).GetProperty(nameof(AppPaths.CacheRoot))!.SetValue(null, Artifacts);
         var app = new Application();
-        var markup = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "../../../../../BiliDesk/App.xaml"));
+        var markup = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "../../../../../BiliTouch/App.xaml"));
         XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
         var resources = new XElement(markup.Descendants(presentation + "ResourceDictionary").First());
         resources.SetAttributeValue(XNamespace.Xmlns + "x", "http://schemas.microsoft.com/winfx/2006/xaml");
-        resources.SetAttributeValue(XNamespace.Xmlns + "helpers", "clr-namespace:BiliDesk.Helpers;assembly=BiliDesk");
-        foreach (var element in resources.Descendants().Where(e => e.Name.NamespaceName == "clr-namespace:BiliDesk.Helpers"))
-            element.Name = XName.Get(element.Name.LocalName, "clr-namespace:BiliDesk.Helpers;assembly=BiliDesk");
+        resources.SetAttributeValue(XNamespace.Xmlns + "helpers", "clr-namespace:BiliTouch.Helpers;assembly=BiliTouch");
+        foreach (var element in resources.Descendants().Where(e => e.Name.NamespaceName == "clr-namespace:BiliTouch.Helpers"))
+            element.Name = XName.Get(element.Name.LocalName, "clr-namespace:BiliTouch.Helpers;assembly=BiliTouch");
         foreach (var source in resources.Descendants().Attributes("Source"))
-            source.Value = "/BiliDesk;component/" + source.Value;
+            source.Value = "/BiliTouch;component/" + source.Value;
         app.Resources = (ResourceDictionary)XamlReader.Parse(resources.ToString());
         app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
         TouchSupport.Install();
@@ -73,7 +73,8 @@ internal static class Program
             else if(args.Contains("--live-hang")) FeedHangProbe.Run(Artifacts);
             else if(args.Contains("--live-feed")) LiveDynamicProbe.Run(Artifacts,true);
             else if(args.Contains("--live-dynamic")) LiveDynamicProbe.Run(Artifacts);
-            else if (args.Contains("--dynamic")) DynamicTests.Run(Check, Artifacts);
+            else if(args.Contains("--dynamic")) DynamicTests.Run(Check, Artifacts);
+            else if(args.Contains("--follow-sort")) FollowSortTests.Run(Check, Artifacts);
             else
             {
             TestSessions();
@@ -141,7 +142,7 @@ internal static class Program
         Check(right.Action == PlayerTouchAction.Volume && right.VolumeTarget(20) == 70, "right vertical swipe adjusts volume");
         right.Move(703, -2000);
         Check(right.VolumeTarget(80) == 100, "volume clamps to 100");
-        Check(typeof(App).Assembly.GetName().Version!.ToString(3) == BiliDesk.App.AppVersion, "BiliTouch version matches the built assembly");
+        Check(typeof(App).Assembly.GetName().Version!.ToString(3) == BiliTouch.App.AppVersion, "BiliTouch version matches the built assembly");
     }
 
     private static void TestHome()
@@ -273,7 +274,7 @@ internal static class Program
         var panel = new StackPanel();
         panel.Children.Add(slider); panel.Children.Add(viewer); panel.Children.Add(horizontal);
         panel.Children.Add(explicitViewer); panel.Children.Add(episodes); panel.Children.Add(editor);
-        var window = new Window { Title = "BiliDesk touch control tests", Content = panel, Width = 650, Height = 560 };
+        var window = new Window { Title = "BiliTouch touch control tests", Content = panel, Width = 650, Height = 560 };
         window.Show(); Pump(200);
         Check(viewer.PanningMode == PanningMode.VerticalFirst, "default scroll viewers enable native finger panning");
         Check(horizontal.PanningMode == PanningMode.HorizontalOnly, "horizontal lists enable horizontal finger panning");
@@ -331,7 +332,7 @@ internal static class Program
 
     private static void TestPlayer(string? videoPath)
     {
-        var player = new PlayerWindow { Title = "BiliDesk touch verification" };
+        var player = new PlayerWindow { Title = "BiliTouch touch verification" };
         player.Show(); Pump(300);
 
         // ★ 2026-11-04 用户报"点进评论详情再返回后触屏拖不动评论列表"。

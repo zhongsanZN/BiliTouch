@@ -1,7 +1,7 @@
 using System;
 using System.Threading.Tasks;
 
-namespace BiliDesk.Services;
+namespace BiliTouch.Services;
 
 /// <summary>
 /// 观看进度上报服务: 把本地播放的进度自动同步到 B 站云端历史。

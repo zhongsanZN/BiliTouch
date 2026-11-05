@@ -1,4 +1,4 @@
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 所有出站 HTTP 请求共用的默认值。

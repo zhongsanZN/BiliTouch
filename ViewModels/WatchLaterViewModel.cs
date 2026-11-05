@@ -8,11 +8,11 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 /// <summary>
 /// 「稍后再看」页 ViewModel(2026-09-28 新增)。
@@ -284,7 +284,7 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
             return;
         }
 
-        var r = MessageBox.Show($"确定要从「稍后再看」移出选中的 {targets.Count} 个视频吗?", "BiliDesk",
+        var r = MessageBox.Show($"确定要从「稍后再看」移出选中的 {targets.Count} 个视频吗?", "BiliTouch",
             MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (r != MessageBoxResult.Yes) return;
 
@@ -327,7 +327,7 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
 
         var r = MessageBox.Show(
             "确定要清空**全部**「稍后再看」吗?\n\n这会删除账号下整个列表, 且无法撤销。",
-            "BiliDesk", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            "BiliTouch", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (r != MessageBoxResult.Yes) return;
 
         Busy = true;

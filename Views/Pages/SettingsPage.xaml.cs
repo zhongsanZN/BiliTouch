@@ -2,10 +2,10 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using BiliDesk.Helpers;
-using BiliDesk.ViewModels;
+using BiliTouch.Helpers;
+using BiliTouch.ViewModels;
 
-namespace BiliDesk.Views.Pages;
+namespace BiliTouch.Views.Pages;
 
 public partial class SettingsPage : UserControl
 {

@@ -6,11 +6,11 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views;
+using BiliTouch;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views;
 using LibVLCSharp.Shared;
 using MediaPlayer = LibVLCSharp.Shared.MediaPlayer;
 
@@ -45,6 +45,10 @@ internal static class WebPlayerLayoutTests
    Pump(250);
    var initial=Bounds(surface,stage);var commentTop=comments.TransformToAncestor(stage).Transform(new Point()).Y;
    check(Math.Abs(initial.Height-initial.Width*9/16)<2 && commentTop>=initial.Bottom,"inline video uses its aspect ratio and comments start below it");
+   // ★ 2026-11-05 锁死一个静默失败: ApplyWebVideoBounds 里"变了才写"的守卫曾用 Math.Abs(a-b)>0.01,
+   //   而元素宽度初值是 NaN ⇒ NaN 与任何数比较都是 false ⇒ 守卫永远认为"没变", 视频区一次都没被设置,
+   //   停靠动画走完画面仍是 0x0(用户看到的就是"小窗里什么都没有")。这里直接断言尺寸是有限正数。
+   check(!double.IsNaN(surface.Width) && surface.Width>1 && !double.IsNaN(surface.Height) && surface.Height>1,"mounted web layout gives the native video surface a real finite size");
    check(Element<FrameworkElement>(player,"WebLeftPane").IsVisible && Element<FrameworkElement>(player,"InfoPanel").IsVisible,"both browser-style columns remain native page regions");
    var sameWindowCount=Application.Current.Windows.Count;
    Save(player,Path.Combine(artifacts,"web-layout-top.png"));

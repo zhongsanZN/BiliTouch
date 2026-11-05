@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Input;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
 using Microsoft.Win32;
 
-namespace BiliDesk.Views;
+namespace BiliTouch.Views;
 
 /// <summary>
 /// 动态发布窗口(2026-11-04)。

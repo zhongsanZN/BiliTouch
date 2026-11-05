@@ -2,11 +2,11 @@ using System;
 using System.Linq;
 using System.Windows.Input;
 using System.Windows.Media;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 /// <summary>设置页 ViewModel: 外观 + 账户 + 数据 + 关于</summary>
 public class SettingsViewModel : ObservableObject
@@ -151,7 +151,7 @@ public class SettingsViewModel : ObservableObject
     public string RuntimeInfo => ".NET 10 / WPF";
 
     /// <summary>「关于 → 版本号」一栏右侧显示的版本(与 App.AppVersion 单一来源, 别在这里写死)</summary>
-    public string UpstreamVersionNumber => "已吸收上游优化 · BiliDesk v1.6.1";
+    public string UpstreamVersionNumber => "已吸收上游优化 · BiliTouch v1.6.1";
 
     public string VersionNumber => "v" + App.AppVersion;
 
@@ -1094,7 +1094,7 @@ public class SettingsViewModel : ObservableObject
         set
         {
             var v = Math.Clamp(value,
-                BiliDesk.Helpers.DanmakuMotion.MinSpeedLevel, BiliDesk.Helpers.DanmakuMotion.MaxSpeedLevel);
+                BiliTouch.Helpers.DanmakuMotion.MinSpeedLevel, BiliTouch.Helpers.DanmakuMotion.MaxSpeedLevel);
             if (v == Svc.Settings.DanmakuSpeedLevel) return;
             Svc.Settings.UpdateDanmakuSettings(
                 Svc.Settings.DanmakuEnabled, Svc.Settings.DanmakuAreaPercent, Svc.Settings.DanmakuSmartFilter,
@@ -1104,10 +1104,10 @@ public class SettingsViewModel : ObservableObject
         }
     }
 
-    public string DanmakuSpeedText => BiliDesk.Helpers.DanmakuMotion.SpeedLabel(DanmakuSpeedLevel);
+    public string DanmakuSpeedText => BiliTouch.Helpers.DanmakuMotion.SpeedLabel(DanmakuSpeedLevel);
 
     /// <summary>速度可选值的文案列表(给播放器里的说明文案复用)</summary>
-    public string[] DanmakuSpeedOptions => BiliDesk.Helpers.DanmakuMotion.SpeedLevelLabels;
+    public string[] DanmakuSpeedOptions => BiliTouch.Helpers.DanmakuMotion.SpeedLevelLabels;
 
     // ---- 五个档位各自的"选中态" ----
     //
@@ -1182,7 +1182,7 @@ public class SettingsViewModel : ObservableObject
     {
         get
         {
-            var n = BiliDesk.Helpers.DanmakuKeywordFilter.Build(Svc.Settings.DanmakuBlockKeywords)?.Count ?? 0;
+            var n = BiliTouch.Helpers.DanmakuKeywordFilter.Build(Svc.Settings.DanmakuBlockKeywords)?.Count ?? 0;
             return n == 0 ? "尚未设置屏蔽规则" : $"已启用 {n} 条屏蔽规则";
         }
     }

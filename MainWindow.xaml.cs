@@ -7,14 +7,14 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views;
-using BiliDesk.Views.Pages;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views;
+using BiliTouch.Views.Pages;
 
-namespace BiliDesk;
+namespace BiliTouch;
 
 public partial class MainWindow : FluentWindow
 {

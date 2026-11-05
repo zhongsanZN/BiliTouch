@@ -1,12 +1,12 @@
-<views:FluentWindow x:Class="BiliDesk.MainWindow"
+<views:FluentWindow x:Class="BiliTouch.MainWindow"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:views="clr-namespace:BiliDesk.Views"
-             xmlns:controls="clr-namespace:BiliDesk.Views.Controls"
-             xmlns:vm="clr-namespace:BiliDesk.ViewModels"
+             xmlns:views="clr-namespace:BiliTouch.Views"
+             xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
+             xmlns:vm="clr-namespace:BiliTouch.ViewModels"
              xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
              xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-             xmlns:helpers="clr-namespace:BiliDesk.Helpers"
+             xmlns:helpers="clr-namespace:BiliTouch.Helpers"
              Title="BiliTouch" Width="1280" Height="800"
              MinWidth="840" MinHeight="660" WindowStartupLocation="CenterScreen"
              WindowStyle="None" ResizeMode="CanResize" UseLayoutRounding="True"
@@ -172,7 +172,7 @@
                         HorizontalAlignment="Center" Margin="0,18,0,20"
                         Cursor="Hand" ToolTip="分区" MouseLeftButtonUp="OnBrandLogoClick">
                     <Border.Background>
-                        <ImageBrush ImageSource="/BiliDesk;component/Assets/app.png" Stretch="UniformToFill" />
+                        <ImageBrush ImageSource="/BiliTouch;component/Assets/app.png" Stretch="UniformToFill" />
                     </Border.Background>
                 </Border>
 

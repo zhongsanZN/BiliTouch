@@ -8,12 +8,12 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views.Controls;
-using BiliDesk.Views.Pages;
+using BiliTouch;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views.Controls;
+using BiliTouch.Views.Pages;
 
 internal static class DynamicTests
 {
@@ -176,7 +176,7 @@ internal static class DynamicTests
         window.Content=card; Pump();
         var texts = Descendants<TextBlock>(card).Select(t=>t.Text).ToList();
         check(texts.Contains("今天的记录") && texts.Contains("热评测试"), "rendered title and hot comment");
-        check(!texts.Any(t=>t=="BiliDesk.Models.DynamicItem"), "no fallback type name");
+        check(!texts.Any(t=>t=="BiliTouch.Models.DynamicItem"), "no fallback type name");
 
         // ============ 2026-11-04 新增: 投票 / 附加卡片 / 富文本节点 ============
         // 这三块此前完全没解析 —— 投票动态只剩一句正文、活动卡只剩标题、
@@ -201,7 +201,7 @@ internal static class DynamicTests
         geoCard.Measure(new Size(760, double.PositiveInfinity));
         geoCard.Arrange(new Rect(new Point(), geoCard.DesiredSize)); geoCard.UpdateLayout();
 
-        var aspectPanel = Descendants<BiliDesk.Views.Controls.AspectPanel>(geoCard).FirstOrDefault();
+        var aspectPanel = Descendants<BiliTouch.Views.Controls.AspectPanel>(geoCard).FirstOrDefault();
         check(aspectPanel != null, "video card uses AspectPanel for the cover");
         check(aspectPanel!.ActualHeight > 100 && Math.Abs(aspectPanel.ActualWidth / aspectPanel.ActualHeight - 16.0/9.0) < 0.05,
             $"cover keeps 16:9 (actual {aspectPanel.ActualWidth:0}x{aspectPanel.ActualHeight:0})");
@@ -342,7 +342,7 @@ internal static class DynamicTests
         check(comment.IsLiked && handler.Forms.Any(f=>f.Contains("rpid=8001") && f.Contains("type=11")),"native comment like type");
         foreach(var mode in new[]{AppTheme.Light,AppTheme.Dark})
         {
-            Application.Current.Resources.MergedDictionaries[0]=new ResourceDictionary {Source=new Uri($"/BiliDesk;component/Themes/Colors.{mode}.xaml",UriKind.Relative)};Pump();
+            Application.Current.Resources.MergedDictionaries[0]=new ResourceDictionary {Source=new Uri($"/BiliTouch;component/Themes/Colors.{mode}.xaml",UriKind.Relative)};Pump();
             var shot=new RenderTargetBitmap((int)detail.ActualWidth,(int)detail.ActualHeight,96,96,PixelFormats.Pbgra32);shot.Render(detail);
             var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(shot));
             using(var stream=File.Create(Path.Combine(output,$"dynamic-detail-{mode}.png")))png.Save(stream);
@@ -353,7 +353,7 @@ internal static class DynamicTests
         check((int)typeof(HomeViewModel).GetField("_popularPage",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(home)! == 1,"home failed page retains cursor");
         handler.FailPopular=false;Wait(home.LoadMoreAsync());
         check(handler.Paths.Last().Contains("pn=2") && home.PopularItems.Count==1,"home retries same page successfully");
-        var gallery=new BiliDesk.Views.Windows.ImagePreviewWindow();gallery.Show();
+        var gallery=new BiliTouch.Views.Windows.ImagePreviewWindow();gallery.Show();
         Wait(gallery.LoadGalleryAsync(new[]{"",""}));
         check(((TextBlock)gallery.FindName("GalleryIndex")).Text=="1 / 2","gallery starts at selected image");
         ((Button)gallery.FindName("NextImage")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));Pump();
@@ -365,13 +365,13 @@ internal static class DynamicTests
         check(switchingHome.IsRecommendTab && !switchingHome.Loading && switchingHome.Error.Length==0,"inactive home request cannot overwrite active state");
         handler.FailPopular=false;handler.DelayPopular=false;
         var wallItems=new System.Collections.ObjectModel.ObservableCollection<VideoItem>(Enumerable.Range(0,600).Select(i=>new VideoItem {Bvid=$"BV{i:D10}",Title=$"首页虚拟化验证 {i} · 测试较长的标题文字与换行布局",Author="示例 UP"}));
-        var wallRoot=new FrameworkElementFactory(typeof(BiliDesk.Helpers.VirtualizingCardWallPanel));
-        wallRoot.SetValue(BiliDesk.Helpers.CardWall.EnableProperty,true);
+        var wallRoot=new FrameworkElementFactory(typeof(BiliTouch.Helpers.VirtualizingCardWallPanel));
+        wallRoot.SetValue(BiliTouch.Helpers.CardWall.EnableProperty,true);
         var wallList=new ItemsControl {ItemsSource=wallItems,ItemsPanel=new ItemsPanelTemplate(wallRoot),ItemTemplate=new DataTemplate {VisualTree=new FrameworkElementFactory(typeof(VideoCard))}};
         var content=new StackPanel();content.Children.Add(new TextBlock {Text="首页测试标题",Height=50});content.Children.Add(wallList);content.Children.Add(new Border {Height=250});
         var wallScroll=new ScrollViewer {Content=content,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled};
         window.Content=wallScroll;Pump();Pump();
-        var wall=Descendants<BiliDesk.Helpers.VirtualizingCardWallPanel>(window).First();
+        var wall=Descendants<BiliTouch.Helpers.VirtualizingCardWallPanel>(window).First();
         check(wall.RealizedCount>0 && wall.RealizedCount<60,$"home viewport containers {wall.RealizedCount}/600");
         wallScroll.ScrollToVerticalOffset(wallScroll.ScrollableHeight/2);Pump();Pump();
         var visibleItems=Descendants<VideoCard>(wall).Select(c=>(VideoItem)c.DataContext).ToList();
@@ -386,12 +386,12 @@ internal static class DynamicTests
         check(generatedCount<60,$"home generator retains {generatedCount}/600 containers after long scroll");
         wallItems.Clear();for(int i=0;i<12;i++)wallItems.Add(new VideoItem {Bvid=$"BV{i:D10}",Title="筛选后的内容"});Pump();Pump();
         check(wall.RealizedCount<=12 && wall.RealizedCount>0,"home collection reset clamps viewport");
-        BiliDesk.Helpers.CardWall.SetFixedColumns(2);Pump();Pump();
-        check(BiliDesk.Helpers.CardWall.GetColumns(wall)==2,"home honors fixed column setting");
-        BiliDesk.Helpers.CardWall.SetFixedColumns(0);Pump();Pump();
+        BiliTouch.Helpers.CardWall.SetFixedColumns(2);Pump();Pump();
+        check(BiliTouch.Helpers.CardWall.GetColumns(wall)==2,"home honors fixed column setting");
+        BiliTouch.Helpers.CardWall.SetFixedColumns(0);Pump();Pump();
         wallItems.RemoveAt(0);Pump();Pump();
         check(Descendants<VideoCard>(wall).All(c=>wallItems.Contains((VideoItem)c.DataContext)),"home removal does not retain stale cards");
-        var blankCover=new Border {Background=Brushes.Red};BiliDesk.Helpers.Cover.SetSource(blankCover," ");
+        var blankCover=new Border {Background=Brushes.Red};BiliTouch.Helpers.Cover.SetSource(blankCover," ");
         check(blankCover.Background==null,"recycled empty cover clears previous image");
         var mine=new MinePage {SectionFactory=key=>new System.Windows.Controls.TextBox {Text=key.ToString()}};
         window.Content=mine;Pump();

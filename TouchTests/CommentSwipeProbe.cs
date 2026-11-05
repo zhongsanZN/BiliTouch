@@ -3,9 +3,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
-using BiliDesk.Models;
-using BiliDesk.ViewModels;
-using BiliDesk.Views;
+using BiliTouch.Models;
+using BiliTouch.ViewModels;
+using BiliTouch.Views;
 
 /// <summary>
 /// 复现"点进评论详情再返回后, 触屏拖不动评论列表"(2026-11-04)。

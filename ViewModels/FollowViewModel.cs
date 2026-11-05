@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using System.Windows.Input;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.ViewModels;
+namespace BiliTouch.ViewModels;
 
 /// <summary>
 /// 「动态」页 ViewModel。
@@ -223,6 +223,322 @@ public class FollowViewModel : ObservableObject
         Svc.Player.PlayLive(item.RoomId, item.Title);
     }
 
+    // ------------------------------------------------------------ 左栏排序与未读汇总(2026-11-05)
+
+    /// <summary>
+    /// 左栏的排序模式。**只改展示顺序, 不重新请求接口**(用户可解释、可切换, 见 FollowSorting)。
+    ///
+    /// ★ 落盘走 Svc.Settings.SetFollowSortMode —— 与 FollowCardWall 同一类用户偏好:
+    ///   点一次就记住, 重启/切页回来还是他选的那档。
+    /// ★ 切模式立即生效: setter 里直接重排 Users(ObservableCollection.Move, 不动数据)。
+    /// </summary>
+    public FollowSortMode FollowSortMode
+    {
+        get => _followSortMode;
+        set
+        {
+            if (!FollowSorting.IsDefined(value)) return;
+            if (!SetProperty(ref _followSortMode, value)) return;
+            Svc.Settings.SetFollowSortMode(value);
+            OnPropertyChanged(nameof(SortTagRecent));
+            OnPropertyChanged(nameof(SortTagUnread));
+            OnPropertyChanged(nameof(SortTagOrder));
+            OnPropertyChanged(nameof(SortModeTip));
+            SortUsers();
+        }
+    }
+
+    private FollowSortMode _followSortMode = Svc.Settings.FollowSortMode;
+
+    /// <summary>
+    /// chip 的选中态: 只有被选中的那枚 Tag="on"(见 FollowPage 的 FeedLayoutChipStyle DataTrigger)。
+    /// ★ 由 ViewModel 一个地方算, 而不是 code-behind 逐个写 Tag ——
+    ///   分散着写必然出现"两枚都亮"或"一枚都不亮"(播放页评论排序踩过这条)。
+    /// </summary>
+    public string SortTagRecent => _followSortMode == FollowSortMode.RecentUpdate ? "on" : "off";
+    public string SortTagUnread => _followSortMode == FollowSortMode.UnreadFirst ? "on" : "off";
+    public string SortTagOrder => _followSortMode == FollowSortMode.FollowOrder ? "on" : "off";
+
+    /// <summary>排序控件的悬浮说明(说清当前这档到底怎么排)</summary>
+    public string SortModeTip =>
+        "当前排序：" + FollowSorting.Label(_followSortMode) + "（" + FollowSorting.Description(_followSortMode) + "）";
+
+    /// <summary>
+    /// 关注序号: mid → 第一次见到该 UP 时的序号(接口原序)。
+    /// ★ 这就是"关注顺序"在多次刷新/翻页之后仍然稳定的依据 —— 每次刷新都会重建 Users,
+    ///   但序号只增不改, 所以同一批 UP 的相对次序永远一致。
+    /// ★ 账号切换(_selfMid 变了)时整张表清空。
+    /// </summary>
+    private readonly Dictionary<long, int> _followOrder = new();
+    private int _nextFollowOrder;
+
+    /// <summary>
+    /// 每个 UP **已知的最新发布时间**(只增不减)。
+    /// ★ 为什么累计而不是每页重算: 排序依据要在"切到单 UP 视图 → 切回全部动态"、
+    ///   "翻了一页 → 又翻回第一页"之间保持一致。只看当前这一页的话, 一换视图
+    ///   整列顺序就会重排一次 —— 那正是要避免的"每次刷新都抖动"。
+    /// ★ 只增不减的含义: 一个 UP 昨天发过、今天没发, 它记的仍是昨天那条的时间,
+    ///   所以它不会因为"这一页里没出现"而被当成"从没发过"踢到最后。
+    /// </summary>
+    private readonly Dictionary<long, long> _latestTs = new();
+
+    /// <summary>最近一次见到的每个 UP 最新一条动态 id(只用于"全部标记已读"找不到条目时兜底)</summary>
+    private readonly Dictionary<long, string> _latestDynamicId = new();
+
+    /// <summary>左栏汇总徽标文案("N 个 UP 有更新"); 0 个时为空串</summary>
+    private string _unreadSummary = "";
+    public string UnreadSummary
+    {
+        get => _unreadSummary;
+        private set => SetProperty(ref _unreadSummary, value);
+    }
+
+    /// <summary>汇总徽标可见性(没有未读时不占位)</summary>
+    private bool _hasUnreadSummary;
+    public bool HasUnreadSummary
+    {
+        get => _hasUnreadSummary;
+        private set => SetProperty(ref _hasUnreadSummary, value);
+    }
+
+    /// <summary>"全部标记已读"的按钮文案(点完短暂变"已标记")</summary>
+    private string _markAllReadText = "全部标记已读";
+    public string MarkAllReadText
+    {
+        get => _markAllReadText;
+        private set => SetProperty(ref _markAllReadText, value);
+    }
+
+    /// <summary>刚标记完(用于给按钮上一层强调色, 制造"确实点到了"的确认感)</summary>
+    private bool _markAllReadFlash;
+    public bool MarkAllReadFlash
+    {
+        get => _markAllReadFlash;
+        private set => SetProperty(ref _markAllReadFlash, value);
+    }
+
+    /// <summary>左栏有 UP 可操作(没登录/还没加载出来时禁用"全部标记已读")</summary>
+    public bool HasFollowUsers => Users.Count > 0;
+
+    public ICommand SortRecentCommand { get; private set; } = null!;
+    public ICommand SortUnreadCommand { get; private set; } = null!;
+    public ICommand SortOrderCommand { get; private set; } = null!;
+    public ICommand MarkAllReadCommand { get; private set; } = null!;
+
+    /// <summary>刷新命令之前的部分(构造函数里挂 Command 用)</summary>
+    private void InitSortCommands()
+    {
+        SortRecentCommand = new RelayCommand(() => FollowSortMode = FollowSortMode.RecentUpdate);
+        SortUnreadCommand = new RelayCommand(() => FollowSortMode = FollowSortMode.UnreadFirst);
+        SortOrderCommand = new RelayCommand(() => FollowSortMode = FollowSortMode.FollowOrder);
+        MarkAllReadCommand = new RelayCommand(MarkAllRead);
+    }
+
+    /// <summary>
+    /// 按当前模式重排左栏。用 ObservableCollection.Move 做**原地**重排:
+    ///   · 不 Clear+重填 —— 那会让左栏滚动位置归零、选中项闪一下;
+    ///   · Move 产生的 CollectionChanged 是原生 Move 动作, ItemsControl 只挪容器。
+    /// 已经是目标顺序时**一个动作都不发**(逐个比对后短路), 所以可以放心频繁调用。
+    /// ★ internal 而不是 private: 离线测试(FollowSortTests)要直接驱动这条链路;
+    ///   生产侧的入口只有 UpdateUnreadBadges / ClearUnreadBadge / MarkAllRead / 切模式。
+    /// </summary>
+    internal void SortUsers()
+    {
+        if (Users.Count < 2) return;
+        var ordered = FollowSorting.Arrange(Users, _latestTs, _followOrder, _followSortMode);
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            if (i >= Users.Count || ReferenceEquals(Users[i], ordered[i])) continue;
+            var from = IndexOfUser(ordered[i], i);
+            if (from < 0) continue;
+            if (from != i) Users.Move(from, i);
+        }
+    }
+
+    private int IndexOfUser(FollowUser user, int hint)
+    {
+        if (hint >= 0 && hint < Users.Count && ReferenceEquals(Users[hint], user)) return hint;
+        for (var i = 0; i < Users.Count; i++)
+            if (ReferenceEquals(Users[i], user)) return i;
+        return -1;
+    }
+
+    /// <summary>给新出现的 UP 分配关注序号(已有的不动)。internal 是为了让离线测试能直接驱动这条链路</summary>
+    internal void EnsureFollowOrder(IEnumerable<FollowUser> users)
+    {
+        if (users == null) return;
+        foreach (var u in users)
+        {
+            if (u == null || u.Mid <= 0) continue;
+            if (_followOrder.ContainsKey(u.Mid)) continue;
+            _followOrder[u.Mid] = _nextFollowOrder++;
+        }
+    }
+
+    /// <summary>
+    /// 清空排序/红点用的本地缓存(切换账号时调用)。
+    /// ★ 不清的表现: 换个人登录后, 新账号的关注列表会沿用上一个人的关注序号,
+    ///   左栏顺序看起来完全是乱的, 而"关注顺序"本来应该是可预期的。
+    /// ★ 不碰 DynamicSeenStore: 那是**按 mid** 存的基准, 本身不会串号。
+    /// </summary>
+    private void ResetSortCaches()
+    {
+        _followOrder.Clear();
+        _latestTs.Clear();
+        _latestDynamicId.Clear();
+        _nextFollowOrder = 0;
+    }
+
+
+    /// <summary>
+    /// 把一批动态的 PubTs 记进"已知最新时间"(只增不减, 见 _latestTs 的说明)。
+    /// internal: 离线测试要构造"左栏顺序跟着动态时间走"的场景(生产入口是 UpdateUnreadBadges)。
+    /// </summary>
+    internal void RememberTimestamps(IEnumerable<DynamicItem> items)
+    {
+        if (items == null) return;
+        foreach (var it in items)
+        {
+            if (it == null || it.AuthorMid <= 0) continue;
+            var mid = it.AuthorMid;
+            if (it.PubTs > 0)
+            {
+                if (!_latestTs.TryGetValue(mid, out var cur) || it.PubTs > cur)
+                {
+                    _latestTs[mid] = it.PubTs;
+                    // ★ id 必须与"最大时间戳"配套更新:
+                    //   无条件写的话, 后面再遇到一条更旧的条目会把 "全部标记已读" 的兜底 id
+                    //   覆盖成旧的 —— 那等于把基准往回推, 下次刷新红点又亮, 看着像消不掉。
+                    if (!string.IsNullOrEmpty(it.Id)) _latestDynamicId[mid] = it.Id;
+                }
+            }
+            else if (!string.IsNullOrEmpty(it.Id) && !_latestDynamicId.ContainsKey(mid))
+            {
+                // 没有时间戳的条目: 只在还没有任何记录时占个位(排序用不到它, 但兜底要有个 id)
+                _latestDynamicId[mid] = it.Id;
+            }
+        }
+    }
+
+    /// <summary>重算左栏汇总徽标("N 个 UP 有更新")</summary>
+    private void RaiseUnreadSummary()
+    {
+        var n = 0;
+        foreach (var u in Users) if (u.NewCount > 0) n++;
+        UnreadSummary = n > 0 ? $"{n} 个 UP 有更新" : "";
+        HasUnreadSummary = n > 0;
+    }
+
+    /// <summary>
+    /// 左栏集合变化 → 维护"每个 UP 的 NewCount 事件订阅"。
+    ///
+    /// ★ 为什么订阅而不是等 UpdateUnreadBadges 手动刷汇总:
+    ///   汇总徽标("N 个 UP 有更新")和"未读优先"的排序都依赖 NewCount,
+    ///   而 NewCount 会被**四个地方**改(算红点 / 点开清红点 / 全部标记已读 / 取消关注后的重算)。
+    ///   逐个调用点去记得刷汇总, 迟早漏一处 —— 那处的表现就是"红点灭了但徽标还写着 2 个"。
+    ///   订阅之后: 谁改都对, 汇总与排序自动跟上。
+    /// </summary>
+    private void OnUsersChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems != null)
+            foreach (var item in e.OldItems)
+                if (item is FollowUser old) old.PropertyChanged -= OnUserPropertyChanged;
+        if (e.NewItems != null)
+            foreach (var item in e.NewItems)
+                if (item is FollowUser fresh) fresh.PropertyChanged += OnUserPropertyChanged;
+
+        OnPropertyChanged(nameof(Count));
+        OnPropertyChanged(nameof(HasFollowUsers));
+        RaiseUnreadSummary();
+    }
+
+    private void OnUserPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(FollowUser.NewCount) && e.PropertyName != nameof(FollowUser.HasNew)) return;
+        RaiseUnreadSummary();
+        if (_suppressSort) return;
+        // 未读优先模式下, 红点一变就要重排 —— 否则"点开一个 UP"之后它还赖在最前面。
+        if (_followSortMode == FollowSortMode.UnreadFirst) SortUsers();
+    }
+
+    /// <summary>
+    /// 批量改 NewCount 期间**禁止**自动排序。
+    ///
+    /// ★★★ 这不是优化, 是正确性: 算红点(ApplyBadges)和"全部标记已读"都是
+    ///   `foreach (var u in Users) u.NewCount = ...` —— 如果此时 OnUserPropertyChanged 里
+    ///   顺手 SortUsers(), 那就是**遍历中改集合**(ObservableCollection.Move),
+    ///   .NET 的集合枚举器会当场抛 InvalidOperationException。
+    ///   在「未读优先」模式下必现(别的模式因为不重排所以侥幸不炸), 而且它发生在
+    ///   定时轮询路径里 —— 表现就是"过两分钟动态页崩一次"。
+    /// </summary>
+    private bool _suppressSort;
+
+    /// <summary>批量改 NewCount 用: 期间不自动排序, 退出时统一重排一次</summary>
+    private void WithoutAutoSort(Action body)
+    {
+        var prev = _suppressSort;
+        _suppressSort = true;
+        try { body(); }
+        finally { _suppressSort = prev; }
+        SortUsers();
+    }
+
+    /// <summary>
+    /// 「全部标记已读」: 把当前所有 UP 的已读基准推到**各自最新一条**。
+    ///
+    /// ★ 数据来源优先级: 当前 Dynamics 里该 UP 的最新一条(最准) → 上次见过的 id(_latestDynamicId)。
+    ///   两条都拿不到说明这个 UP 从来没出现在任何一页动态里 —— 那它也不可能有红点,
+    ///   直接按 0 处理不会漏。
+    /// ★ 这里只动"基准", 不动已加载的动态列表: 用户可以继续往下翻, 不会被弹回顶部。
+    /// ★ 只在 UI 线程调(DynamicSeenStore 的静态字典没有锁, 见该类注释)。
+    /// </summary>
+    private void MarkAllRead()
+    {
+        if (Users.Count == 0) return;
+        var newestInView = FollowSorting.NewestByAuthor(Dynamics);
+        // ★ 同样包在 WithoutAutoSort 里: 下面这个 foreach 正在遍历 Users,
+        //   而「未读优先」模式下改 NewCount 会自动 SortUsers()(Move 集合)——
+        //   遍历中改集合会抛 InvalidOperationException。
+        WithoutAutoSort(() =>
+        {
+            foreach (var u in Users)
+            {
+                if (u.Mid <= 0) continue;
+                var id = newestInView.TryGetValue(u.Mid, out var live) && !string.IsNullOrEmpty(live.Id)
+                    ? live.Id
+                    : (_latestDynamicId.TryGetValue(u.Mid, out var last) ? last : null);
+                if (!string.IsNullOrEmpty(id)) DynamicSeenStore.Set(u.Mid, id!);
+                u.NewCount = 0;
+            }
+        });
+        DynamicSeenStore.Flush();
+        RaiseUnreadSummary();
+        SortUsers();
+        FlashMarkAllReadDone();
+    }
+
+    /// <summary>按钮文案短暂变"已标记"再恢复 —— 给一次明确的"点到了"反馈</summary>
+    private int _markAllReadVersion;
+    private async void FlashMarkAllReadDone()
+    {
+        var version = ++_markAllReadVersion;
+        try
+        {
+            MarkAllReadFlash = true;
+            MarkAllReadText = "已标记";
+            await Task.Delay(1600);
+            if (version != _markAllReadVersion) return;
+            MarkAllReadFlash = false;
+            MarkAllReadText = "全部标记已读";
+        }
+        catch
+        {
+            // 只是提示态: 任何异常都退回到静态文案, 不影响已读基准
+            MarkAllReadFlash = false;
+            MarkAllReadText = "全部标记已读";
+        }
+    }
+
     public ICommand RefreshCommand { get; }
     public ICommand LoadMoreCommand { get; }
     public ICommand LoginCommand { get; }
@@ -246,6 +562,9 @@ public class FollowViewModel : ObservableObject
 
     public FollowViewModel()
     {
+        InitSortCommands();
+        // 左栏集合变化 → 维护 NewCount 订阅(汇总徽标/未读优先排序据此自动跟上, 见 OnUsersChanged)
+        Users.CollectionChanged += OnUsersChanged;
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
         LoadMoreCommand = new AsyncRelayCommand(LoadMoreAsync);
         LoginCommand = new RelayCommand(() =>
@@ -296,6 +615,8 @@ public class FollowViewModel : ObservableObject
     {
         Users.Remove(u);
         OnPropertyChanged(nameof(Count));
+        OnPropertyChanged(nameof(HasFollowUsers));
+        RaiseUnreadSummary();
         if (SelectedUp?.Mid == u.Mid) _ = SelectAllAsync();
     }
 
@@ -356,7 +677,11 @@ public class FollowViewModel : ObservableObject
                 ? await Svc.Api.GetDynamicFeedFullAsync()
                 : await Svc.Api.GetSpaceDynamicsAsync(forUp.Mid);
             if (generation != _selectionGeneration || !result.ok || result.items == null) return;
-            if (forUp == null) UpdateUnreadBadges(result.items);
+            // ★ 2026-11-05: 定时轮询/切页回来拉到的这一页也要刷红点(以前只在「全部动态」的
+            //   首屏加载里算, 于是"两分钟前刚投稿"的 UP 要等到下次整页刷新才亮红点)。
+            //   单 UP 视图里这一页只有 TA 自己, UpdateUnreadBadges 会按 skipMid 跳过 TA,
+            //   对别的 UP 是 no-op —— 但仍然会记时间轴并重排, 这是我们要的。
+            UpdateUnreadBadges(result.items);
             var fresh = result.items.TakeWhile(d => !_seenDynamicIds.Contains(d.Id))
                 .Where(d => d.Id.Length > 0).ToList();
             _pendingNewDynamics = fresh;
@@ -388,7 +713,12 @@ public class FollowViewModel : ObservableObject
             SelectedUp = null;
             HasNewDynamics = false;
             HasMore = false;
+            // 排序/红点用的本地缓存也要一起清: 换个账号登录后沿用上一个人的
+            // 关注序号与时间轴, 左栏会按陌生人的顺序排(看起来像排序彻底乱了)。
+            ResetSortCaches();
             OnPropertyChanged(nameof(Count));
+            OnPropertyChanged(nameof(HasFollowUsers));
+            RaiseUnreadSummary();
             Loading = false;
             Error = "请先登录后查看动态";
             return;
@@ -410,6 +740,10 @@ public class FollowViewModel : ObservableObject
                 Users.Clear();
                 Dynamics.Clear();
                 LiveNow.Clear();
+                ResetSortCaches();
+                OnPropertyChanged(nameof(Count));
+                OnPropertyChanged(nameof(HasFollowUsers));
+                RaiseUnreadSummary();
             }
             _selfMid = me.Mid;
 
@@ -427,7 +761,11 @@ public class FollowViewModel : ObservableObject
                     }
                     _hasMoreUsers = list.Count >= 30;
                     _followingPage = 1;
+                    // ★ 关注序号: 第一次见到的 UP 才分配, 已有的保持原值 ——
+                    //   这是"关注顺序"模式在多次刷新后仍然稳定、不抖动的依据。
+                    EnsureFollowOrder(Users);
                     OnPropertyChanged(nameof(Count));
+                    OnPropertyChanged(nameof(HasFollowUsers));
                 }
                 else if (Users.Count == 0)
                 {
@@ -436,6 +774,9 @@ public class FollowViewModel : ObservableObject
                 Loading = false;
             });
             await LoadSelectionAsync(reset: true);
+            // ★ 拉完第一页动态后按当前排序模式重排左栏 —— 这一步必须在 UpdateUnreadBadges
+            //   之后(它在 LoadSelectionAsync 里已经跑过), 否则排的是没有时间轴的空序。
+            await System.Windows.Application.Current.Dispatcher.InvokeAsync(SortUsers);
             // 关注直播看板: 与动态流并行(不 await 到关键路径里), 慢一点没关系
             _ = RefreshLiveBoardAsync();
         }
@@ -467,14 +808,17 @@ public class FollowViewModel : ObservableObject
                     foreach (var u in Users) seen.Add(u.Mid);
                     foreach (var u in list)
                         if (u.Mid > 0 && seen.Add(u.Mid)) Users.Add(u);
+                    EnsureFollowOrder(Users);
                     OnPropertyChanged(nameof(Count));
+                    OnPropertyChanged(nameof(HasFollowUsers));
 
                     // ★ 左栏翻出新 UP 后要立刻按已缓存的动态流补算一次红点。
                     //   以前只 Add 用户、不跑 UpdateUnreadBadges —— 关注了 30+ 人的账号
                     //   往下滚出来的 UP 永远 NewCount=0, 明明有新投稿也不亮红点。
-                    //   只在「全部动态」下算: 单 UP 视图的 FeedItems 只有该 UP 的投稿,
+                    //   只在「全部动态」下算: 单 UP 视图的 Dynamics 只有该 UP 的投稿,
                     //   拿来给别的 UP 判新旧会把基准写错。
                     if (SelectedUp == null) UpdateUnreadBadges();
+                    else OnPropertyChanged(nameof(HasFollowUsers));
                 }
             });
         }
@@ -597,69 +941,73 @@ public class FollowViewModel : ObservableObject
     public Task RefreshUnreadBadgesAsync() => CheckNewDynamicsAsync();
 
     /// <summary>
-    /// 「全部动态」加载完 → 按这一页的条目刷新左栏各 UP 的未读红点。
+    /// 「全部动态」加载完 / 轮询拿到新一页 → 按这一页的条目刷新左栏各 UP 的未读红点。
     ///
     /// 规则(基准存在 <see cref="DynamicSeenStore"/>, 本地判断、不请求接口):
     ///   · 没有基准的 UP: 只把 TA 当前最新一条记成基准, **不显示红点**(见该类的说明);
     ///   · 基准与最新一条相同: 红点消失;
     ///   · 不同: NewCount = 这一页里排在基准那条**之前**的该 UP 投稿数
     ///     (基准那条已经翻出本页时, 本页所有该 UP 的条目都算新的)。
-    ///     界面只拿它判断红点亮不亮, 具体数字放在红点的悬浮提示里。
+    ///     界面只拿它判断红点亮不亮, 具体条数放在红点的悬浮提示里。
     /// ★ 本页没有出现的 UP **不动**: 动态接口只给近期条目, 一个 UP 最近没投稿就无从判断,
     ///   这时把红点清掉是凭空断言"没更新"。宁可留着旧红点, 也不给错的信息。
+    ///
+    /// 实现委托给 <see cref="FollowSorting.ApplyBadges"/>(纯逻辑, 可以离线测):
+    /// 走委托读写基准, 所以这里仍然只在 UI 线程调用 DynamicSeenStore。
     /// </summary>
     private void UpdateUnreadBadges() => UpdateUnreadBadges(Dynamics);
 
-    /// <summary>用指定的动态条目集合刷新角标(定时刷新时传临时列表, 不碰 FeedItems)</summary>
+    /// <summary>用指定的动态条目集合刷新角标(定时刷新时传临时列表, 不碰 Dynamics)</summary>
     private void UpdateUnreadBadges(IReadOnlyList<DynamicItem> items)
     {
-        // 每个 UP 在这一页里最新的一条(动态流是按时间倒序拼的, 先遇到的就是最新)
-        var newest = new Dictionary<long, string>();
-        foreach (var it in items)
-        {
-            if (it.AuthorMid <= 0 || string.IsNullOrEmpty(it.Id)) continue;
-            if (!newest.ContainsKey(it.AuthorMid)) newest[it.AuthorMid] = it.Id;
-        }
+        if (items == null || items.Count == 0) return;
 
-        foreach (var u in Users)
-        {
-            if (!newest.TryGetValue(u.Mid, out var top)) continue;
+        // 先把时间轴记下来(排序要用), 再算红点 —— 顺序无所谓, 但必须在排序前完成
+        RememberTimestamps(items);
 
-            if (!DynamicSeenStore.TryGet(u.Mid, out var seen))
-            {
-                DynamicSeenStore.Set(u.Mid, top);
-                u.NewCount = 0;
-                continue;
-            }
-            if (seen == top)
-            {
-                u.NewCount = 0;
-                continue;
-            }
+        // 单 UP 视图里跳过"正在看的那个": 用户正看着它却亮红点很怪,
+        // 而且它的基准由 ClearUnreadBadge(点开那一刻)单独推。
+        var skipMid = SelectedUp?.Mid ?? 0;
+        // ★ 包在 WithoutAutoSort 里: ApplyBadges 会逐个改 NewCount, 而「未读优先」模式下
+        //   NewCount 变化会触发 SortUsers() 移集合 —— 那就是"遍历中改集合", 枚举器会抛异常。
+        WithoutAutoSort(() => FollowSorting.ApplyBadges(
+            Users,
+            items,
+            mid => DynamicSeenStore.TryGet(mid, out var seen) ? seen : null,
+            (mid, id) => DynamicSeenStore.Set(mid, id),
+            skipMid));
 
-            var n = 0;
-            foreach (var it in items)
-            {
-                if (it.AuthorMid != u.Mid) continue;
-                if (it.Id == seen) break;   // 追到上次看过的那条为止
-                n++;
-            }
-            u.NewCount = n;
-        }
         DynamicSeenStore.Flush();
+        RaiseUnreadSummary();
+        SortUsers();   // 未读优先模式下, 有红点的要立刻提到前面
     }
 
-    /// <summary>点开某个 UP(右栏只看 TA 的投稿) = 已读: 清红点, 并把基准推到 TA 当前最新一条</summary>
+    /// <summary>
+    /// 点开某个 UP(右栏只看 TA 的动态) = 已读: 清红点, 并把基准推到 TA **当前最新一条**。
+    ///
+    /// ★★★ 这里原来是个隐患, 2026-11-05 修掉:
+    ///   旧写法遍历 Dynamics, 命中第一个 AuthorMid 就 Set 并 break, 注释写着
+    ///   "FeedItems 是时间倒序, 第一条就是最新"。但**单 UP 视图的 Dynamics 里可能混进
+    ///   别的作者**(合作投稿/转发/空间动态流的推荐尾), 一旦流里出现乱序(服务端置顶、
+    ///   同秒发布、翻页拼接), "第一条匹配"就会把基准推到一条**较旧**的动态上 ——
+    ///   于是下次刷新算出还有 1 条未读, 红点明明点过了却又亮回来, 看着像"消不掉"。
+    ///   现在改成: 显式按 AuthorMid 过滤, 再**取 PubTs 最大的那条**(见 FollowSorting.NewestFor)。
+    /// ★ 当前视图里一条都没有(比如刚点开、首屏还没回来)时, 退到"最近见过的 id",
+    ///   保证点开这个动作本身不会因为时序而白点。
+    /// </summary>
     private void ClearUnreadBadge(FollowUser u)
     {
+        if (u == null) return;
         u.NewCount = 0;
-        foreach (var it in Dynamics)
-        {
-            if (it.AuthorMid != u.Mid || string.IsNullOrEmpty(it.Id)) continue;
-            DynamicSeenStore.Set(u.Mid, it.Id);
-            break;   // FeedItems 是时间倒序, 第一条就是最新
-        }
+
+        var newest = FollowSorting.NewestFor(Dynamics, u.Mid);
+        var id = newest?.Id;
+        if (string.IsNullOrEmpty(id) && _latestDynamicId.TryGetValue(u.Mid, out var last)) id = last;
+        if (!string.IsNullOrEmpty(id)) DynamicSeenStore.Set(u.Mid, id!);
+
         DynamicSeenStore.Flush();
+        RaiseUnreadSummary();
+        SortUsers();
     }
 
     /// <summary>右栏滚动到底: 追加下一页</summary>

@@ -1,6 +1,6 @@
 using System.Text.Json;
-using BiliDesk.Models;
-namespace BiliDesk.Services;
+using BiliTouch.Models;
+namespace BiliTouch.Services;
 /// <summary>Decode the structured message payload without throwing away shared-card metadata.</summary>
 internal static class MessageParser
 {

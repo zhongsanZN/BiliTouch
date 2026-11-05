@@ -8,10 +8,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 封面图异步加载器: 内存缓存 + 磁盘缓存, 后台解码, 冻结后供 UI 使用
@@ -206,6 +206,29 @@ public static class CoverLoader
         {
             lock (Lock) InFlight.Remove(cacheKey);
         }
+    }
+
+    /// <summary>封面解码宽度的硬上限(Cover.LoadAsync 与重解码闸门共用)。</summary>
+    public const int MaxCoverDecodeWidth = 1280;
+
+    /// <summary>
+    /// **Cover.Source 在给定显示尺寸下实际会去请求的解码宽度**。
+    ///
+    /// ★ 为什么要把这个式子单独抽出来: 预取(评论头像/UP 头像)必须命中**同一个缓存键**,
+    ///   否则"预取一次、上屏再下一次" —— 白下载两遍, 而且第二次还要再等一次网络。
+    ///   缓存键 = <c>url|w{Quantize(宽度)}</c>, 差一个像素就是另一档、另一条缓存。
+    ///   所以这里与 <see cref="Cover"/> 的异步链路共用同一个函数, 而不是各写一遍。
+    ///
+    /// ★ 这里的 <c>Math.Max(160, ...)</c> 是刻意的下限: 小头像(28/40px)算出来只有 35~75px,
+    ///   但 Cover 链路一直按 160 起步请求(见 Cover.LoadAsync 的注释), 预取必须跟它一致 ——
+    ///   否则 40px 的评论头像会先被预取成 64 档(另一条缓存), 上屏时又按 192 档重新解一次。
+    /// ★ 量不出宽度(ActualWidth=0)时按 480 请求: 与 Cover.LoadAsync 的兜底完全一致。
+    /// </summary>
+    public static int DecodeWidthFor(double displayDip, double dpiScaleX)
+    {
+        if (dpiScaleX <= 0 || double.IsNaN(dpiScaleX)) dpiScaleX = 1.0;
+        if (double.IsNaN(displayDip) || displayDip <= 0) return 480;
+        return (int)Math.Min(MaxCoverDecodeWidth, Math.Max(160, displayDip * dpiScaleX * 1.25));
     }
 
     private static int Quantize(int decodeWidth)
@@ -498,8 +521,8 @@ public static class Cover
         }
     }
 
-    /// <summary>重解码的上限宽度(与 LoadAsync 里的 Math.Min(1280, ...) 保持一致)</summary>
-    private const int MaxDecodeWidth = 1280;
+    /// <summary>重解码的上限宽度(与 DecodeWidthFor 的上限保持一致)</summary>
+    private const int MaxDecodeWidth = CoverLoader.MaxCoverDecodeWidth;
 
     /// <summary>两次重解码之间的最小间隔, 见 OnCoverSizeChanged 的三道闸门</summary>
     private const int RedecodeCooldownMs = 400;
@@ -536,7 +559,7 @@ public static class Cover
             if (GetSource(border) != url) return; // 等待期间源变了/元素被丢弃, 放弃
         }
         var w = border.ActualWidth > 0
-            ? (int)Math.Min(1280, Math.Max(160, border.ActualWidth * dpi * 1.25))
+            ? CoverLoader.DecodeWidthFor(border.ActualWidth, dpi)
             : 480;
 
         if (!await ViewportImageQueue.WaitAsync(border) || GetSource(border) != url) return;

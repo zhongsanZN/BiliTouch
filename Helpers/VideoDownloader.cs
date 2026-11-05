@@ -1,10 +1,10 @@
 using System.Windows;
 using System.Windows.Controls;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.Views;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.Views;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 public static class VideoDownloader
 {

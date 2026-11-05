@@ -1,14 +1,14 @@
-using BiliDesk.Models;
+using BiliTouch.Models;
 ﻿using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
-using BiliDesk.ViewModels;
+using BiliTouch.Helpers;
+using BiliTouch.ViewModels;
 
-namespace BiliDesk.Views.Pages;
+namespace BiliTouch.Views.Pages;
 
 /// <summary>
 /// 历史记录页: 云端历史(封面 + 标题 + UP 主 + 时长), 版式与首页一致 —— 卡片墙 + 右上角操作组。
@@ -52,7 +52,7 @@ public partial class HistoryPage : UserControl
 
     /// <summary>右上角操作组里的返回按钮: 历史/收藏/缓存的入口都在「我的」页, 统一回那里</summary>
     private void OnBackToMineClick(object sender, RoutedEventArgs e)
-        => BiliDesk.Services.SvcWindow.Main?.OpenMineOverview();
+        => BiliTouch.Services.SvcWindow.Main?.OpenMineOverview();
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {

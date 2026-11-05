@@ -7,11 +7,11 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Services;
 using Microsoft.Web.WebView2.Core;
 
-namespace BiliDesk.Views;
+namespace BiliTouch.Views;
 
 /// <summary>
 /// 登录窗口: 两种方式, 顶部可切换。

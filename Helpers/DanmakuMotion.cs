@@ -1,6 +1,6 @@
 using System;
 
-namespace BiliDesk.Helpers;
+namespace BiliTouch.Helpers;
 
 /// <summary>
 /// 弹幕运动数学(2026-11 新增)。

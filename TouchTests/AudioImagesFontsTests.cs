@@ -9,13 +9,13 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.ViewModels;
-using BiliDesk.Views;
-using BiliDesk.Views.Controls;
+using BiliTouch;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.ViewModels;
+using BiliTouch.Views;
+using BiliTouch.Views.Controls;
 using LibVLCSharp.Shared;
 using MediaPlayer=LibVLCSharp.Shared.MediaPlayer;
 
@@ -82,7 +82,7 @@ internal static class AudioImagesFontsTests
    Part<Grid>(player,"VideoAreaRoot").RaiseEvent(hiddenCursor);check(hiddenCursor.Cursor==Cursors.None,"video auto-hide keeps the cursor hidden");cursorTarget.Cursor=oldCursor;
 
    Directory.CreateDirectory(AppPaths.CacheDir);
-   var url="https://example.invalid/comment-native.png";File.Copy("BiliDesk/Assets/app.png",Path.Combine(AppPaths.CacheDir,Hashing.Md5Hex(url)+".jpg"),true);
+   var url="https://example.invalid/comment-native.png";File.Copy("BiliTouch/Assets/app.png",Path.Combine(AppPaths.CacheDir,Hashing.Md5Hex(url)+".jpg"),true);
    var picture=new CommentPicture{Url=url,Width=500,Height=500};var comment=new CommentItem{Rpid=1,UserName="图片评论用户",Content="图片在页面内查看"};comment.Pictures.Add(picture);
    Part<ItemsControl>(player,"CommentList").ItemsSource=new[]{comment};Part<System.Windows.Controls.Primitives.ToggleButton>(player,"TabComments").IsChecked=true;Pump(250);
    var thumbnail=Descendants<Border>(Part<StackPanel>(player,"CommentsPanel")).First(b=>ReferenceEquals(b.DataContext,picture));
@@ -134,7 +134,7 @@ internal static class AudioImagesFontsTests
  {
   var field=typeof(ApiClient).GetField("_http",Hidden)!;var oldHttp=field.GetValue(Svc.Api);var old=Svc.Session.Current;
   using var http=new HttpClient(new HttpClientHandler{Proxy=new WebProxy("http://127.0.0.1:7897"),UseProxy=true});http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent","Mozilla/5.0");field.SetValue(Svc.Api,http);
-  var stored=JsonSerializer.Deserialize<Session>(File.ReadAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"AppData/Local/BiliDesk/session.json")))!;
+  var stored=JsonSerializer.Deserialize<Session>(File.ReadAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"AppData/Local/BiliTouch/session.json")))!;
   typeof(SessionManager).GetProperty(nameof(SessionManager.Current))!.SetValue(Svc.Session,stored);
   try
   {

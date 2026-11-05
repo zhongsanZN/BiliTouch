@@ -16,16 +16,16 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
-using BiliDesk.Helpers;
-using BiliDesk.Models;
-using BiliDesk.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Models;
+using BiliTouch.Services;
 using LibVLCSharp.Shared;
 using LibVLCSharp.WPF;
 using MediaPlayer = LibVLCSharp.Shared.MediaPlayer;
 
-using BiliDesk.Views.Controls;
+using BiliTouch.Views.Controls;
 
-namespace BiliDesk.Views;
+namespace BiliTouch.Views;
 
 /// <summary>
 /// 原生视频播放器窗口 (LibVLC 内核): 不再使用 WebView2, 视频流由 B 站 playurl 接口获取
@@ -805,6 +805,7 @@ public partial class PlayerWindow : FluentWindow
         //   ★ 必须放在 _mp 就绪之后: 滑块此时已在可视树里, 赋 Value 会触发 OnVolumeChanged,
         //     那条路会再写一次 _volumeCache/原生音量(同值回写, 无副作用), 正好对齐。
         if (VolumeSlider != null) VolumeSlider.Value = _volumeCache;
+        UpdateVolumeChrome(_volumeCache);
 
         // 换片重置覆盖度自检: 新增了状态字段却忘了归类, 会在 errors.txt 里被点出来(仅 DEBUG)
         VerifyResetCoverage();
@@ -1516,6 +1517,9 @@ public partial class PlayerWindow : FluentWindow
     {
         nameof(_volumeCache),        // 音量是用户偏好, 换片不该重置
         nameof(_wheelAccum),         // 滚轮音量累计, 瞬时量
+        // 音量弹层的两个交互态(2026-11-05): 悬停/点开都是**当前这一次操作**的状态,
+        // 窗口级瞬态, 与片源无关 —— 换片时鼠标还压在喇叭上反而应该保持展开。
+        nameof(_volumeHover), nameof(_volumePinned),
         nameof(_danmakuOn),          // 弹幕总开关是设置项
         nameof(_danmakuColorful),    // 彩色弹幕是设置项
         nameof(_danmakuAreaRatio),   // 弹幕显示区域是设置项
@@ -1769,6 +1773,11 @@ public partial class PlayerWindow : FluentWindow
             //   这里补一次(与取流并行, 不占起播时间)。
             WriteLibVLCDebug($"\n[Load] 详情就绪 aid={_aid} cid={_currentCid} tabComments={TabComments?.IsChecked}\n");
             _ = LoadCommentsAsync(); // Preload the hidden original-layout comment tab as soon as the aid is known.
+            // 弹幕预加载权重要高, 不能等起播: 起播之后画面已经在动, 用户第一反应就是"弹幕怎么还没出来",
+            // 而弹幕接口是**按 6 分钟一段并发拉取**的, 冷启动实测比取流还慢。这里与下面的 GetPlayUrlAsync
+            // 并行发出, 不 await、不阻塞起播; 带上详情里的时长(多P 取当前那一 P 的), 免得多发十几个空段请求。
+            var danmakuHintSec = detail.Pages.FirstOrDefault(p => p.Cid == _currentCid)?.DurationSec ?? detail.DurationSec;
+            _ = LoadDanmakuAsync(_currentCid, danmakuHintSec > 0 ? danmakuHintSec : -1);
 
             // ★ 片段查询**立刻发起, 与下面"取播放地址 / 合流下载"并行** ——
             // 起播**不等它**(服务端首包实测 2.6s, 等了也拿不到); 回来得早才做开场空降,
@@ -1889,8 +1898,9 @@ public partial class PlayerWindow : FluentWindow
                 PlayMedia(BuildMedia(url, playAudio));
             }
             UpdateListenButtonState();
-            // 加载弹幕 + 查询点赞/关注/收藏状态(用于按钮状态切换)
-            _ = LoadDanmakuAsync(_currentCid);
+            // 查询点赞/关注/收藏状态(用于按钮状态切换)
+            // ★ 弹幕**不在这里拉了**: 已提前到详情拿到 cid 之后(见上面 danmakuHintSec 那一段)。
+            //   留在这里会变成第二次请求同一份弹幕(慢一倍、还可能和预加载的结果互相覆盖)。
             _ = RefreshLikeStateAsync();
             _ = RefreshFollowStateAsync();
             _ = RefreshFavStateAsync();
@@ -2196,6 +2206,10 @@ public partial class PlayerWindow : FluentWindow
         UpdateFollowButton();
         // UP 主头像优先用 owner.face(之前误用了视频封面)
         _ownerFace = detail.OwnerFace ?? "";
+        // ★ 先暖缓存再走真正的贴图: 这行只是把下载+解码发出去(不碰 UI、不 await),
+        //   LoadUpAvatarAsync 随后命中的就是同一张(同一份 CoverLoader 缓存键),
+        //   于是头像在"标题已经出来"的那一刻就有图, 不用等它自己那趟网络。
+        PrimeUpAvatar(_ownerFace);
         _ = LoadUpAvatarAsync(_ownerFace);
         // 视频封面: 「听视频」聆听态要拿它当视觉锚点(一眼知道在听什么)。
         // 顺手记下来, 不必等用户点了聆听再去请求详情接口。
@@ -2213,8 +2227,10 @@ public partial class PlayerWindow : FluentWindow
     private async Task LoadUpAvatarAsync(string url)
     {
         if (string.IsNullOrEmpty(url)) return;
-        // 头像只有 40px 显示, 按小尺寸解码省内存
-        var img = await CoverLoader.LoadAsync(url, 80);
+        // 头像只有 40px 显示, 按小尺寸解码省内存。
+        // ★ 用常量而不是字面量: PrimeUpAvatar 必须拿同一个值去暖缓存, 两边一旦漂移就会
+        //   落到不同量化档(128 档≠192 档) —— 预取过的图在这里重新下一遍, 白做。
+        var img = await CoverLoader.LoadAsync(url, UpAvatarDecodeWidth);
         if (img == null) return;
         await Dispatcher.InvokeAsync(() =>
         {
@@ -3467,7 +3483,73 @@ public partial class PlayerWindow : FluentWindow
         try { _mp.Volume = v; } catch { }
     }
 
-    // ------------------------------------------------------------ 音量(滚轮 / 快捷键)
+    // ------------------------------------------------------------ 音量弹层(2026-11-05 与直播间对齐)
+
+    /// <summary>
+    /// 喇叭按钮: 收起态 = 静音开关; 展开态 = 静音切换 + 弹层留着让用户拖。
+    /// ★ 触屏没有 hover, 所以**第一下点按固定是"展开"**: 让手指够得到滑杆;
+    ///   展开之后再点才是静音切换。鼠标用户可以完全不点 —— 悬停就展开了。
+    /// ★ 为什么收起态保留静音语义: 静音是最高频的音量动作, 藏进弹层等于多两次点击。
+    /// </summary>
+    private void OnMuteClick(object sender, RoutedEventArgs e)
+    {
+        if (_closing || VolumePopup == null) return;
+        if (!VolumePopup.IsOpen)
+        {
+            _volumePinned = true;
+            ShowVolumePopup();
+            return;
+        }
+        SetVolume(_volumeCache == 0 ? 80 : 0);
+        HideVolumePopupSoon();
+    }
+
+    private void OnVolumeHoverEnter(object sender, MouseEventArgs e)
+    {
+        if (TouchSupport.IsTouchMouse(e)) return;   // 触屏由点击处理, 忽略合成鼠标事件
+        _volumeHover = true;
+        ShowVolumePopup();
+    }
+
+    private void OnVolumeHoverLeave(object sender, MouseEventArgs e)
+    {
+        _volumeHover = false;
+        HideVolumePopupSoon();
+    }
+
+    private void ShowVolumePopup()
+    {
+        if (_closing || VolumePopup == null || VolumeSlider == null) return;
+        VolumePopup.PlacementTarget = BtnVolume;
+        VolumePopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Top;
+        if (VolumePopupText != null) VolumePopupText.Text = _volumeCache + "%";
+        VolumePopup.IsOpen = true;
+        // 正在操作就别让自动隐藏把控制栏(连带弹层)收走
+        _controlsHideTimer?.Stop();
+    }
+
+    /// <summary>
+    /// 延迟一轮再决定收不收: 从喇叭挪到弹层的那一瞬间两者都不在 IsMouseOver,
+    /// 立刻收会把"想拖滑杆"的用户挡在门外。
+    /// </summary>
+    private void HideVolumePopupSoon()
+    {
+        if (_closing || VolumePopup == null) return;
+        if (_volumePinned || _volumeHover) return;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, new Action(() =>
+        {
+            if (_closing || VolumePopup == null) return;
+            if (_volumeHover || _volumePinned || VolumePopup.IsMouseOver || BtnVolume.IsMouseOver) return;
+            VolumePopup.IsOpen = false;
+        }));
+    }
+
+    /// <summary>强行收起音量弹层(隐藏控制栏 / 切全屏 / 关闭窗口时调用)</summary>
+    private void CloseVolumePopup()
+    {
+        _volumeHover = false; _volumePinned = false;
+        if (VolumePopup != null) VolumePopup.IsOpen = false;
+    }
 
     /// <summary>一次音量调节的步进。与方向键上下保持一致, 滚轮手感不至于一格跳太多。</summary>
     private const int VolumeStep = 5;
@@ -3476,6 +3558,15 @@ public partial class PlayerWindow : FluentWindow
     private static readonly TimeSpan VolumeOsdHold = TimeSpan.FromMilliseconds(1100);
 
     private DispatcherTimer? _volumeOsdTimer;
+
+    // ---- 音量弹层(2026-11-05 与直播间对齐) ----
+    // ★ 为什么改成"悬停/点一下才向上展开": 控制栏里常驻一条 78px 的滑杆, 窗口一窄就把
+    //   倍速/清晰度/弹幕按钮往右挤, 甚至挤到全屏按钮外面去。翻上去只借用画面空白。
+    // ★ 收起态那颗喇叭仍然是静音开关 —— 那是最高频的动作, 不该藏进弹层。
+    /// <summary>鼠标是否压在喇叭上(悬停展开的存活条件)</summary>
+    private bool _volumeHover;
+    /// <summary>用户主动点开过弹层(触屏没有 hover, 只能靠点击), 点开后在点别处前不自动收</summary>
+    private bool _volumePinned;
 
     /// <summary>倍速提示的淡出计时器(松手后"已恢复 1.0x"亮一下就靠它收场)</summary>
     private DispatcherTimer? _speedOsdTimer;
@@ -3598,7 +3689,19 @@ public partial class PlayerWindow : FluentWindow
         }
         try { _mp.Volume = v; } catch { return; }
         if (VolumeSlider != null) VolumeSlider.Value = v;
+        UpdateVolumeChrome(v);
         if (showHint) ShowVolumeHint(v);
+    }
+
+    /// <summary>
+    /// 把音量同步到控制栏的两处可见反馈: 喇叭图标(有声/静音)与弹层里的百分比。
+    /// ★ 之前音量只体现在那条常驻滑杆的位置上, 现在滑杆收进弹层了, 图标必须自己会变,
+    ///   否则收起状态下用户完全看不出自己是不是被静音了。
+    /// </summary>
+    private void UpdateVolumeChrome(int volume)
+    {
+        if (VolumeIcon != null) VolumeIcon.Text = PlayerGlyphs.VolumeGlyph(volume <= 0);
+        if (VolumePopupText != null) VolumePopupText.Text = Math.Clamp(volume, 0, 100) + "%";
     }
 
     /// <summary>
@@ -4933,6 +5036,7 @@ public partial class PlayerWindow : FluentWindow
         if (_controlsHidden || _closing) return;
         _controlsHidden = true;
         _controlsHideTimer?.Stop();
+        CloseVolumePopup();                     // 控制栏一藏, 挂在它上面的音量弹层必须跟着收
         ControlBar.IsHitTestVisible = false;   // 隐形时不能再吃视频区的点击/滚轮
         VideoAreaRoot.Cursor = System.Windows.Input.Cursors.None;
         var fade = new System.Windows.Media.Animation.DoubleAnimation(1, 0,
@@ -5244,18 +5348,33 @@ public partial class PlayerWindow : FluentWindow
         => lastSentTime > currentSeconds + DanmakuCursorToleranceSec
         || nextTime < currentSeconds - DanmakuCursorToleranceSec;
 
-    private async Task LoadDanmakuAsync(long cid)
+    /// <param name="durationHintSec">
+    /// 调用方**在起播之前**就能拿到的视频时长(详情接口的 <c>DurationSec</c>, 单位秒)。
+    /// -1(默认)表示没有提示, 退回 <see cref="_totalMs"/> —— 老的"起播后再拉"那条路就是这样。
+    ///
+    /// ★ 为什么需要它: 现在弹幕预加载提到了起播之前(见 LoadVideoAsync 里的调用点), 那一刻
+    ///   <see cref="_totalMs"/> 还是 0(它要等取播放地址回来才知道)。没有这个提示的话
+    ///   GetDanmakuAsync 会走 "时长未知 ⇒ 按最多 20 段拉" 的兜底 —— 一个 3 分钟的短视频
+    ///   也要发 20 个段请求, 白白浪费 19 个。传了时长就只拉真正存在的段(3 分钟 = 1 段)。
+    /// </param>
+    private async Task LoadDanmakuAsync(long cid, int durationHintSec = -1)
     {
         if (cid <= 0) return;
         try
         {
             // 传视频总时长, 让接口只拉真正需要的分段(6 分钟一段), 长视频不再白拉几十个请求。
             // 条数上限 6000: 覆盖绝大多数视频的完整弹幕量, 同时不至于让内存/排序压力过大。
-            var durationSec = _totalMs > 0 ? (int)(_totalMs / 1000) : 0;
+            var durationSec = durationHintSec >= 0
+                ? durationHintSec
+                : _totalMs > 0 ? (int)(_totalMs / 1000) : 0;
             var list = await Svc.Api.GetDanmakuAsync(cid, durationSec, 6000);
             await Dispatcher.InvokeAsync(() =>
             {
                 if (_closing) return;
+                // ★ 取回来时这条弹幕还必须属于**当前这一段**: 预加载提前之后, 它和"换下一个视频"
+                //   之间的窗口从几百毫秒拉长到了整段取流时间, 旧 cid 的结果会把新视频的弹幕盖掉
+                //   (表现: 新视频弹幕全灭, 或者满屏上一条视频的弹幕)。
+                if (_currentCid != cid) return;
                 // 原始列表按时间排好序存下来, 供后续"改屏蔽词立即重算"使用
                 _danmakuRaw.Clear();
                 _danmakuRaw.AddRange(list.OrderBy(d => d.Time));
@@ -6489,22 +6608,26 @@ public partial class PlayerWindow : FluentWindow
     // ------------------------------------------------------------ 窄视频区控制栏
 
     /// <summary>
-    /// 视频区窄于这个宽度时, 控制栏先收起"弹幕区域"和音量滑杆这两个次要项。
+    /// 视频区窄于这个宽度时, 控制栏先收起「弹幕设置」这种纯文字按钮。
     ///
     /// ★ 背景(issue #31): 竖屏副屏 864 DIP, 右栏占 400 后视频只剩 464 DIP;
-    ///   而操作行的固定项(播放/时间/音量/倍速/清晰度/弹幕/全屏)加起来约 530 DIP,
-    ///   不收起就会挤成一团甚至被裁掉。只收这两项后约 390 DIP, 常规窄窗仍可用。
+    ///   操作行的固定项加起来超过这个宽度就会挤成一团甚至被裁掉。
     /// ★ 用 VideoAreaRoot 的实际宽度判断而不是窗口宽度: 信息栏一收/一展、
     ///   窗口一拖, 视频列宽度都会变, 这个信号最直接。
+    /// ★ 2026-11-05: 音量滑杆已收进弹层, 不再参与这里的取舍(它藏起来就等于弹层里空了)。
     /// </summary>
     private const double CompactControlBarWidth = 560;
 
+    /// <summary>再窄一档(竖屏手机比例的小窗)连播放时间也收, 只留图标按钮。</summary>
+    private const double CompactTimeWidth = 400;
+
     private void OnVideoAreaSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (BtnDanmakuArea == null || VolumeSlider == null) return;
+        if (BtnDanmakuArea == null) return;
         var compact = e.NewSize.Width > 0 && e.NewSize.Width < CompactControlBarWidth;
+        // ★ 2026-11-05: 不再 Collapse VolumeSlider —— 它在弹层里, 藏掉就是"展开后一片空白"。
         BtnDanmakuArea.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
-        VolumeSlider.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        if (TimeText != null) TimeText.Visibility = e.NewSize.Width > 0 && e.NewSize.Width < CompactTimeWidth ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>
@@ -7723,6 +7846,11 @@ public partial class PlayerWindow : FluentWindow
             {
                 if (_closing || _aid != aidAtStart || generationAtStart != _loadGen || sortAtStart != _commentSort) return;
                 CommentList.ItemsSource = list;
+                // ★ 立刻暖前 5 条评论的头像(纯暖缓存, 不碰任何控件)。放在 ItemsSource 之后:
+                //   此时评论容器还没生成、Cover.Source 绑定还没跑 —— 由我们先把下载+解码发出去,
+                //   等容器真的生成时 CoverLoader 直接命中(它自带 in-flight 去重), 头像一上屏就有图,
+                //   而不是"先灰一片、滚到哪儿加载到哪儿"。
+                PrimeCommentAvatars(list, aidAtStart);
                 _commentsLoaded = cmtOk;
                 _commentTotal = total;
                 _effectiveCommentSort = displaySort;
@@ -7753,6 +7881,86 @@ public partial class PlayerWindow : FluentWindow
             // 连"再点一次重试/切回原排序"的入口都没有了。
             UpdateCommentSortUi(visible: IsCommentDetailOpen);
         }
+    }
+
+    /// <summary>
+    /// 预取**前 N 条评论的头像**(默认 5 条), 让它们不必等滚动进视口才下载。
+    ///
+    /// 为什么值得单独做: 评论区一打开就是"先灰一片、慢慢出图", 而那几条头像加起来不到 40KB ——
+    /// 这是纯粹的**排序**问题, 不是带宽问题: 用户眼前第一屏的头像, 和滚到第 300 条时的头像
+    /// 在缓存里没有任何优先级差别。这里只是在"评论刚落地"这个唯一确定的时刻, 把最该先有的
+    /// 那几张先发出去。走的是同一个 CoverLoader(自带内存缓存 + in-flight 去重), 所以:
+    ///   · 用户先滚到某条, Cover.Source 先发了请求 → 这里直接复用同一个 Task, 不会下两遍;
+    ///   · 这里先发 → Cover.Source 稍后命中缓存或同一个 in-flight Task。
+    ///
+    /// ★ 代次校验(<paramref name="aidAtStart"/> / <see cref="_loadGen"/> / <see cref="_closing"/>):
+    ///   评论是异步回来的, 回来的路上用户可能已经换片或关窗。若不管, 上一条视频的头像会灌进
+    ///   当前窗口的缓存与后续判断。这里每个 await 之后都重新确认一次, 一旦变了就**原地停止**,
+    ///   连剩下的图都不再发。
+    ///
+    /// ★ 全程不 await 在 UI 线程上: <see cref="CoverLoader.LoadAsync(string?,int)"/> 的网络与解码
+    ///   都在后台(它内部 ConfigureAwait(false) + Task.Run 解码), 这里只是 `_ =` 发出去就返回。
+    ///   任何异常都吞掉 —— 头像取不到是"图不显示", 绝不该冒泡成弹窗或者挡住评论渲染。
+    /// </summary>
+    private void PrimeCommentAvatars(IReadOnlyList<CommentItem>? list, long aidAtStart)
+    {
+        if (list == null || list.Count == 0) return;
+        // 解码宽度跟着**列表里那个头像的真实尺寸**走(28 DIP × DPI × 1.25, 下限 160),
+        // 与 Cover.Source 那条链用同一个函数算 —— 缓存键必须一致, 否则预取等于白做一次解码。
+        var dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        var decodeWidth = CoverLoader.DecodeWidthFor(CommentAvatarDip, dpi);
+        var gen = _loadGen;
+        for (var i = 0; i < list.Count && i < CommentAvatarPrimeCount; i++)
+        {
+            _ = PrimeAvatarAsync(list[i]?.UserFace, decodeWidth, aidAtStart, gen);
+        }
+    }
+
+    /// <summary>预取头像的那几张(用户明确要求"至少前五条")。</summary>
+    private const int CommentAvatarPrimeCount = 5;
+
+    /// <summary>评论列表里头像的显示边长(DIP), 与 PlayerWindow.xaml 里评论模板的 28×28 对齐。</summary>
+    private const double CommentAvatarDip = 28;
+
+    /// <summary>
+    /// UP 主头像的解码宽度。
+    /// ★ 必须与 <see cref="LoadUpAvatarAsync"/> 里那个字面量 **80** 保持一致 ——
+    ///   UP 头像不走 Cover.Source, 它有自己的加载方法(还要贴 ImageBrush / 收占位图标);
+    ///   缓存键是 url+量化档, 这里写 160 就会先落到 192 档、上屏时又按 128 档再解一次,
+    ///   预取等于白做。40 DIP 显示 × 1.5 DPI = 60px, 80 已经够。
+    /// </summary>
+    private const int UpAvatarDecodeWidth = 80;
+
+    /// <summary>
+    /// 取一张头像并丢掉结果(只为暖缓存)。失败静默。
+    /// ★ 代次在**每个 await 之后**都重新确认: 这里虽然只有一个 await, 但把判断写成循环外的
+    ///   统一出口, 以后要加"顺带写回某处"的逻辑时不会忘了它。
+    /// </summary>
+    private async Task PrimeAvatarAsync(string? url, int decodeWidth, long aidAtStart, int genAtStart)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        try
+        {
+            if (_closing || _loadGen != genAtStart) return;
+            var img = await CoverLoader.LoadAsync(url, decodeWidth).ConfigureAwait(false);
+            // 结果不使用: 只要位图进了 CoverLoader 的内存缓存, 后面 Cover.Source 就能同步命中。
+            // 这里保留一次代次确认, 是为了让"已经换片了"这条路径明确退出, 而不是继续往下走。
+            if (img == null || _closing || _aid != aidAtStart || _loadGen != genAtStart) return;
+        }
+        catch { /* 头像取不到 = 图不显示, 静默 */ }
+    }
+
+    /// <summary>
+    /// 预取 UP 主头像。
+    ///
+    /// ★ 和 <see cref="LoadUpAvatarAsync"/> 不重复下载: 两者都走 CoverLoader.LoadAsync(同一份
+    ///   内存缓存 + 同一张 in-flight 表)。谁先发谁下载, 后到的直接复用 —— 所以这里可以放心地在
+    ///   LoadUpAvatarAsync 之前跑; 真正贴到 UpAvatarBox 上的仍然是 LoadUpAvatarAsync(它要碰 UI)。
+    /// </summary>
+    private void PrimeUpAvatar(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        _ = PrimeAvatarAsync(url, UpAvatarDecodeWidth, _aid, _loadGen);
     }
 
     /// <summary>

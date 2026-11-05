@@ -4,11 +4,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
-using BiliDesk;
-using BiliDesk.Models;
-using BiliDesk.Services;
-using BiliDesk.Helpers;
-using BiliDesk.Views.Controls;
+using BiliTouch;
+using BiliTouch.Models;
+using BiliTouch.Services;
+using BiliTouch.Helpers;
+using BiliTouch.Views.Controls;
 
 /// <summary>
 /// 用**真实卡死样本的 JSON** 离线复现, 并且逐块拆解 DynamicFeedCard(2026-11-04)。
