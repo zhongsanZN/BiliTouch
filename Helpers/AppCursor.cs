@@ -28,7 +28,8 @@ public static class AppCursor
             if(handle.IsInvalid){handle.Dispose();throw new Win32Exception(Marshal.GetLastWin32Error());}
             return CursorInteropHelper.Create(handle);
         }
-        finally{try{File.Delete(path);}catch(IOException){}}
+        catch(Exception ex) when(ex is IOException or UnauthorizedAccessException or Win32Exception){return Cursors.Arrow;}
+        finally{try{File.Delete(path);}catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){}}
     }
     public static string WebScript
     {

@@ -4238,7 +4238,16 @@ public partial class ApiClient
                 referer: $"https://live.bilibili.com/{roomId}");
 
             if (code != 0 || data == null)
-                return (null, "", 0, msg ?? $"获取弹幕服务器失败 (code {code})");
+            {
+                // Older public player configuration remains available on networks where the
+                // newer signed endpoint is rejected. It returns the same WebSocket token/hosts.
+                var legacy = await GetJsonAsync("https://api.live.bilibili.com/room/v1/Danmu/getConf",
+                    new() { ["room_id"] = roomId.ToString(), ["platform"] = "pc", ["player"] = "web" },
+                    allowRetry: false, referer: $"https://live.bilibili.com/{roomId}", riskRetries: 0);
+                if (legacy.code != 0 || legacy.data == null)
+                    return (null, "", 0, code == -352 ? "B站暂时拦截弹幕连接（-352），可登录或在网页版完成验证后重试" : msg ?? $"获取弹幕服务器失败 (code {code})");
+                data = legacy.data;
+            }
 
             var d = data.Value;
             var token = d.TryGetProperty("token", out var t) && t.ValueKind == JsonValueKind.String
@@ -4251,7 +4260,7 @@ public partial class ApiClient
             }
 
             // host_list[0] 通常是最近的接入点; wss_port 是 TLS 端口
-            if (!d.TryGetProperty("host_list", out var hosts) || hosts.ValueKind != JsonValueKind.Array ||
+            if ((!d.TryGetProperty("host_list", out var hosts) && !d.TryGetProperty("host_server_list", out hosts)) || hosts.ValueKind != JsonValueKind.Array ||
                 hosts.GetArrayLength() == 0)
                 return (null, token, uid, "没有可用的弹幕服务器");
 
@@ -4367,11 +4376,10 @@ public partial class ApiClient
             // 按档位从高到低排(用户期望"原画在最上面")
             options = options.OrderByDescending(o => o.qn).ToList();
 
-            // 一个 accept_qn 都没解析出来(接口改版/异常响应) → 退回全集, 至少能切
-            if (options.Count == 0 && qnLabel.Count > 0)
-                options = qnLabel.Select(kv => (kv.Key, kv.Value)).OrderByDescending(o => o.Key).ToList();
-
             var (url, actualQn) = PickLiveUrlEx(data.Value);
+            // Missing accept_qn does not prove that every platform quality is available.
+            if (options.Count == 0 && actualQn > 0)
+                options.Add((actualQn, qnLabel.TryGetValue(actualQn, out var label) ? label : "清晰度 " + actualQn));
             return url == null
                 ? (false, "没有取到可用的直播流地址", null, 0, options)
                 : (true, null, url, actualQn, options);

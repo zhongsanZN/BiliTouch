@@ -45,7 +45,9 @@ internal static class Program
         var exit = 0;
         try
         {
-            if(args.Contains("--continuation")) ContinuationTests.Run(Check, Artifacts);
+            if(args.Contains("--live-room-network")) LiveRoomTests.Network(Artifacts,args.FirstOrDefault(a=>a.StartsWith("--session="))?[10..]);
+            else if(args.Contains("--live-room")) LiveRoomTests.Run(Check, Artifacts);
+            else if(args.Contains("--continuation")) ContinuationTests.Run(Check, Artifacts);
             else if(args.Contains("--star-party")) StarPartyTests.Run(Check, Artifacts);
             else if(args.Contains("--web-cursor")) AudioImagesFontsTests.WebCursor(Check);
             else if(args.Contains("--audio-images-fonts")) AudioImagesFontsTests.Run(Check, Artifacts);
@@ -139,7 +141,7 @@ internal static class Program
         Check(right.Action == PlayerTouchAction.Volume && right.VolumeTarget(20) == 70, "right vertical swipe adjusts volume");
         right.Move(703, -2000);
         Check(right.VolumeTarget(80) == 100, "volume clamps to 100");
-        Check(UpdateChecker.ParseVersion(BiliDesk.App.AppVersion) == new Version(0, 1, 2), "BiliTouch has an independent version");
+        Check(typeof(App).Assembly.GetName().Version!.ToString(3) == BiliDesk.App.AppVersion, "BiliTouch version matches the built assembly");
     }
 
     private static void TestHome()

@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.IO;
 using System.IO.Compression;
 using System.Net.WebSockets;
@@ -9,6 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
+using BiliDesk.Models;
 
 namespace BiliDesk.Services;
 
@@ -60,6 +62,13 @@ public sealed class LiveDanmakuService : IDisposable
     private CancellationTokenSource? _cts;
     private long _roomId;
     private volatile bool _running;
+    private volatile bool _authenticated;
+    private int _generation, _dispatchQueued;
+    private readonly AsyncLocal<int?> _parseGeneration = new();
+    private readonly ConcurrentQueue<(int generation, Action action)> _events = new();
+    public event Action<LiveChatEntry>? ChatReceived;
+    public event Action<string, JsonElement>? RoomEvent;
+    public event Action<IReadOnlyList<string>>? SuperChatDeleted;
 
     /// <summary>收到一条可显示的弹幕/系统消息(在 UI 线程上触发)</summary>
     public event Action<Message>? Received;
@@ -72,7 +81,8 @@ public sealed class LiveDanmakuService : IDisposable
         _dispatcher = dispatcher;
     }
 
-    public bool IsConnected => _socket?.State == WebSocketState.Open;
+    public bool IsConnected => _authenticated && _socket?.State == WebSocketState.Open;
+    public string LastError { get; private set; } = "";
 
     /// <summary>开始接收某个直播间的弹幕。重复调用会先断开旧的。</summary>
     public void Start(long roomId)
@@ -80,13 +90,17 @@ public sealed class LiveDanmakuService : IDisposable
         if (roomId <= 0) return;
         Stop();
         _roomId = roomId;
+        LastError = "";
         _running = true;
         _cts = new CancellationTokenSource();
-        _ = Task.Run(() => RunAsync(roomId, _cts.Token));
+        var token = _cts.Token; var generation = _generation;
+        _ = Task.Run(async () => { _parseGeneration.Value = generation; await RunAsync(roomId, token); });
     }
 
     public void Stop()
     {
+        Interlocked.Increment(ref _generation);
+        _authenticated = false;
         _running = false;
         try { _cts?.Cancel(); } catch { }
         try { _socket?.Abort(); } catch { }
@@ -106,46 +120,50 @@ public sealed class LiveDanmakuService : IDisposable
         var backoff = 1000;
         while (!ct.IsCancellationRequested && _running)
         {
+            ClientWebSocket? ownedSocket = null;
             try
             {
                 var info = await _api.GetLiveDanmakuInfoAsync(roomId);
+                ct.ThrowIfCancellationRequested();
                 if (info.url == null)
                 {
+                    LastError = info.err ?? "弹幕服务器暂不可用";
+                    RaiseConnection(false);
                     await Task.Delay(backoff, ct);
                     backoff = Math.Min(backoff * 2, 15_000);
                     continue;
                 }
 
                 using var ws = new ClientWebSocket();
+                ownedSocket = ws;
                 ws.Options.SetRequestHeader("User-Agent",
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0");
                 ws.Options.SetRequestHeader("Origin", "https://live.bilibili.com");
+                var cookie = SessionManager.Instance.BuildCookieHeader();
+                if (cookie.Length > 0) ws.Options.SetRequestHeader("Cookie", cookie);
                 _socket = ws;
                 await ws.ConnectAsync(new Uri(info.url), ct);
 
                 // 认证包
-                var authBody = BuildAuthBody(roomId, info.uid, info.token);
+                var authBody = BuildAuthBody(roomId, info.uid > 0 ? info.uid : long.TryParse(SessionManager.Instance.Current.DedeUserID, out var account) ? account : 0, info.token);
                 await SendAsync(ws, OpAuth, authBody, ct);
-                RaiseConnection(true);
                 backoff = 1000;
 
                 // 心跳 + 收包并行
                 using var hbCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 var hb = HeartbeatLoopAsync(ws, hbCts.Token);
-                await ReceiveLoopAsync(ws, ct);
-                hbCts.Cancel();
-                try { await hb; } catch { }
+                try { await ReceiveLoopAsync(ws, ct); }
+                finally { hbCts.Cancel(); try { await hb; } catch { } }
             }
             catch (OperationCanceledException) { break; }
-            catch
+            catch (Exception ex)
             {
-                // 断线: 退避后重连
+                if (!ct.IsCancellationRequested) LastError = ex is TimeoutException ? "弹幕连接超时" : ex.Message;
             }
             finally
             {
                 RaiseConnection(false);
-                try { _socket?.Dispose(); } catch { }
-                _socket = null;
+                if (ReferenceEquals(_socket, ownedSocket)) _socket = null;
             }
 
             if (ct.IsCancellationRequested || !_running) break;
@@ -177,8 +195,9 @@ public sealed class LiveDanmakuService : IDisposable
             WebSocketReceiveResult r;
             do
             {
-                r = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
+                r = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct).WaitAsync(TimeSpan.FromSeconds(_authenticated ? 75 : 15), ct);
                 if (r.MessageType == WebSocketMessageType.Close) return;
+                if (ms.Length + r.Count > 8 * 1024 * 1024) { ws.Abort(); return; }
                 ms.Write(buffer, 0, r.Count);
             } while (!r.EndOfMessage);
 
@@ -189,8 +208,11 @@ public sealed class LiveDanmakuService : IDisposable
     // ------------------------------------------------------------ 包解析
 
     /// <summary>一个 WebSocket 帧里可能是**多个**包(压缩包里更是), 循环解完。</summary>
-    internal void ParsePackets(ReadOnlySpan<byte> data)
+    internal void ParsePackets(ReadOnlySpan<byte> data) => ParsePacketsCore(data, 0);
+
+    private void ParsePacketsCore(ReadOnlySpan<byte> data, int depth)
     {
+        if (depth > 4 || data.Length > 8 * 1024 * 1024) return;
         var offset = 0;
         while (offset + HeaderLen <= data.Length)
         {
@@ -199,7 +221,7 @@ public sealed class LiveDanmakuService : IDisposable
             var version = BinaryPrimitives.ReadInt16BigEndian(data.Slice(offset + 6, 2));
             var op = BinaryPrimitives.ReadInt32BigEndian(data.Slice(offset + 8, 4));
 
-            if (packetLen <= 0 || headLen < HeaderLen || offset + packetLen > data.Length) break;
+            if (packetLen < headLen || headLen < HeaderLen || packetLen > data.Length - offset) break;
             var body = data.Slice(offset + headLen, packetLen - headLen);
 
             switch (version)
@@ -209,19 +231,18 @@ public sealed class LiveDanmakuService : IDisposable
                     HandlePacket(op, body);
                     break;
                 case 2:
+                case 3:
                     // zlib: 解压后是多个完整包, 递归解
                     try
                     {
                         using var input = new MemoryStream(body.ToArray());
-                        using var z = new ZLibStream(input, CompressionMode.Decompress);
+                        using Stream z = version == 3 ? new BrotliStream(input, CompressionMode.Decompress) : new ZLibStream(input, CompressionMode.Decompress);
                         using var output = new MemoryStream();
-                        z.CopyTo(output);
-                        ParsePackets(output.GetBuffer().AsSpan(0, (int)output.Length));
+                        var buffer = new byte[8192]; int read;
+                        while ((read = z.Read(buffer)) > 0) { if (output.Length + read > 8 * 1024 * 1024) return; output.Write(buffer, 0, read); }
+                        ParsePacketsCore(output.GetBuffer().AsSpan(0, (int)output.Length), depth + 1);
                     }
                     catch { }
-                    break;
-                case 3:
-                    // brotli: 本项目不引第三方库, 遇到就跳过(官方 web 端默认给 zlib)
                     break;
             }
 
@@ -231,6 +252,19 @@ public sealed class LiveDanmakuService : IDisposable
 
     internal void HandlePacket(int op, ReadOnlySpan<byte> body)
     {
+        if (op == OpAuthReply)
+        {
+            try
+            {
+                using var auth = JsonDocument.Parse(body.ToArray());
+                var ok = auth.RootElement.TryGetProperty("code", out var code) && code.GetInt32() == 0;
+                LastError = ok ? "" : "弹幕认证失败（" + code + "）";
+                RaiseConnection(ok);
+                if (!ok && (_parseGeneration.Value ?? _generation) == _generation) _socket?.Abort();
+            }
+            catch { RaiseConnection(false); }
+            return;
+        }
         if (op == OpHeartbeatReply)
         {
             // 人气值(版本 1 时 body 是 4 字节整数) —— 我们不显示, 忽略
@@ -274,6 +308,11 @@ public sealed class LiveDanmakuService : IDisposable
                     MedalLevel = medalLevel,
                     MedalName = medalName,
                 });
+                var uid = info.GetArrayLength() > 2 && info[2].ValueKind == JsonValueKind.Array && info[2].GetArrayLength() > 0 && long.TryParse(info[2][0].ToString(), out var parsedUid) ? parsedUid : 0;
+                uint color = 0xFFFFFF;
+                if (info.GetArrayLength() > 0 && info[0].ValueKind == JsonValueKind.Array && info[0].GetArrayLength() > 3 && uint.TryParse(info[0][3].ToString(), out var parsedColor)) color = parsedColor & 0xFFFFFF;
+                var entry = new LiveChatEntry { UserId = uid, User = user, Text = text, Color = color, Medal = medalLevel > 0 ? $"{medalName} {medalLevel}" : "" };
+                Dispatch(() => ChatReceived?.Invoke(entry));
                 return;
             }
 
@@ -288,26 +327,27 @@ public sealed class LiveDanmakuService : IDisposable
             }
             if (cmd == "SEND_GIFT")
             {
-                if (!root.TryGetProperty("data", out var d) || d.ValueKind != JsonValueKind.Object) return;
-                var user = Str(d, "uname");
-                var gift = Str(d, "giftName");
-                var num = d.TryGetProperty("num", out var n) && n.ValueKind == JsonValueKind.Number
-                    ? n.GetInt32() : 1;
-                Raise(new Message
-                {
-                    User = user,
-                    Text = $"送出 {gift} ×{num}",
-                    IsSystem = true,
-                    IsHighlight = true,
-                });
                 return;
             }
-            if (cmd is "SUPER_CHAT_MESSAGE")
+            if (cmd is "SUPER_CHAT_MESSAGE" or "SUPER_CHAT_MESSAGE_JPN")
             {
                 if (!root.TryGetProperty("data", out var d) || d.ValueKind != JsonValueKind.Object) return;
-                var user = Str(d, "uname");
-                var text = Str(d, "message");
-                Raise(new Message { User = user, Text = "醒目留言: " + text, IsHighlight = true });
+                var entry = LiveChatEntry.ParseSuperChat(d);
+                Raise(new Message { User = entry.User, Text = "醒目留言: " + entry.Text, IsHighlight = true });
+                Dispatch(() => ChatReceived?.Invoke(entry));
+                return;
+            }
+            if (cmd == "SUPER_CHAT_MESSAGE_DELETE")
+            {
+                var data = LiveJson.Object(root, "data"); var ids = new List<string>();
+                if (data.ValueKind == JsonValueKind.Object && data.TryGetProperty("ids", out var list) && list.ValueKind == JsonValueKind.Array)
+                    foreach (var id in list.EnumerateArray()) ids.Add(id.ValueKind == JsonValueKind.String ? id.GetString() ?? "" : id.GetRawText());
+                DispatchCritical(() => SuperChatDeleted?.Invoke(ids)); return;
+            }
+            if (cmd is "LIVE" or "PREPARING" or "ROOM_CHANGE" or "ROOM_LOCK" or "WARNING" or "CUT_OFF" or "ROOM_SILENT_ON" or "ROOM_SILENT_OFF" or "WATCHED_CHANGE")
+            {
+                var data = root.TryGetProperty("data", out var payload) ? payload.Clone() : default;
+                DispatchCritical(() => RoomEvent?.Invoke(cmd, data));
             }
         }
         catch { }
@@ -327,7 +367,8 @@ public sealed class LiveDanmakuService : IDisposable
             w.WriteStartObject();
             w.WriteNumber("uid", uid);
             w.WriteNumber("roomid", roomId);
-            w.WriteNumber("protover", 2);          // 2 = 收 zlib 压缩包
+            w.WriteNumber("protover", 3);
+            w.WriteString("buvid", SessionManager.Instance.Current.Buvid3 ?? "");
             w.WriteString("platform", "web");
             w.WriteNumber("type", 2);
             w.WriteString("key", token);
@@ -350,15 +391,31 @@ public sealed class LiveDanmakuService : IDisposable
 
     // ------------------------------------------------------------ 事件派发(回 UI 线程)
 
-    private void Raise(Message m) =>
-        _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
-        {
-            try { Received?.Invoke(m); } catch { }
-        }));
+    private void Raise(Message m) { if (Received != null) Dispatch(() => Received?.Invoke(m)); }
 
-    private void RaiseConnection(bool ok) =>
-        _dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
-        {
-            try { ConnectionChanged?.Invoke(ok); } catch { }
-        }));
+    private void RaiseConnection(bool ok) => DispatchCritical(() => { _authenticated = ok; ConnectionChanged?.Invoke(ok); });
+
+    // Authentication, stream state and moderation deletes must not be discarded by chat overload.
+    private void DispatchCritical(Action action)
+    {
+        int generation = _parseGeneration.Value ?? _generation;
+        _dispatcher.BeginInvoke(DispatcherPriority.Normal, () => { if (generation == _generation) action(); });
+    }
+
+    private void Dispatch(Action action)
+    {
+        if (_events.Count > 2048) _events.TryDequeue(out _);
+        _events.Enqueue((_parseGeneration.Value ?? _generation, action));
+        if (Interlocked.CompareExchange(ref _dispatchQueued, 1, 0) == 0)
+            _dispatcher.BeginInvoke(DispatcherPriority.Background, DrainEvents);
+    }
+    private void DrainEvents()
+    {
+        int count = 0;
+        while (count++ < 64 && _events.TryDequeue(out var item))
+            if (item.generation == _generation) { try { item.action(); } catch { } }
+        Interlocked.Exchange(ref _dispatchQueued, 0);
+        if (!_events.IsEmpty && Interlocked.CompareExchange(ref _dispatchQueued, 1, 0) == 0)
+            _dispatcher.BeginInvoke(DispatcherPriority.Background, DrainEvents);
+    }
 }

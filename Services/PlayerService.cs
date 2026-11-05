@@ -10,6 +10,7 @@ namespace BiliDesk.Services;
 public class PlayerService
 {
     private PlayerWindow? _window;
+    private LiveRoomWindow? _liveWindow;
 
     /// <summary>
     /// 指定的播放器窗口是否仍是当前被复用的那个。
@@ -83,11 +84,27 @@ public class PlayerService
         => Play(title, win => win.PlayVideo(bvid));
 
     /// <summary>
-    /// 打开直播间(首页「直播」tab 用)。复用同一个播放器窗口, 走"直播"分支:
-    /// 不查视频详情、不加载弹幕、不查三连状态、不上报历史进度。
+    /// Open an independent live window. VOD comments, actions and timeline stay in PlayerWindow.
     /// </summary>
     public void PlayLive(long roomId, string? title = null)
-        => Play(title, win => win.PlayLive(roomId, title));
+    {
+        if (_closing || roomId <= 0) return;
+        try
+        {
+            // Keep one active playback surface, as before the live/VOD split.
+            var previous = _window; _window = null; previous?.Close();
+            if (_liveWindow == null || _liveWindow.IsClosing)
+            {
+                var live = new LiveRoomWindow(); _liveWindow = live;
+                live.Closed += (_, _) => { if (ReferenceEquals(_liveWindow, live)) _liveWindow = null; };
+            }
+            var window = _liveWindow;
+            window.WindowState = WindowState.Maximized;
+            if (!window.IsVisible) window.Show();
+            window.OpenRoom(roomId, title); window.Activate();
+        }
+        catch (Exception ex) { App.ReportError(ex); Svc.Toast.Show("直播间初始化失败: " + ex.Message); }
+    }
 
     /// <summary>
     /// 播放本地文件(离线缓存页用)。同样复用播放器窗口, 只是走"本地文件"分支:
@@ -109,6 +126,7 @@ public class PlayerService
     /// </summary>
     private void Play(string? title, Action<PlayerWindow> start)
     {
+        var live = _liveWindow; _liveWindow = null; live?.Close();
         var win = GetOrCreateWindow();
         if (win == null) return;
 
