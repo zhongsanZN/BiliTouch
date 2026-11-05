@@ -1,0 +1,1188 @@
+﻿using System.Collections;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
+using System.Windows.Threading;
+using BiliDesk.Helpers;
+using BiliDesk.Models;
+using BiliDesk.Services;
+using BiliDesk.ViewModels;
+
+namespace BiliDesk.Views.Pages;
+
+public partial class HomePage : UserControl
+{
+    private HomeViewModel? Vm => DataContext as HomeViewModel;
+    private const double AutoLoadThreshold = 240;
+    // 防止连续自动填充死循环
+    private int _autoFillCount;
+
+    /// <summary>
+    /// 点深浅色按钮时的鼠标位置(相对本页坐标系)。
+    /// 圆形扩散动画需要它当圆心; Click 事件本身不带坐标, 所以在这里提前记下来。
+    /// </summary>
+
+
+    public HomePage()
+    {
+        InitializeComponent();
+        PopularTab.Checked += OnPopularChecked;
+        RecommendTab.Checked += OnRecommendChecked;
+        RankingTab.Checked += OnRankingChecked;
+        LiveTab.Checked += OnLiveChecked;
+        BangumiTab.Checked += OnBangumiChecked;
+        HookTabSwipe();
+        // 页面被重新挂载到可视树时刷新问候语(应用长时间挂在后台再切回来, 文案要跟着时段变)
+        Loaded += (_, _) =>
+        {
+            Vm?.RefreshGreeting();
+
+            AttachFilterViews();
+            // 构造函数里 RecommendTab.IsChecked=true 触发 ShowTab 时 DataContext 还没赋, EnsureFill
+            // 早退了 —— 这里(DataContext 已就绪)补上当前 tab 的分帧填充器, 让首次推荐流也走分帧。
+            if (CurrentTabFromVm() is { } cur) EnsureFill(cur);
+
+            // ★★★ 2026-11-04 修"每次滑到直播页都会闪一下"(以及其它非默认 tab):
+            //   原来只有**当前 tab** 在 Loaded 时挂了填充器, 其余 tab 要等用户第一次切过去
+            //   才建 —— 那一刻先量到一屏空内容、再被卡片顶开, 视觉上就是"闪一下"。
+            //   现在启动时就把**所有 tab** 的填充器挂好(每个内部是分帧填, 不会卡启动),
+            //   等用户切过去时列表里已经有内容、有正确高度。
+            //   ★ 数据请求仍是各 tab 自己的 VM 懒加载, 这里只保证"容器与首屏已就绪"。
+            foreach (var t in new[]
+                     {
+                         HomeTabKind.Recommend, HomeTabKind.Popular, HomeTabKind.Ranking,
+                         HomeTabKind.Live, HomeTabKind.Bangumi
+                     })
+            {
+                EnsureFill(t);
+            }
+            // 本页可能停在下滑位置被切走再切回来: 「回到顶部」的显隐要按当前偏移重算一次
+            UpdateBackToTop(ScrollOf(CurrentTabFromVm() ?? HomeTabKind.Recommend));
+            // DataContext 是外面赋进来的, 构造函数里还拿不到 VM, 所以订阅放在这里
+            HookSearchCard();
+            // 分段标签的下划线要等布局出来才摆得对(首次布局前 ActualWidth 都是 0);
+            // 派到 Loaded 优先级 = 排在本次布局之后, 且首次摆放不带动画
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+            {
+                // 首次摆放(不带动画)。布局前 ActualWidth 还是 0, 所以必须等布局跑完。
+                MoveTabIndicator(CurrentTabFromVm() ?? HomeTabKind.Recommend, animate: false);
+            }));
+        };
+        // 屏蔽把一屏内容筛空后要补下一页, 否则底部会留一大片空白(刷新不会触发滚动事件)
+        FilterService.Instance.Changed += OnFilterApplied;
+        // 窗口缩放时若搜索卡正开着, 要让它重新对中(RenderTransform 是绝对位移, 不跟布局走)
+        SizeChanged += (_, _) =>
+        {
+            RelayoutSearchCard();
+            // ★ 窗口尺寸变了 ⇒ 标签位置变了 ⇒ 下划线要重新摆一次(它靠实测坐标定位)。
+            //   不重摆的话, 窗口一缩放线就停在旧位置上了。
+            if (_tabIndicatorPlaced) MoveTabIndicator(CurrentTabFromVm() ?? HomeTabKind.Recommend, animate: false);
+        };
+        // 输入任何文字时占位提示要立刻渐隐(聚焦淡出在 GotFocus 里, 这里管"打了字又删光")
+        SearchKeywordBox.TextChanged += (_, _) => RefreshSearchPlaceholder();
+        // 默认选中「推荐」(个性化内容优先), 触发一次初始加载
+        RecommendTab.IsChecked = true;
+
+    }
+
+    // ------------------------------------------------------------ 加大的窗口拖动区
+
+    /// <summary>
+    /// 首页顶部那层"空闲拖动区"的按下处理: 长按左键拖动窗口、双击最大化/还原。
+    ///
+    /// ★ 为什么自己实现而不用 WindowChrome 的 CaptionHeight:
+    ///   那是**窗口级**设置, 调大以后每个页面顶部都会变成标题栏 —— 而搜索页/历史页顶部
+    ///   正好是输入框, 被吃掉上沿就点不动了(项目笔记里记着这条)。首页顶部是真空的,
+    ///   所以只在首页补这一层。
+    ///
+    /// ★ 为什么 DragMove 要 try/catch: `Window.DragMove()` 内部走的是 Win32 的模态拖动循环,
+    ///   它在"鼠标已经松开"或"拖动被系统打断(比如别的窗口抢了捕获)"时会抛
+    ///   InvalidOperationException。这不是异常路径, 是正常竞态 —— 双击的第二下、
+    ///   快速点一下就松开, 都很容易踩到。吞掉即可, 用户感知不到。
+    ///
+    /// ★ 双击判定: WPF 的 MouseButtonEventArgs.ClickCount 由系统按
+    ///   `GetDoubleClickTime()` 与双击距离阈值算好, 直接用, 不要自己数时间戳。
+    /// </summary>
+    private void OnDragAreaMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var win = Window.GetWindow(this);
+        if (win == null) return;
+
+        if (e.ClickCount == 2)
+        {
+            // 双击 = 最大化 / 还原(与系统标题栏、以及右上角那个按钮同一套语义)
+            win.WindowState = win.WindowState == WindowState.Maximized
+                ? WindowState.Normal
+                : WindowState.Maximized;
+            e.Handled = true;
+            return;
+        }
+
+        // 单击拖动。★ 必须判左键按下状态: 双击的第一下也会走到这里,
+        //   若不判就会先 DragMove 把窗口拖走一小段, 双击的位置跟着漂。
+        if (e.LeftButton != MouseButtonState.Pressed) return;
+        try { win.DragMove(); }
+        catch (InvalidOperationException) { /* 鼠标已松开/拖动被打断, 正常竞态 */ }
+    }
+
+    // ------------------------------------------------------------ 屏蔽
+
+    /// <summary>
+    /// 把首页的三个列表纳入全局屏蔽。
+    /// 只挂一次(FilterService 内部会去重), 放在 Loaded 里是因为 DataContext 要等外部赋值。
+    /// </summary>
+    private void AttachFilterViews()
+    {
+        if (Vm == null) return;
+        FilterService.Instance.Attach(Vm.RecommendItems);
+        FilterService.Instance.Attach(Vm.PopularItems);
+        FilterService.Instance.Attach(Vm.RankingItems);
+        FilterService.Instance.Attach(Vm.LiveItems);
+    }
+
+    /// <summary>
+    /// 屏蔽条件刚落到列表上。等这次布局跑完再判断"当前页内容够不够一屏",
+    /// 不够就补下一页 —— 否则一键屏蔽十几个 UP 之后, 页面会停在一大片空白上。
+    /// </summary>
+    private void OnFilterApplied()
+    {
+        if (!IsLoaded) return;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            if (!IsLoaded || DataContext is not HomeViewModel vm) return;
+            if (CurrentTabFromVm() is not { } tab) return;
+            if (ScrollOf(tab) is not { } sv) return;
+            _ = TriggerAutoLoad(sv, vm);
+        }));
+    }
+
+    // ------------------------------------------------------------ 其它入口
+
+    // 首页右上角的"离线缓存"入口已删(2026-09-26 用户要求): 收进「我的」页了。
+
+    /// <summary>由主窗口在首次显示时调用</summary>
+    public async Task Init()
+    {
+        if (Vm != null) await Vm.InitAsync();
+    }
+
+    private void OnPopularChecked(object sender, RoutedEventArgs e)
+    {
+        ShowTab(HomeTabKind.Popular);
+        if (DataContext is HomeViewModel vm) _ = vm.SwitchToPopularAsync();
+    }
+
+    private void OnRecommendChecked(object sender, RoutedEventArgs e)
+    {
+        ShowTab(HomeTabKind.Recommend);
+        if (DataContext is HomeViewModel vm) _ = vm.SwitchToRecommendAsync();
+    }
+
+    private void OnRankingChecked(object sender, RoutedEventArgs e)
+    {
+        ShowTab(HomeTabKind.Ranking);
+        if (DataContext is HomeViewModel vm) _ = vm.SwitchToRankingAsync();
+    }
+
+    private void OnLiveChecked(object sender, RoutedEventArgs e)
+    {
+        ShowTab(HomeTabKind.Live);
+        if (DataContext is HomeViewModel vm) _ = vm.SwitchToLiveAsync();
+    }
+
+    private void OnBangumiChecked(object sender, RoutedEventArgs e)
+    {
+        ShowTab(HomeTabKind.Bangumi);
+        if (DataContext is HomeViewModel vm) _ = vm.SwitchToBangumiAsync();
+    }
+
+    // ------------------------------------------------------------ 五个 tab 的列表(常驻, 不再摘挂)
+
+    private enum HomeTabKind { Recommend, Popular, Ranking, Live, Bangumi }
+
+    /// <summary>
+    /// 每个 tab 一个 DeferredFill, **建一次、永驻**。
+    ///
+    /// ★★★ 这是 2026-10-02 针对"切 tab 卡顿 / 从侧栏切回首页卡顿 / 切 tab 闪几下"的重构:
+    ///   旧实现是"同一时刻只有一个 tab 挂着列表, 切 tab = 摘掉旧的 + 分帧重建新的"。
+    ///   但四个列表都是**零虚拟化**的 ItemsControl + CardWallPanel —— 摘挂一次就等于
+    ///   把几十上百张 VideoCard 容器整个销毁再重建, 每张卡还要重新触发 Cover 绑定 / 入场动画。
+    ///   这套"省内存"的摘挂在三次用户反馈(卡顿/闪)面前是**负资产**: 它省下的内存(几十 MB 封面位图)
+    ///   远不如它造成的每次切换都要重建整墙的观感代价。
+    ///
+    ///   新做法: 四个列表**常驻**, 切 tab 只靠 XAML 里 `Visibility="{Binding IsXxxTab}"` 切换显隐,
+    ///   `ShowTab` 不再碰 ItemsSource。DeferredFill 只负责"数据第一次到位时分帧填充"(避免同步生成
+    ///   95 张卡), 填完就停在原地, 切走切回来都不会再重建。
+    ///   ★ 内存代价: 四个 tab 的卡片墙都活着, 封面位图常驻。CoverLoader 的 32MB LRU 缓存兜住一部分,
+    ///     但四墙全点一遍后的常驻内存会比"摘挂版"高。这是**刻意**取舍 —— 用户三次报卡顿, 流畅优先。
+    ///     若以后内存吃紧, 再考虑"离开首页页时才释放非当前 tab"这种页面级治理, 别在 tab 切换里做。
+    /// </summary>
+    private readonly Dictionary<HomeTabKind, DeferredFill> _fills = new();
+
+    private ItemsControl? ListOf(HomeTabKind t) => t switch
+    {
+        HomeTabKind.Recommend => RecommendList,
+        HomeTabKind.Popular => PopularList,
+        HomeTabKind.Ranking => RankingList,
+        HomeTabKind.Live => LiveList,
+        // 追番页是**三段分区**(我的追番 / 番剧推荐 / 国创推荐), 没有"一个列表"可填。
+        // 返回 null 让 EnsureFill 直接返回 —— 不给哪一段挂填充器, 三段就都按普通
+        // ItemsControl 生成。代价是切到该页时一次生成 ~75 张卡; 可以接受, 因为海报卡
+        // 的标题走 TextTrimming(不换行), 没有 VideoCard 那种"换行排版"的昂贵测量
+        // —— 那才是 CardWallPanel 要把全墙重测摊开的主因。
+        _ => null,
+    };
+
+    private ScrollViewer? ScrollOf(HomeTabKind t) => t switch
+    {
+        HomeTabKind.Recommend => RecommendScroll,
+        HomeTabKind.Popular => PopularScroll,
+        HomeTabKind.Ranking => RankingScroll,
+        HomeTabKind.Live => LiveScroll,
+        HomeTabKind.Bangumi => BangumiScroll,
+        _ => null,
+    };
+
+    private System.Collections.IEnumerable? ItemsOf(HomeTabKind t, HomeViewModel vm) => t switch
+    {
+        HomeTabKind.Recommend => vm.RecommendItems,
+        HomeTabKind.Popular => vm.PopularItems,
+        HomeTabKind.Ranking => vm.RankingItems,
+        HomeTabKind.Live => vm.LiveItems,
+        _ => null,
+    };
+
+    /// <summary>每批补多少张卡片: 首屏一批(约 4~5 列 × 5 行), 之后每帧一批。</summary>
+    private const int FillChunkSize = 24;
+
+    /// <summary>
+    /// 切换 tab: **只切显隐 + 摆下划线**, 不重建列表(见 _fills 的说明)。
+    /// 列表的显隐由 `Visibility="{Binding IsXxxTab}"` 在 VM 的 SetTab 里驱动, 这里不需要也不该碰。
+    /// </summary>
+    private void ShowTab(HomeTabKind tab)
+    {
+        // ★★★ 2026-11-04 修"每次滑到直播页都会闪一下":
+        //
+        //   根因: 直播 tab 的可见性是绑 IsLiveTab 的, 第一次切过去那一刻才开始
+        //   挂填充器/建卡片 ⇒ 先量到一屏空内容、再被卡片顶开 ⇒ 视觉上闪一下。
+        //   首页其它 tab 因为启动时就预填了, 所以不闪。
+        //
+        //   修法: 在**启动时**就为直播 tab 也建好填充器预填第一屏, 让它的列表在
+        //   切过去之前就已经有内容、有正确高度。预填只做一次(EnsureFill 内部按 tab 去重)。
+        //   ★ 只预填"首屏", 不会多发几页请求 —— FillFeed 的首页本来就会跑。
+        EnsureFill(tab);
+        // 切 tab 后「回到顶部」要跟着新列表的滚动位置走(那个 tab 可能本来就停在顶部)
+        UpdateBackToTop(ScrollOf(tab));
+        // 分段标签的下划线跟着选中项走
+        MoveTabIndicator(tab);
+    }
+
+    // ★★★ 2026-11-04 删除 PrewarmTabVisuals(它造成了"首页所有卡片叠在一起"的严重回归):
+    //
+    //   我上一版为了修"切到直播页闪一下", 在这里给 ScrollViewer 直接赋
+    //   `host.Visibility = Visibility.Hidden`。而 XAML 里那个 Visibility 是
+    //   `{Binding IsLiveTab, Converter=...}` —— **本地赋值会覆盖掉绑定**
+    //   (SetValue 而不是 SetCurrentValue), 绑定一旦被顶掉:
+    //     · VM 后续把 IsXxxTab 置 true/false 都不再影响这个 ScrollViewer;
+    //     • 我那段"下一帧再决定 Hidden/Visible/Collapsed"的逻辑读的是 VM 状态,
+    //       与元素真实状态脱钩 ⇒ 多个列表同时 Visible。
+    //   五个列表都在同一个 Grid 单元格里, 于是全部叠在一起 —— 用户截图里就是这样。
+    //
+    //   ★ 教训: 带绑定的属性一律用 SetCurrentValue; 更稳的做法是**根本别在代码里碰它**。
+    //     闪一下只是观感问题, 叠在一起是功能坏了 —— 不该为前者冒后者的风险。
+
+    /// <summary>
+    /// 保证某个 tab 的列表已经挂上分帧填充器。**每个 tab 只建一次**, 之后永远复用 ——
+    /// 这就是"切 tab 不重建"的关键(旧版在 ShowTab 里每次都 Attach/Detach)。
+    /// </summary>
+    private void EnsureFill(HomeTabKind tab)
+    {
+        if (_fills.ContainsKey(tab)) return;
+        if (DataContext is not HomeViewModel vm) return;
+        var list = ListOf(tab);
+        if (list == null) return;
+        var src = ItemsOf(tab, vm);
+        if (src == null) return;
+
+        // 分帧挂载: 首批在下一帧(Background 优先级, 点击的布局/渲染先走), 其余按帧补。
+        // 为什么必须这样: 四个列表都是 ItemsControl + WrapPanel(外层还有自己的 ScrollViewer),
+        // **没有任何虚拟化** —— ItemsSource 一挂, 几十上百张 VideoCard 容器在一次布局里同步生成,
+        // 表现就是"点热门/排行榜/直播入口卡一下"。把生成时机接管成分帧。
+        // 注意 XAML 里四份 ItemsSource 是初始绑定好的: 折叠状态的 ItemsControl 没被测量过,
+        // 容器其实还没生成, 所以这里把绑定替换成代理视图没有浪费。
+        var fill = new DeferredFill(list, src, FillChunkSize);
+        _fills[tab] = fill;
+        fill.Start();
+    }
+
+    // ------------------------------------------------------------ 分段标签的选中下划线
+    //
+    // 参考图: 选中的标签字变粉, 它下面有一根短横线; 换标签时那根线要**滑过去**。
+    // 只动画一个属性就够 —— 线的宽度是固定的(见 HomePage.xaml 里的 TabIndicator), 所以只要把 X
+    // 从旧位置挪到新位置; 不动画宽度也就不会"中途忽胖忽瘦"。
+    // 位置必须实测(TransformToAncestor): 四个标签文字长短不同(推荐/热门 vs 排行榜), 宽度不一样,
+    // 靠固定间距是推不出来的。
+
+    /// <summary>下划线滑过去的时长。比搜索卡那两段短 —— 它只是个小指示器, 不该抢戏。</summary>
+    private const int TabIndicatorMs = 220;
+
+    /// <summary>下划线还没摆过位。首次布局之前 ActualWidth 都是 0, 那时摆了也是错的。</summary>
+    private bool _tabIndicatorPlaced;
+
+    private RadioButton? TabButtonOf(HomeTabKind tab) => tab switch
+    {
+        HomeTabKind.Recommend => RecommendTab,
+        HomeTabKind.Popular => PopularTab,
+        HomeTabKind.Ranking => RankingTab,
+        HomeTabKind.Live => LiveTab,
+        HomeTabKind.Bangumi => BangumiTab,
+        _ => null
+    };
+
+    /// <summary>
+    /// 把选中下划线挪到某个标签下面。animate=false 用于首次摆放(不该有"滑进来"的动画)。
+    ///
+    /// ★ 下划线的宽度是**固定的 20px**(见 HomePage.xaml), 所以这里只需要动 X 一个属性 ——
+    ///   这正是"改回下划线"最大的好处: 药丸版本要同时动"位置 + 宽度", 而那是 WPF 里
+    ///   最容易出错的组合(宽度动画的起点会读到被动画接管的旧值, 表现为"方块从最左边飞来";
+    ///   改用 ScaleX 又有缩放锚点偏移的坑, 5 个标签里只有宽度变化的那两档会偏)。
+    ///   宽度固定 ⇒ 不存在"位置与宽度不同步"这件事, 一条 DoubleAnimation 就够了。
+    ///
+    /// ★ 位置必须**实测**(TransformToAncestor): 五个标签文字长短不同(推荐/热门 两字,
+    ///   排行榜/追番 三个), 宽度不一样, 靠固定间距推不出来。
+    /// ★ 线要**在文字下面居中**: 所以 X 要在标签左边距上再加 (标签宽 − 线宽)/2。
+    ///   少加这一项, 线会贴到标签左边缘, 看起来像"没对齐"。
+    /// </summary>
+    private void MoveTabIndicator(HomeTabKind tab, bool animate = true)
+    {
+        var target = TabButtonOf(tab);
+        if (target == null || HomeTabs.ActualWidth <= 0 || target.ActualWidth <= 0)
+        {
+            // 布局还没就绪: 记下来, Loaded 里会再摆一次
+            _tabIndicatorPlaced = false;
+            return;
+        }
+
+        // 标签左边距(相对标签行) + 居中偏移。下划线是 TabsRow 的子元素、标签行的兄弟,
+        // 两者都没有 Margin, 所以坐标原点一致, 直接可用。
+        var left = target.TransformToAncestor(HomeTabs).Transform(new Point(0, 0)).X
+                   + (target.ActualWidth - TabIndicator.Width) / 2;
+
+        if (!animate || !_tabIndicatorPlaced)
+        {
+            ClearIndicatorAnimations();
+            TabIndicatorTrans.X = left;
+            _tabIndicatorPlaced = true;
+            return;
+        }
+
+        // ★★ 顺序很关键: **先读当前 X, 再清动画**。
+        //   反过来先清动画, X 会立刻回落到"上次动画开始前的本地值"(0),
+        //   于是新动画从 0 起步 —— 表现就是"线先跳到最左边再滑回来"(实测从
+        //   排行榜切到别的档时会看到线从左上角飞过来, 因为 0 就是最左)。
+        //   先读则拿到的是"上一次动画的当前值", 正是我们要的连续起点。
+        var from = TabIndicatorTrans.X;
+        ClearIndicatorAnimations();
+        TabIndicatorTrans.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(from, left, TimeSpan.FromMilliseconds(TabIndicatorMs))
+            {
+                // ★ EaseOut: 起步快、收尾缓。位移动画用缓出比线性"更有质感" ——
+                //   线性看起来像生硬地平移, 缓出像是滑过去停在目标上。
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+    }
+
+    /// <summary>清掉下划线上残留的位移动画</summary>
+    private void ClearIndicatorAnimations()
+        => TabIndicatorTrans.BeginAnimation(TranslateTransform.XProperty, null);
+
+    /// <summary>当前 VM 认为选中的 tab(显隐由它驱动, 这里只做"读"用途)</summary>
+    private HomeTabKind? CurrentTabFromVm()
+    {
+        if (DataContext is not HomeViewModel vm) return null;
+        if (vm.IsPopularTab) return HomeTabKind.Popular;
+        if (vm.IsRankingTab) return HomeTabKind.Ranking;
+        if (vm.IsLiveTab) return HomeTabKind.Live;
+        if (vm.IsBangumiTab) return HomeTabKind.Bangumi;
+        if (vm.IsRecommendTab) return HomeTabKind.Recommend;
+        return null;
+    }
+
+    /// <summary>
+    /// 手动刷新(当前 tab)。
+    ///
+    /// ★ 刷新完把当前 tab 滚回顶部(2026-10-01)。刷新换的是**整份列表**: 新的一批可能比旧的短
+    ///   (推荐接口一次只给 10~30 条, 而旧列表可能已经滚了几页), 此时 ScrollViewer 会把越界的
+    ///   偏移夹回来, 夹多少取决于新内容有多高 —— 用户看到的就是"点完刷新页面自己滑了一段"。
+    ///   回到顶部是刷新语义下唯一确定的落点(和下拉刷新一致), 也就没有"滑"这回事了。
+    /// </summary>
+    private async Task RefreshCurrentTabAsync()
+    {
+        if (Vm == null) return;
+        await Vm.RefreshAsync();
+        var tab = CurrentTabFromVm() ?? HomeTabKind.Recommend;
+        ScrollOf(tab)?.ScrollToTop();
+    }
+
+    /// <summary>工具栏刷新键 + 错误条里的「重试」都走这一条</summary>
+    private void OnRefreshClick(object sender, RoutedEventArgs e) => _ = RefreshCurrentTabAsync();
+
+    /// <summary>
+    /// 「分区」入口(2026-10-12 用户要求"放左下角", 入口与展开位置一致)。
+    ///
+    /// ★ 按钮在 **MainWindow 的左侧导航栏底部**(XAML 里), 这里只负责接收点击:
+    ///   它属于**窗口级**功能(分区面板盖住整个窗口、含导航栏), 而不是首页的内容,
+    ///   所以按钮不该放在 HomePage 的右下角工具栏里。
+    /// ★ 用 <see cref="SvcWindow.Main"/> 而不是"往上找父窗口":
+    ///   MainWindow 嵌在 PageHost(一个 ContentControl)里时, 父级链上未必有 MainWindow 那个类型;
+    ///   SvcWindow 是 App 启动时登记的全局引用, 哪儿都能拿到。
+    /// ★ 主窗口不可用时(启动早期/探针环境)静默跳过: 分区面板是导航增强, 缺了不该抛。
+    /// </summary>
+    public void OpenPartitionFromNav() => SvcWindow.Main?.OpenPartition();
+
+    /// <summary>通用: 滚动到底部 / 内容不够一屏时, 自动加载更多</summary>
+    private async Task TriggerAutoLoad(ScrollViewer sv, HomeViewModel vm)
+    {
+        if (_autoFillCount > 5) return; // 防止死循环
+        if (vm.LoadingMore || vm.Loading || !sv.IsVisible || vm.Error.Length>0) return;
+        // 手指还按在列表上时不往列表里加卡: 加卡会让整墙重新测量/重排, 拖动中掉帧。
+        // 松手后的惯性滚动会再触发 ScrollChanged, 那时再补加载。
+        // (Chromium 的原则: 滚动走合成线程, 滚动过程中绝不做会改内容的主线程布局。)
+        if (TouchSupport.IsTouchPanning(sv)) return;
+        // 分帧填充进行中: 每补一批 ScrollableHeight 都在长, 这时判"内容不够一屏"是错的,
+        // 会带着空列表去拉下一页; 等填充完(补帧引发的 ScrollChanged 会再来)再判。
+        // ★ 四个 tab 各有各的 fill, 这里要判"当前 tab 那个"还在不在补帧(不是某个全局的)。
+        if (CurrentTabFromVm() is { } tab && _fills.TryGetValue(tab, out var f) && f.IsActive) return;
+
+        var distanceToBottom = sv.ScrollableHeight - sv.VerticalOffset;
+        var contentShort = sv.ScrollableHeight < sv.ActualHeight * 0.8;
+        if (distanceToBottom > AutoLoadThreshold && !contentShort) return;
+
+        _autoFillCount++;
+        try { await vm.LoadMoreAsync(); }
+        finally { _autoFillCount--; }
+    }
+
+    private void PopularScroll_OnScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        UpdateBackToTop((ScrollViewer)sender);
+        if (DataContext is not HomeViewModel vm) return;
+        _ = TriggerAutoLoad((ScrollViewer)sender, vm);
+    }
+
+    private void RecommendScroll_OnScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        UpdateBackToTop((ScrollViewer)sender);
+        if (DataContext is not HomeViewModel vm) return;
+        _ = TriggerAutoLoad((ScrollViewer)sender, vm);
+    }
+
+    private void LiveScroll_OnScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        UpdateBackToTop((ScrollViewer)sender);
+        if (DataContext is not HomeViewModel vm) return;
+        _ = TriggerAutoLoad((ScrollViewer)sender, vm);
+    }
+
+    /// <summary>排行榜不自动翻页(它是一次给完的), 但仍然要让「回到顶部」跟着滚动位置亮灭</summary>
+    private void RankingScroll_OnScrollChanged(object sender, ScrollChangedEventArgs e)
+        => UpdateBackToTop((ScrollViewer)sender);
+    /// <summary>
+    /// 追番页与其它滚动列表同款: 滚到底自动翻下一批推荐。
+    /// TriggerAutoLoad 内部会判当前 tab 是不是追番; 不是的话 LoadMoreAsync 也什么都不做
+    /// (它自己按 IsBangumiTab 分流), 所以这里不需要额外判。
+    ///
+    /// ★ 这里**额外**要告诉 VM "用户当前看得见哪一段"(仍在用): 「我的追番」是固定内容,
+    ///   不翻页; 停在它上面时加载目标要顺延到「番剧推荐」(见 LoadMoreAsync 的追番分支)。
+    /// ★ 2026-11-12 合并国创后, 原先那套"只往看得见的那栏追加"的规则已不需要 ——
+    ///   现在只有一栏会翻页, 追加位置天然在视口下方。
+    /// </summary>
+    private void BangumiScroll_OnScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        UpdateBackToTop((ScrollViewer)sender);
+        if (DataContext is not HomeViewModel vm) return;
+        SyncBangumiActiveSection((ScrollViewer)sender, vm);
+        _ = TriggerAutoLoad((ScrollViewer)sender, vm);
+    }
+
+    /// <summary>
+    /// 用**视口底部**落在哪一段来判定"用户当前在看哪一段"。
+    ///
+    /// ★ 2026-11-12 合并国创之后这里只剩两段(「我的追番」/「番剧推荐」), 判段因此大幅简化 ——
+    ///   原先那个 GuochuangRecommendList 的探测和"向上回看"的三段循环都删掉了。
+    /// ★ 为什么取底部而不是中线: 自动加载发生在"滚到底"这一刻, 底部所在的那一段正是用户
+    ///   马上要继续看的。取中线的话, 一屏里同时露出两段时会判到靠上的那一段。
+    /// ★ 集合空时对应 ItemsControl 是 Collapsed(ActualHeight=0), span 返回空区间自动跳过,
+    ///   不会误判成"看的是这一段"。
+    /// </summary>
+    private void SyncBangumiActiveSection(ScrollViewer sv, HomeViewModel vm)
+    {
+        if (sv.ActualHeight <= 0) return;
+        var probeY = sv.ViewportHeight - 1;
+
+        // 段的可见区间(相对视口): [top, bottom)。
+        // ★ 元组字段名必须在 lambda 的返回类型上显式声明, 否则编译器推成普通 (double,double),
+        //   下面访问 .top/.bottom 直接编译不过。
+        var span = (FrameworkElement? el) =>
+        {
+            if (el == null || el.ActualHeight <= 0) return (top: double.MinValue, bottom: double.MinValue);
+            var top = el.TranslatePoint(new Point(0, 0), sv).Y;
+            return (top: top, bottom: top + el.ActualHeight);
+        };
+        var containsBottom = ((double top, double bottom) s) =>
+            s.top <= probeY && probeY < s.bottom;
+
+        var my = span(MyBangumiList);
+        var rec = span(BangumiRecommendList);
+
+        HomeViewModel.BangumiSection section;
+        if (containsBottom(my)) section = HomeViewModel.BangumiSection.My;
+        else if (containsBottom(rec)) section = HomeViewModel.BangumiSection.Recommend;
+        else
+        {
+            // 底部落在两段之间的空隙 / 已越过最后一个列表的末尾:
+            // 向上回看 —— 底部之上、离得最近的那段就是用户正在看末尾的段。
+            var best = HomeViewModel.BangumiSection.None;
+            var bestTop = double.MinValue;
+            foreach (var (s, sec) in new[] { (my, HomeViewModel.BangumiSection.My),
+                                             (rec, HomeViewModel.BangumiSection.Recommend) })
+            {
+                if (s.top > bestTop && s.top <= probeY) { bestTop = s.top; best = sec; }
+            }
+            if (best == HomeViewModel.BangumiSection.None)
+                return;   // 两段一个都不可见(内容不足一屏/正在布局): 保持上一次的判定, 别来回抖
+            section = best;
+        }
+
+        vm.ActiveBangumiSection = section;
+    }
+
+    // ------------------------------------------------------------ 回到顶部
+
+    /// <summary>
+    /// 下滑超过这个距离才把「回到顶部」亮出来。
+    /// 阈值别太小: 轻轻滚一下按钮就闪出来、回滚一点又消失, 看着像故障。
+    /// </summary>
+    private const double BackToTopThreshold = 400;
+
+    /// <summary>「回到顶部」当前是否亮着(避免每次滚动都重复起动画)</summary>
+    private bool _backToTopShown;
+
+    /// <summary>
+    /// 按当前滚动位置点亮/熄灭「回到顶部」。
+    ///
+    /// 只动 <c>Opacity</c> 与 <c>IsHitTestVisible</c>, **不用 Visibility** ——
+    /// 它在右下角那个 StackPanel 里与另外四个按钮同排, 用 Collapsed 会让它们每过一次阈值就上下跳。
+    /// 淡入淡出顺带和界面其它地方的过渡语言一致。
+    /// </summary>
+    private void UpdateBackToTop(ScrollViewer? sv)
+    {
+        var show = sv is { VerticalOffset: > BackToTopThreshold };
+        if (show == _backToTopShown) return;
+        _backToTopShown = show;
+
+        // 只切按钮自己的 Opacity 与命中测试 —— 它在工具列最上面, 用 Visibility 的话
+        // 下面四个按钮每滚过一次阈值就会上下跳一下。
+        BtnTop.IsHitTestVisible = show;
+        BtnTop.BeginAnimation(OpacityProperty,
+            new DoubleAnimation(BtnTop.Opacity, show ? 1 : 0, TimeSpan.FromMilliseconds(160))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+    }
+
+    /// <summary>
+    /// 把**当前 tab 的**列表滚回顶部。
+    /// 必须按 tab 取, 不能拿 sender 之外的那个 —— 四个 ScrollViewer 常驻同一棵树, 切走的只是被折叠。
+    /// </summary>
+    private void OnBackToTopClick(object sender, RoutedEventArgs e)
+    {
+        var tab = CurrentTabFromVm() ?? HomeTabKind.Recommend;
+        ScrollOf(tab)?.ScrollToTop();
+    }
+
+    // ------------------------------------------------------------ 顶部居中搜索卡
+    //
+    // 2026-10-03 用户要求"搜索框固定在首页正上方的中间位置, 保留展开动画":
+    //   · 收起态 = 页面水平正中那条灰的搜索框(XAML 里 Center 对齐 + 顶部 16);
+    //   · 展开 = 原地往下长(宽度 440→520、高度 48→卡片高), 露出 搜索历史 / 热搜。
+    //   居中对齐下宽度变化是"两边对称地长", **中心天然不动** —— 旧版"右对齐 + 平移补偿"
+    //   那套(PanXFor / SearchCardTrans.X 关键帧)整体废弃, SearchCardTrans 恒为 0。
+    //
+    // 为什么展开仍用关键帧而不是"跑完一步再 BeginAnimation 下一步": 同一个属性上第二次
+    // BeginAnimation 会**立刻**把值顶到新动画的 From(BeginTime 只推迟开始, 不推迟生效),
+    // 前一段会被截断 —— 这条在滚动弹幕上踩过, 见 PlayerWindow 里弹幕的注释。
+
+    private const double SearchBoxW = 440;
+    private const double SearchBoxH = 48;
+    private const double SearchCardW = 520;
+    /// <summary>内容四周的余量: 免得"刚好放满"因为 1px 取整就冒出滚动条</summary>
+    private const double SearchCardSlack = 8;
+
+    /// <summary>搜索框与内容框之间的间隙(2026-09-26 起两个框是分开的, XAML 里内容框的 Margin 上边距同值)</summary>
+    private const double SearchContentGap = 10;
+
+    /// <summary>搜索框聚焦时描边淡入的最终不透明度(2026-09-26 起是描边、不再是光晕)</summary>
+    private const double SearchRingOpacity = 1.0;
+
+    /// <summary>展开段时长(紧接平移之后)</summary>
+    private const int SearchExpandMs = 340;
+    /// <summary>收起时先让内容淡出, 这段之后尺寸才开始缩 —— 反过来能看见内容被挤扁</summary>
+    private const int SearchFadeOutMs = 90;
+    private const int SearchCollapseMs = 300;
+    /// <summary>内容量变化后, 已展开卡片改高度的时长</summary>
+    private const int SearchResizeMs = 220;
+
+    /// <summary>卡片处于"打开"状态(含正在展开的那一段)</summary>
+    private bool _searchOpen;
+    /// <summary>正在收起: 这时不接受"再打开", 免得从半路折返出怪动作</summary>
+    private bool _searchClosing;
+    /// <summary>展开动画已结束、输入框可以正常点了(动画期间点它只当"打开")</summary>
+    private bool _searchInputReady;
+    /// <summary>已订阅 SearchRequested 的那个 VM(DataContext 可能被换, 所以记对象本身)</summary>
+    private HomeViewModel? _searchHookedVm;
+    /// <summary>展开动画途中内容量变了: 记下来, 等动画收尾再重新量一次高度</summary>
+    private bool _searchNeedRemeasure;
+
+    private HomeViewModel? SearchVm => DataContext as HomeViewModel;
+
+    /// <summary>
+    /// 展开态应有的高度 = 输入行 + 内容自然高度。
+    ///
+    /// 为什么不写死一个数: 搜索历史可能只有两条、也可能展开成 20 条, 热搜还会多出"取不到"
+    /// 的一行说明 —— 写死高度不是底部空一大块, 就是内容被裁掉。
+    /// 好在 ScrollViewer 即使在 0 高的行里也会拿无限高度去量内容, ExtentHeight 随时可读。
+    ///
+    /// ★ 量之前必须把宽度摆到展开值: 收起态宽 440、展开态 520, 标签的换行结果不一样
+    ///   (实测同一批词条能差整整一行), 按收起态量出来的高度会偏大一截。
+    /// </summary>
+    private double ComputeOpenHeight()
+    {
+        // 用局部变量判"要不要临时改宽", 而不是拿 SearchCard.Width 直接比 —— 动画档位下它未必等于
+        // 本地值, 但这里只在"没在动"的时候被调用(展开前 / 展开完后 / 内容变化后)。
+        var needRemeasure = Math.Abs(SearchCard.Width - SearchCardW) > 0.5;
+        if (needRemeasure)
+        {
+            SearchCard.Width = SearchCardW;
+            SearchCard.UpdateLayout();
+        }
+
+        var content = SearchCardScroll.ExtentHeight;
+
+        if (needRemeasure)
+        {
+            SearchCard.Width = SearchBoxW;
+            SearchCard.UpdateLayout();
+        }
+
+        // 兜底: 正常情况下布局早就跑过了, 这个分支不会走到
+        if (content <= 0) return SearchBoxH + 320;
+
+        // 上限留出上下各 48 的呼吸空间; 真超了就靠内容区自己的滚动条兜住
+        var max = Math.Max(SearchBoxH + 120, ActualHeight - 96);
+        // 展开高度 = 输入行 + 两框之间的间隙 + 内容框内部高度 + 余量。
+        // 内容框自己那 1px 上下边框会吃掉 2px, 由 SearchCardSlack 兜住(它本来就是留给取整误差的)。
+        return Math.Min(max, SearchBoxH + SearchContentGap + content + SearchCardSlack);
+    }
+
+    /// <summary>
+    /// 内容量变了(热搜到货 / 历史展开收起 / 历史被清空 / 加载占位行出现消失) → 卡片高度要重算。
+    /// </summary>
+    private void OnSearchVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is not ("HasHot" or "HistoryExpanded" or "HasSearchHistory" or "HotError" or "HotLoading"))
+            return;
+        if (!_searchOpen) return;
+        ScheduleOpenHeightSync();
+    }
+
+    /// <summary>
+    /// 安排一次"重新量高度并调卡片"。**必须延后**, 而且有两个独立的理由, 都是实测踩出来的:
+    ///   1. 属性通知发在"数据刚变、容器还没重建"那一刻, 当场量到的 ExtentHeight 还是旧值
+    ///      (表现: 点「展开更多」后卡片没长够, 底部溢出 62px);
+    ///   2. 展开动画的 Completed 也跑在布局之前, 在那里量同样是旧值
+    ///      (表现: 展开高度一直停在"带‘正在获取热搜…’占位行"的那个偏大值, 底部白 42px)。
+    /// 于是统一派到 Loaded 优先级(排在本次布局之后), 再补一次 UpdateLayout 兜底。
+    /// 展开动画还没结束就先记账, 由 OnSearchOpened 收尾补一次 —— 动画中间插一脚会把动画截断。
+    /// </summary>
+    private void ScheduleOpenHeightSync()
+    {
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            if (!_searchOpen) return;
+            if (!_searchInputReady) { _searchNeedRemeasure = true; return; }
+            UpdateLayout();
+            ResizeOpenCard(ComputeOpenHeight());
+        }));
+    }
+
+    /// <summary>
+    /// 已展开的卡片改高度 —— 顶部固定, 只往下长, 所以**不用补偿位移**
+    /// (之前是"中心钉在页面正中", 长高要同步上移 ΔH/2; 现在顶部不动, 那一半补偿就没了)。
+    /// </summary>
+    private void ResizeOpenCard(double newHeight)
+    {
+        var h0 = SearchCard.Height;
+        if (double.IsNaN(h0) || h0 <= 0 || Math.Abs(newHeight - h0) < 1) return;
+
+        SearchCard.BeginAnimation(FrameworkElement.HeightProperty,
+            new DoubleAnimation(h0, newHeight, TimeSpan.FromMilliseconds(SearchResizeMs))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+    }
+
+    /// <summary>
+    /// 订阅 VM 的"用户选定了要搜的词", 顺带把上次离开本页时的卡片状态收干净。
+    /// 导航切页只是把本页从可视树里摘掉, 状态会留着 —— 不在这里收, 切回来卡片还开着。
+    /// </summary>
+    private void HookSearchCard()
+    {
+        var vm = SearchVm;
+        if (!ReferenceEquals(_searchHookedVm, vm))
+        {
+            if (_searchHookedVm != null)
+            {
+                _searchHookedVm.SearchRequested -= OnSearchRequested;
+                _searchHookedVm.PropertyChanged -= OnSearchVmPropertyChanged;
+            }
+            _searchHookedVm = vm;
+            if (_searchHookedVm != null)
+            {
+                _searchHookedVm.SearchRequested += OnSearchRequested;
+                _searchHookedVm.PropertyChanged += OnSearchVmPropertyChanged;
+            }
+        }
+
+        if (_searchOpen || _searchClosing) ResetSearchCard();
+
+        // 顺手把热搜拉起来(有 10 分钟缓存, 每次回首页再调也只是读缓存):
+        // 这样首次点开搜索卡时榜单已经就位, 不会先冒出一行"正在获取热搜…"、等数据到了再把卡片撑高一下。
+        if (vm != null) _ = vm.EnsureHotSearchAsync();
+    }
+
+    private void OnSearchRequested(string keyword)
+    {
+        // 先收卡片再跳: 跳过去之后本页就被摘出可视树, 动画留在半路很难看
+        ResetSearchCard();
+        SvcWindow.Main?.NavigateToSearch(keyword);
+    }
+
+    // ---------------- 打开 / 收起 ----------------
+
+    /// <summary>点右上角搜索框: 先平移到页面正中, 再原地展开成卡片</summary>
+    private void OpenSearchOverlay()
+    {
+        if (_searchOpen || _searchClosing) return;
+        if (ActualWidth <= 0 || ActualHeight <= 0) return;
+
+        _searchOpen = true;
+        // 遮罩先出来: 展开这一段里点页面任何地方都算"点外面"
+        SearchScrim.Visibility = Visibility.Visible;
+        // 展开即视为"选中了搜索框": 占位提示渐隐
+        RefreshSearchPlaceholder();
+        // 热搜是懒加载的: 现在就去拉, 等卡片展开完基本已经就位
+        _ = SearchVm?.EnsureHotSearchAsync();
+        // 高度在变, 这段别让 Auto 闪出滚动条(动画结束再切回 Auto)
+        SearchCardScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
+
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var w1 = SearchCardW;
+        var h1 = ComputeOpenHeight();
+        var expand = SearchExpandMs;
+
+        // 居中对齐: 中心天然不动, 只有宽度/高度在长(顶部固定, 卡片往下长高)。
+        // SearchCardTrans 恒为 0, 不再有 X 平移段。
+        SearchCard.BeginAnimation(FrameworkElement.WidthProperty, Keys(
+            K(0, SearchBoxW), K(expand, w1, ease)));
+
+        var height = Keys(K(0, SearchBoxH), K(expand, h1, ease));
+        height.Completed += (_, _) => OnSearchOpened();
+        SearchCard.BeginAnimation(FrameworkElement.HeightProperty, height);
+
+        // 内容框随展开淡入 —— 底色硬切在动画里很跳。搜索框自己不用淡入: 它一直都在,
+        // 展开只是"旁边多长出一个框"。
+        FadeIn(SearchContentBox, 0, expand);
+        // 框里的内容等长开一点再露, 看着像"被框一点点让出来"
+        FadeIn(SearchCardScroll, (int)(expand * 0.35), (int)(expand * 0.65));
+    }
+
+    private void OnSearchOpened()
+    {
+        _searchInputReady = true;
+        SearchCardScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        // 展开途中热搜到货之类让内容变多了: 这时才补一次高度(动画期间插一脚会把动画截断)
+        if (_searchNeedRemeasure)
+        {
+            _searchNeedRemeasure = false;
+            ScheduleOpenHeightSync();
+        }
+        // 点搜索框的意图就是要打字, 展开完直接把焦点交过去
+        SearchKeywordBox.Focus();
+    }
+
+    /// <summary>收起: 内容先淡出 → 缩回灰条 → 滑回右上角。任何时刻都能调(半路也收得回去)</summary>
+    private void CloseSearchOverlay()
+    {
+        if (!_searchOpen) return;
+        _searchOpen = false;
+        _searchInputReady = false;
+        _searchClosing = true;
+
+        // 拿当前值当起点: 动画被打断时就从这一刻的尺寸收回去, 不跳
+        var w0 = SearchCard.Width > 0 ? SearchCard.Width : SearchBoxW;
+        var h0 = SearchCard.Height > 0 ? SearchCard.Height : SearchBoxH;
+
+        var fade = TimeSpan.FromMilliseconds(SearchFadeOutMs);
+        // From **必须显式给当前值**: 不写 From 时动画从属性**基值**起步, 而基值仍是收起态的 0,
+        // 内容会先"啪"地跳成全不透明再淡出。
+        SearchCardScroll.BeginAnimation(OpacityProperty,
+            new DoubleAnimation(SearchCardScroll.Opacity, 0, fade));
+
+        var hold = SearchFadeOutMs;
+        var end = SearchFadeOutMs + SearchCollapseMs;
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var fadeBack = new TimeSpan(0, 0, 0, 0, SearchCollapseMs);
+
+        SearchContentBox.BeginAnimation(OpacityProperty,
+            new DoubleAnimation(SearchContentBox.Opacity, 0, fadeBack) { BeginTime = fade });
+
+        // 居中对齐: 收起只有尺寸在缩, 没有位移
+        SearchCard.BeginAnimation(FrameworkElement.WidthProperty, Keys(
+            K(0, w0), K(hold, w0), K(end, SearchBoxW, ease)));
+
+        var height = Keys(K(0, h0), K(hold, h0), K(end, SearchBoxH, ease));
+        height.Completed += (_, _) => ResetSearchCard();
+        SearchCard.BeginAnimation(FrameworkElement.HeightProperty, height);
+    }
+
+    /// <summary>
+    /// 恢复成收起态并清掉全部动画。
+    ///
+    /// 必须清动画: 关键帧动画是 HoldEnd 的, 不清的话属性被动画值一直占着 —— 下次打开时
+    /// 关键帧的起点就不再是收起值, 窗口缩放后卡片也回不到收起尺寸。
+    /// </summary>
+    private void ResetSearchCard()
+    {
+        _searchOpen = false;
+        _searchClosing = false;
+        _searchInputReady = false;
+        _searchNeedRemeasure = false;
+
+        SearchCard.BeginAnimation(FrameworkElement.WidthProperty, null);
+        SearchCard.BeginAnimation(FrameworkElement.HeightProperty, null);
+        SearchCardTrans.BeginAnimation(TranslateTransform.XProperty, null);
+        SearchContentBox.BeginAnimation(OpacityProperty, null);
+        SearchCardScroll.BeginAnimation(OpacityProperty, null);
+        SearchCardBgHover.BeginAnimation(OpacityProperty, null);
+        SearchInputRing.BeginAnimation(OpacityProperty, null);
+
+        // 先清动画再落本地值, 否则会被残留的动画值顶掉
+        SearchCard.Width = SearchBoxW;
+        SearchCard.Height = SearchBoxH;
+        SearchCardTrans.X = 0;   // 居中对齐后恒为 0(保留元素本身, 动画代码仍会碰它)
+        SearchContentBox.Opacity = 0;
+        SearchCardScroll.Opacity = 0;
+        SearchCardBgHover.Opacity = 0;
+        SearchInputRing.Opacity = 0;
+        SearchCardScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
+        SearchScrim.Visibility = Visibility.Collapsed;
+        // 卡片收起后占位提示要回来(淡入)
+        RefreshSearchPlaceholder();
+    }
+
+    /// <summary>
+    /// 窗口尺寸变了: 卡片开着也不需要补偿 —— 居中对齐跟着布局走,
+    /// 中心永远在页面正中(保留空实现是给 SizeChanged 的订阅留个语义清晰的落点)。
+    /// </summary>
+    private void RelayoutSearchCard()
+    {
+    }
+
+    // ---------------- 输入框 / 遮罩的交互 ----------------
+
+    /// <summary>
+    /// 收起态: 点卡片(连输入框一起)只当"打开", 不把光标落进输入框 —— 点这个条的意图是要
+    /// 搜索面板, 而不是在这里盲打。展开动画结束时才由 OnSearchOpened 把焦点交过去。
+    /// 展开态不拦: 那时点输入框就该正常定位光标、选中文字。
+    /// </summary>
+    private void OnSearchCardPreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_searchInputReady) return;
+        e.Handled = true;
+        OpenSearchOverlay();
+    }
+
+    /// <summary>
+    /// 聚焦 / 失焦: 搜索框那圈**粉色描边**淡入淡出。
+    /// (2026-09-26 需求一路在变: 先"描边做成光晕", 又"光晕不明显"加强, 最终定回"去除光晕、增加粉色描边" ——
+    ///  现在就是最简单的一圈 2px 描边。)
+    ///
+    /// 为什么用动画而不是样式触发器: 直接切会"啪"地亮起来, 淡入才和卡片其它淡入淡出一套语言。
+    /// From 取当前值, 所以淡出途中再聚焦也不会跳。
+    /// </summary>
+    private void OnSearchKeywordGotFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        FadeSearchRing(true);
+        RefreshSearchPlaceholder();
+    }
+
+    private void OnSearchKeywordLostFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        FadeSearchRing(false);
+        RefreshSearchPlaceholder();
+    }
+
+    private void FadeSearchRing(bool on)
+        => SearchInputRing.BeginAnimation(OpacityProperty,
+            new DoubleAnimation(SearchInputRing.Opacity, on ? SearchRingOpacity : 0,
+                TimeSpan.FromMilliseconds(180))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+
+    // ---------------- 占位提示("搜索你感兴趣的视频") ----------------
+    // 2026-10-03 用户要求: 搜索框里有这句提示, 选中(聚焦)时渐隐消失。
+    // 显隐三条件: 有文字 / 聚焦中 / 卡片展开中 —— 任一成立就藏。
+    // ★ 淡出而不是瞬间消失: 与搜索卡其它淡入淡出是同一套语言。
+
+    /// <summary>占位提示渐隐/渐显的目标透明度。0 = 藏, 1 = 显。</summary>
+    private const double PlaceholderVisibleOpacity = 1.0;
+    private const int PlaceholderFadeMs = 160;
+
+    private void RefreshSearchPlaceholder()
+    {
+        var visible = string.IsNullOrEmpty(SearchKeywordBox.Text)
+                      && !SearchKeywordBox.IsKeyboardFocusWithin
+                      && !_searchOpen;
+        SearchPlaceholder.BeginAnimation(OpacityProperty,
+            new DoubleAnimation(SearchPlaceholder.Opacity, visible ? PlaceholderVisibleOpacity : 0,
+                TimeSpan.FromMilliseconds(PlaceholderFadeMs))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+    }
+
+    /// <summary>悬停加深。2026-09-26 起这层只盖住搜索框自己(事件挂在输入行上), 所以两种状态都要亮。</summary>
+    private void OnSearchCardMouseEnter(object sender, MouseEventArgs e)
+        => SearchCardBgHover.BeginAnimation(OpacityProperty,
+            new DoubleAnimation(SearchCardBgHover.Opacity, 1, TimeSpan.FromMilliseconds(120)));
+
+    private void OnSearchCardMouseLeave(object sender, MouseEventArgs e)
+    {
+        SearchCardBgHover.BeginAnimation(OpacityProperty,
+            new DoubleAnimation(SearchCardBgHover.Opacity, 0, TimeSpan.FromMilliseconds(140)));
+    }
+
+    private void OnSearchScrimClick(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        CloseSearchOverlay();
+    }
+
+    /// <summary>Esc 关掉卡片。挂在卡片上: PreviewKeyDown 是从根往焦点元素隧道的, 焦点在不在输入框都能收到。</summary>
+    private void OnSearchCardPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        e.Handled = true;
+        CloseSearchOverlay();
+    }
+
+    private void OnSearchKeywordKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        e.Handled = true;
+        SearchVm?.RunSearchCommand.Execute(null);
+    }
+
+    private void OnSearchGoClick(object sender, RoutedEventArgs e)
+    {
+        // 收起态点放大镜 = 打开面板(正常流程里这次点击已被卡片自己拦下, 这里只是兜底);
+        // 展开态 = 用当前词搜一次。
+        if (!_searchInputReady) OpenSearchOverlay();
+        else SearchVm?.RunSearchCommand.Execute(null);
+    }
+
+    private void OnHotSearchRowClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: HotSearchItem item }) return;
+        e.Handled = true;
+        SearchVm?.UseHotSearchCommand.Execute(item);
+    }
+
+    // ---------------- 动画小工具 ----------------
+
+    /// <summary>一帧关键帧。给了缓动, 就作用在"上一帧 → 这一帧"这一段上。</summary>
+    private static EasingDoubleKeyFrame K(int ms, double value, IEasingFunction? ease = null)
+    {
+        var frame = new EasingDoubleKeyFrame(value, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(ms)));
+        if (ease != null) frame.EasingFunction = ease;
+        return frame;
+    }
+
+    private static DoubleAnimationUsingKeyFrames Keys(params DoubleKeyFrame[] frames)
+    {
+        var anim = new DoubleAnimationUsingKeyFrames();
+        foreach (var f in frames) anim.KeyFrames.Add(f);
+        return anim;
+    }
+
+    /// <summary>从全透明淡入到 1。每次新建动画实例 —— 同一个实例挂到两处容易出怪问题。</summary>
+    private static void FadeIn(UIElement target, int beginMs, int durationMs)
+    {
+        target.BeginAnimation(OpacityProperty,
+            new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(durationMs))
+            {
+                BeginTime = TimeSpan.FromMilliseconds(beginMs),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+    }
+}
+
+
+/// <summary>
+/// 分帧挂载器: 把"ItemsSource 一挂就在一次布局里同步生成全部卡片容器"拆成
+/// 首屏一批 + 之后每帧一批。
+///
+/// 为什么需要它: 首页四个列表是 ItemsControl + WrapPanel(外面还套了自己的 ScrollViewer),
+/// 这种结构**没有虚拟化**, 挂上几百条数据就同步生成几百张 VideoCard —— 用户点
+/// 热门/排行榜/直播入口时"卡一下"的直接来源。分帧之后点击瞬间只生成一批(约 24 张),
+/// 其余的插在渲染间隙里补, 眼睛看到的是"立刻出来了、多滚几下逐渐铺满", 而不是"卡死一下再全出来"。
+///
+/// 实现要点:
+/// - 读源集合用 **索引** 而不是枚举器: 填充过程中源集合还可能被改(直播 tab 切回会 Clear+重灌、
+///   滚动加载会 Add), ObservableCollection 的枚举器一遇到修改就抛异常, 索引不会。
+/// - 填充中的 Add 不直接进视图(交给游标自然扫到, 保证顺序); 填充完的 Add 直接补
+///   (就是普通的滚动加载, 一次 20 条, 逐个生成容器的负担可以接受)。
+/// - Reset/Remove/Replace/Move 一律全量重同步: 这些只发生在"刷新"语义里, 简单正确优先。
+/// </summary>
+internal sealed class DeferredFill
+{
+    private readonly ItemsControl _list;
+    private readonly IList _source;
+    private readonly ObservableCollection<object> _view = new();
+    private readonly int _chunk;
+    private DispatcherOperation? _pending;
+    private int _index;
+    private bool _completed;
+    private bool _disposed;
+
+    /// <summary>每补完一批(含最后一批)触发一次; 页面用它逐步尝试恢复滚动位置</summary>
+    public event EventHandler? Progress;
+
+    public DeferredFill(ItemsControl list, IEnumerable source, int chunk)
+    {
+        _list = list;
+        _source = (IList)source;
+        _chunk = chunk;
+    }
+
+    public ItemsControl List => _list;
+    public ObservableCollection<object> View => _view;
+
+    /// <summary>还没填完且没被丢弃(此间自动加载要暂停, 否则会拿"内容不够一屏"的假象去拉下一页)</summary>
+    public bool IsActive => !_completed && !_disposed;
+
+    public void Start()
+    {
+        _list.ItemsSource = _view;
+        if (_source is INotifyCollectionChanged ncc) ncc.CollectionChanged += OnSourceChanged;
+        Pump();
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _pending?.Abort();
+        if (_source is INotifyCollectionChanged ncc) ncc.CollectionChanged -= OnSourceChanged;
+    }
+
+    private void OnSourceChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (_disposed) return;
+        switch (e.Action)
+        {
+            case NotifyCollectionChangedAction.Add:
+                // 填充中: 不动, 游标会自然扫到(直接塞会乱序 —— 游标后面还有没扫完的旧数据);
+                // 已填完: 这就是普通的滚动加载/刷新追加, 直接补进视图
+                if (_completed && e.NewItems != null)
+                    foreach (var item in e.NewItems) _view.Add(item!);
+                break;
+            case NotifyCollectionChangedAction.Reset:
+                _index = 0;
+                _completed = false;
+                _rebuildPending = true;    // 换列表整段推迟到下一拍, 见 _rebuildPending 的说明
+                Pump();
+                break;
+            // 列表里没有删除/替换/移动的语义, 兜底走全量重同步
+            default:
+                _index = 0;
+                _completed = false;
+                _rebuildPending = true;
+                Pump();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// "源列表被整体换掉了, 但视图还没换"。
+    ///
+    /// ★★ 为什么不能在这一拍就 Clear + 重填(2026-10-01, "推荐页点刷新后页面自己滑动" 的根):
+    ///   刷新走的是 `RecommendItems.Clear()` → 再逐条 Add。Clear 发 Reset 时**源还是空的**,
+    ///   此时若立刻 `_view.Clear()`, 视图就真的空了一拍 —— 视图一空, ScrollViewer 的内容高度
+    ///   塌到 0, 当前滚动偏移被夹成 0/一小截(探针实测 700 → 140), 滚动条也消失一次;
+    ///   等下一拍数据填回来, 用户的位置已经回不去了(而且夹小之后每一次补页都会把偏移再推一下,
+    ///   看起来就是"页面自己在往下滑")。
+    ///   推迟到下一拍: Clear 与第一批填充落在**同一个 dispatcher 回调**里, 中间没有布局/渲染,
+    ///   内容高度根本不会塌 —— 列表从旧内容直接换成新内容。
+    /// </summary>
+    private bool _rebuildPending;
+
+    /// <summary>
+    /// 把源列表的下一批补进视图, 返回补了几条(Reset 的"先清后填"也在这里合并完成)。
+    ///
+    /// ★★ 关键点: `_view.Clear()` 与随后的第一批填充必须在**同一个调用**里落地。
+    ///   本类原来的 Reset 分支是"当场 Clear + 排一帧再填", 中间隔了一次布局/渲染的机会 ——
+    ///   ScrollViewer 会看到内容高度塌到 0 并把滚动偏移夹小(探针实测 700 → 140),
+    ///   用户的位置就再也回不去了, 表现是"点刷新后页面自己滑走"。
+    /// </summary>
+    private void FillChunk()
+    {
+        if (_disposed) return;
+
+        if (_rebuildPending)
+        {
+            _rebuildPending = false;
+            _view.Clear();
+        }
+
+        var added = 0;
+        while (added < _chunk && _index < _source.Count)
+        {
+            _view.Add(_source[_index]!);
+            _index++;
+            added++;
+        }
+        if (_index >= _source.Count) _completed = true;
+        if (added > 0) Progress?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void Pump()
+    {
+        if (_disposed || _completed || _pending != null) return;
+        // Background 优先级: 让输入和渲染先走 —— 每一批都插在"用户还能操作"的间隙里
+        _pending = _list.Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        {
+            _pending = null;
+            FillChunk();
+            if (!_completed) Pump();   // 还有存货, 继续排下一帧
+        });
+    }
+}

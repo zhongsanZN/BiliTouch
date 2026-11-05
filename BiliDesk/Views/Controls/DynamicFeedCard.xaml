@@ -1,0 +1,583 @@
+<UserControl x:Class="BiliDesk.Views.Controls.DynamicFeedCard"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BiliDesk.Views.Controls"
+             xmlns:helpers="clr-namespace:BiliDesk.Helpers"
+             Background="Transparent" Focusable="True" IsTabStop="True">
+    <!--
+        动态混合流的一条(2026-11-04)。
+
+        对标官方手机端: 一条动态 = 抬头(头像+昵称+时间) + 正文 + 内容区 + 互动行。
+        内容区按 DynamicItem.Kind 换模板:
+          · 视频   → 左封面右标题(点击播放)
+          · 图文   → 图片九宫格(1 张走单图, 2/4 张两列, 其余三列)
+          · 纯文字 → 只有正文
+          · 转发   → 正文(转发理由) + 原动态引用框
+          · 专栏   → 左封面右标题(点击进专栏)
+          · 直播   → 左封面右标题(点击进直播间)
+
+        ★ 为什么一个控件内切换而不是每种类型一个控件:
+          抬头、正文、互动行三者完全一样, 拆开要复制三遍且容易漂移;
+          只有内容区不同, 用一个 ContentControl + DataTemplateSelector 最省。
+    -->
+    <UserControl.Resources>
+        <!-- ===================== 图片九宫格 ===================== -->
+        <DataTemplate x:Key="DynPicturesTemplate">
+            <ItemsControl ItemsSource="{Binding Pictures}" HorizontalAlignment="Stretch"
+                          x:Name="PicHost">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <controls:DynamicPicturePanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <!-- ★ 2026-11-04: 图片可点(官方是点图进看图器)。
+                             Cursor=Hand + MouseLeftButtonUp 转发给卡片 code-behind。
+                             高度由 DynamicPicturePanel.TileHeight 决定(单图 180 / 多图 96)。 -->
+                        <Border Margin="2" CornerRadius="6" ClipToBounds="True"
+                                Cursor="Hand"
+                                MouseLeftButtonUp="OnPictureClick"
+                                Background="{DynamicResource PlaceholderBrush}"
+>
+                            <Border helpers:Cover.Source="{Binding Url}" />
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </DataTemplate>
+
+        <!-- ===================== 视频附加卡 ===================== -->
+        <!-- ★ 2026-11-04 改成官方那种"大封面 + 下方标题"布局:
+             原来是小缩略图(150×84)在左、标题在右, 视觉上像一条列表项, 用户说"预览不了视频"。
+             官方 PC 客户端的动态里视频是**整块封面预览**(约 16:9, 占满卡片宽度),
+             标题/UP/播放数在封面下方 —— 这样一眼就能看出视频内容。
+
+             ★★★ 2026-11-04 修"打开动态页卡死"(UI 线程单核跑满, 不是等网络):
+             原来是 `<Border helpers:Cover.Source=... Height="220" />` —— **只给高度、不给宽度**。
+             在 StackPanel 里这种 Border 的**期望宽度由内容(ImageBrush 位图)决定**, 于是形成闭环:
+                 贴图 → 期望尺寸变 → SizeChanged → Cover 判定"显示需求 > 已解码宽度" → 重新解码
+                      → 再贴图 → 期望尺寸又变 → …
+             CPU 一直跑在 Measure 上, 页面永远出不来。
+             复现/定位过程见 tests/TouchTests/CardHangProbe.cs 与 artifacts/card-hang*.log。
+
+             修法: 让封面的宽高**都不由位图决定** —— 用 Viewbox 固定 16:9 的可用框,
+             位图只负责填满这个框(Stretch=UniformToFill)。这样贴图不会反过来改变布局尺寸,
+             SizeChanged 只会在窗口真的变宽时发生一次。
+             ★ 别改回"只写 Height": 首页卡片墙不会卡是因为 CardWall 显式给了 ItemWidth,
+               动态卡没有那层约束, 一写死高度就必然复发。 -->
+        <DataTemplate x:Key="DynVideoTemplate">
+            <Border CornerRadius="8" ClipToBounds="True" Cursor="Hand"
+                    Background="{DynamicResource ControlFillHoverBrush}"
+                    MouseLeftButtonUp="OnContentClick">
+                <StackPanel>
+                    <!-- 封面: 占满卡片宽度, 16:9。
+                         ★ 高度写在外层(固定), 内层那条挂 Cover.Source 的 Border **不写任何尺寸**:
+                           它的尺寸由外层 Grid 决定, 位图只往里填。
+                         ★ 曾经写成内层 Border 只给 Height="220" —— 那会让"期望宽度由位图决定",
+                           贴上封面后尺寸变、又触发重解码, UI 线程在 Measure 里自旋, 整页卡死。
+                           详见 tests/TouchTests/CardHangProbe.cs。 -->
+                    <!-- 封面: 高度 = 内容宽度 / 视频自己的比例(VideoAspect, 来自 archive.dimension)。
+                         ★★★ 为什么不能用固定 220 高 + 铺满:
+                           卡片内容宽约 720, 16:9 的封面本该高 405; 框只有 220 时,
+                           "铺满"只能按宽度放大再裁掉上下 —— 实测就是只看到画面中间一条。
+                           让框**按封面比例定高**, 才是既不裁也不留边的做法。
+                         ★ 拿不到 dimension 时 VideoAspect 缺省 16:9。
+                         ★ 不要给挂 Cover.Source 的那条 Border 写自己的 Width/Height:
+                           那会让"期望尺寸由位图决定" → 贴图 → 尺寸变 → 重解码 → 自旋 → 整页卡死
+                           (见 CardHangProbe.cs)。高度只能写在外层这个框上。
+                         ★ 那条 Border 必须带 Background(哪怕 Transparent):
+                           空 Border 在 Stretch 布局里 ActualWidth 可能是 0, 而 Cover.LoadAsync
+                           会先等"真实宽度"—— 等不到就永远不贴图(封面一直停在占位底色)。 -->
+                    <!-- 封面: 宽度撑满卡片, 高度 = 宽度 / 视频比例(VideoAspect)。
+                         ★ 用 AspectPanel 而不是 MultiBinding + Converter:
+                           Converter 那条路第一次布局时 ActualWidth 还是 0, 算出高度 0,
+                           里面所有角标都被裁掉(实测: 时长/弹幕数不显示就是这个)。
+                           AspectPanel 在 MeasureOverride 里直接用可用宽度算, 一轮定死。
+                         ★ 更不能给挂 Cover.Source 的 Border 写自己的 Width/Height ——
+                           那会让尺寸由位图决定, 贴图/重解码/再贴图形成自旋, 整页卡死
+                           (见 CardHangProbe.cs)。
+                         ★ 那个 Border 必须带 Background(哪怕 Transparent):
+                           空 Border 在 Stretch 布局里 ActualWidth 可能是 0, 而 Cover.LoadAsync
+                           会先等"真实宽度"—— 等不到就永远不贴图(封面停在占位底色)。 -->
+                    <Border x:Name="CoverFrame" CornerRadius="6" ClipToBounds="True" Margin="0,0,0,8"
+                            HorizontalAlignment="Stretch"
+                            Background="{DynamicResource PlaceholderBrush}">
+                        <controls:AspectPanel Aspect="{Binding VideoAspect}">
+                            <Border helpers:Cover.Source="{Binding Video.Cover}"
+                                    helpers:Cover.Fill="True"
+                                    Background="Transparent"
+                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+
+                            <!-- 左上: 类型标(投稿视频 / 合作视频 / 直播回放) -->
+                            <Border HorizontalAlignment="Left" VerticalAlignment="Top"
+                                    Margin="8,8,0,0" CornerRadius="4" Padding="6,2"
+                                    Background="{DynamicResource AccentBrush}"
+                                    Visibility="{Binding HasPubAction, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="{Binding PubAction}" FontSize="10.5" FontWeight="SemiBold"
+                                           Foreground="White" />
+                            </Border>
+
+                            <!-- ===== 左下: 播放量 + 弹幕数 =====
+                                 ★ 2026-11-04: 完全沿用首页 VideoCard 的那一套
+                                   (VideoCard.xaml 的 StatsBadge) —— 同一个
+                                   DurationBadgeBackgroundBrush、同样的圆角/内边距/图标/字号、
+                                   同样是"两个独立胶囊 + 拿不到就整块藏起来"。
+                                   为什么不自己拼一句 "6播放 · 3弹幕": 首页已经是这个视觉,
+                                   动态页另造一套会让同一个客户端里出现两种数据样式,
+                                   而且那个"·"分隔在数字很长时会显得很挤。 -->
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                                        Margin="8,0,0,8">
+                                <Border CornerRadius="4" Padding="6,2"
+                                        Background="{DynamicResource DurationBadgeBackgroundBrush}"
+                                        Visibility="{Binding ViewCountText, Converter={StaticResource StrToVis}}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE768;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                                   FontSize="10" Foreground="#F2FFFFFF" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding ViewCountText, Mode=OneWay}" FontSize="11"
+                                                   Foreground="#F2FFFFFF" Margin="3,0,0,0" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Border>
+                                <Border CornerRadius="4" Padding="6,2" Margin="4,0,0,0"
+                                        Background="{DynamicResource DurationBadgeBackgroundBrush}"
+                                        Visibility="{Binding DanmakuCountText, Converter={StaticResource StrToVis}}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE90A;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                                   FontSize="10" Foreground="#F2FFFFFF" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding DanmakuCountText, Mode=OneWay}" FontSize="11"
+                                                   Foreground="#F2FFFFFF" Margin="3,0,0,0" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- 右下: 时长(与首页同款: 同一个背景刷、同样 Padding="6,2"、FontSize=11) -->
+                            <Border HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                    Margin="0,0,8,8" CornerRadius="4" Padding="6,2"
+                                    Background="{DynamicResource DurationBadgeBackgroundBrush}"
+                                    Visibility="{Binding DurationText, Converter={StaticResource StrToVis}}">
+                                <TextBlock Text="{Binding DurationText}" Foreground="White" FontSize="11" />
+                            </Border>
+                        </controls:AspectPanel>
+                    </Border>
+                    <StackPanel Margin="2,0,2,0">
+                        <TextBlock Text="{Binding Video.Title}" FontSize="13.5" FontWeight="SemiBold"
+                                   TextWrapping="Wrap" MaxHeight="42" TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                        <!-- 播放数已并入封面左下角的 StatText(官方版式),
+                             不再在标题下面单独飘一行数字 -->
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <!-- ===================== 专栏附加卡 ===================== -->
+        <DataTemplate x:Key="DynArticleTemplate">
+            <Border CornerRadius="8" ClipToBounds="True" Cursor="Hand"
+                    Background="{DynamicResource ControlFillHoverBrush}"
+                    MouseLeftButtonUp="OnContentClick">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="150" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Height="84" CornerRadius="6" ClipToBounds="True"
+                            Background="{DynamicResource PlaceholderBrush}">
+                        <Border helpers:Cover.Source="{Binding ArticleCover}" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding ArticleTitle}" FontSize="13" FontWeight="SemiBold"
+                                   TextWrapping="Wrap" MaxHeight="40" TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                        <TextBlock Text="专栏" FontSize="11" Margin="0,6,0,0"
+                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <!-- ===================== 直播附加卡 ===================== -->
+        <DataTemplate x:Key="DynLiveTemplate">
+            <Border CornerRadius="8" ClipToBounds="True" Cursor="Hand"
+                    Background="{DynamicResource ControlFillHoverBrush}"
+                    MouseLeftButtonUp="OnContentClick">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="150" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Height="84" CornerRadius="6" ClipToBounds="True"
+                            Background="{DynamicResource PlaceholderBrush}">
+                        <Border helpers:Cover.Source="{Binding ArticleCover}" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Text}" FontSize="13" FontWeight="SemiBold"
+                                   TextWrapping="Wrap" MaxHeight="40" TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                        <TextBlock Text="直播中" FontSize="11" Margin="0,6,0,0"
+                                   Foreground="{DynamicResource AccentTextBrush}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <!-- ===================== 转发引用框 ===================== -->
+        <DataTemplate x:Key="DynForwardTemplate">
+            <Border CornerRadius="8" Padding="10" Cursor="Hand"
+                    Background="{DynamicResource ControlFillHoverBrush}"
+                    MouseLeftButtonUp="OnContentClick">
+                <StackPanel>
+                    <!-- 原动态已删除 -->
+                    <TextBlock Text="原动态已删除" FontSize="12"
+                               Foreground="{DynamicResource TextTertiaryBrush}"
+                               Visibility="{Binding OriginalDeleted, Converter={StaticResource BoolToVis}}" />
+                    <!-- 原动态存在: 作者 + 正文 + 图 -->
+                    <StackPanel Visibility="{Binding OriginalDeleted, Converter={StaticResource InvBoolToVis}}">
+                        <TextBlock Text="{Binding Original.AuthorName}" FontSize="12" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource AccentTextBrush}" />
+                        <TextBlock Text="{Binding Original.Text}" TextWrapping="Wrap" FontSize="12.5"
+                                   Margin="0,4,0,0" MaxHeight="120" TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   Visibility="{Binding Original.HasText, Converter={StaticResource BoolToVis}}" />
+                        <ContentControl Content="{Binding Original}" Margin="0,8,0,0"
+                                        ContentTemplate="{StaticResource DynPicturesTemplate}"
+                                        Visibility="{Binding Original.HasPictures, Converter={StaticResource BoolToVis}}" />
+                        <!-- 原动态是视频时再挂一张小卡 -->
+                        <Border CornerRadius="6" Margin="0,8,0,0" Padding="8" Cursor="Hand"
+                                Background="{DynamicResource CardBackgroundBrush}"
+                                MouseLeftButtonUp="OnContentClick"
+                                Visibility="{Binding Original.Video, Converter={StaticResource NotNullToVis}}">
+                            <StackPanel Orientation="Horizontal">
+                                <Border Width="72" Height="41" CornerRadius="4" ClipToBounds="True"
+                                        Background="{DynamicResource PlaceholderBrush}">
+                                    <Border helpers:Cover.Source="{Binding Original.Video.Cover}" />
+                                </Border>
+                                <TextBlock Text="{Binding Original.Video.Title}" FontSize="12"
+                                           Margin="8,0,0,0" VerticalAlignment="Center"
+                                           TextWrapping="Wrap" MaxHeight="36" TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <!-- ===================== 投票(2026-11-04, 按实测结构重写) =====================
+             ★ 实测: 投票在 module_dynamic.**additional**.vote, 且卡片节点**不含 options** ——
+               选项要按 vote_id 再查 /x/vote/vote_info。所以这里有三种状态:
+                 1. 正在拉选项(OptionsLoading) → 转圈
+                 2. 拉失败(OptionsFailed)     → 一行提示, 卡片主体照常显示
+                 3. 有选项 → 画选项列表
+             ★ 百分比只在"我本次投过"之后才显示 —— 服务端不下发"我投过没有",
+               没投就剧透结果与官方行为不一致。 -->
+        <DataTemplate x:Key="DynVoteTemplate">
+            <Border CornerRadius="8" Padding="12" Background="{DynamicResource ControlFillHoverBrush}">
+                <StackPanel>
+                    <TextBlock Text="{Binding Vote.Title}" FontSize="13.5" FontWeight="SemiBold"
+                               TextWrapping="Wrap" Foreground="{DynamicResource TextPrimaryBrush}" />
+
+                    <!-- 选项正在拉 -->
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0"
+                                Visibility="{Binding Vote.OptionsLoading, Converter={StaticResource BoolToVis}}">
+                        <controls:LoadingRing Width="16" Height="16" />
+                        <TextBlock Text="正在读取投票选项…" FontSize="12" Margin="8,0,0,0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                    </StackPanel>
+
+                    <!-- 选项拉失败 -->
+                    <TextBlock Text="{Binding Vote.OptionsError}" FontSize="12" Margin="0,10,0,0"
+                               TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextTertiaryBrush}"
+                               Visibility="{Binding Vote.OptionsFailed, Converter={StaticResource BoolToVis}}" />
+
+                    <!-- 选项列表 -->
+                    <ItemsControl ItemsSource="{Binding Vote.Options}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Click="OnVoteOptionClick" Margin="0,0,0,6" HorizontalContentAlignment="Stretch"
+                                        Style="{StaticResource SubtleButtonStyle}" Padding="10,8"
+                                        IsEnabled="{Binding DataContext.Vote.CanVote,
+                                                    RelativeSource={RelativeSource AncestorType=ItemsControl}}">
+                                    <Grid>
+                                        <!-- 已投: 底下铺一条百分比色带。
+                                             ★ 用 RenderTransform ScaleX 而不是绑宽度: 卡片宽度随窗口/列数变化,
+                                               绑定像素值算不对; ScaleX 是相对满宽的缩放, 天然跟手。 -->
+                                        <Border HorizontalAlignment="Stretch" CornerRadius="5"
+                                                Background="{DynamicResource AccentSoftFillStrongBrush}"
+                                                RenderTransformOrigin="0,0.5"
+                                                Visibility="{Binding DataContext.Vote.VotedThisSession,
+                                                             RelativeSource={RelativeSource AncestorType=ItemsControl},
+                                                             Converter={StaticResource BoolToVis}}">
+                                            <Border.RenderTransform>
+                                                <ScaleTransform ScaleX="{Binding Fraction}" ScaleY="1" />
+                                            </Border.RenderTransform>
+                                        </Border>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Text}" FontSize="13" TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource TextPrimaryBrush}" />
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0"
+                                                        VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding CountText}" FontSize="11.5"
+                                                           Foreground="{DynamicResource TextTertiaryBrush}" />
+                                                <TextBlock Text="{Binding PercentText}" FontSize="12" Margin="8,0,0,0"
+                                                           Foreground="{DynamicResource AccentTextBrush}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Grid>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                        <TextBlock Text="{Binding Vote.TotalText}" FontSize="11.5"
+                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                        <TextBlock Text=" · " FontSize="11.5"
+                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                        <TextBlock Text="{Binding Vote.StateText}" FontSize="11.5"
+                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                        <TextBlock Text=" · 已参与" FontSize="11.5"
+                                   Visibility="{Binding Vote.VotedThisSession, Converter={StaticResource BoolToVis}}"
+                                   Foreground="{DynamicResource AccentTextBrush}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <!-- ===================== 附加卡片(common, 2026-11-04) =====================
+             活动 / 商品 / 番剧 / 课程 / 直播预告统一长这样: 左封面 + 右标题描述 + 行动按钮。
+             ★ 没封面时不画左栏(纯文字的公告类活动卡就是这种), 不能让 150px 空着。 -->
+        <DataTemplate x:Key="DynCommonTemplate">
+            <Border CornerRadius="8" ClipToBounds="True" Cursor="Hand"
+                    Background="{DynamicResource ControlFillHoverBrush}"
+                    MouseLeftButtonUp="OnContentClick">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Width="150" Height="84" CornerRadius="6" ClipToBounds="True"
+                            Margin="8" Background="{DynamicResource PlaceholderBrush}"
+                            Visibility="{Binding Common.HasCover, Converter={StaticResource BoolToVis}}">
+                        <Border helpers:Cover.Source="{Binding Common.Cover}" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="10,10,12,10" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <Border CornerRadius="3" Padding="5,1" Background="{DynamicResource AccentSoftFillBrush}"
+                                    Visibility="{Binding Common.Badge, Converter={StaticResource StrToVis}}">
+                                <TextBlock Text="{Binding Common.Badge}" FontSize="10"
+                                           Foreground="{DynamicResource AccentTextBrush}" />
+                            </Border>
+                            <TextBlock Text="{Binding Common.SourceName}" FontSize="11" Margin="6,0,0,0"
+                                       VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextTertiaryBrush}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding Common.Title}" FontSize="13" FontWeight="SemiBold"
+                                   Margin="0,5,0,0" TextWrapping="Wrap" MaxHeight="40"
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                        <TextBlock Text="{Binding Common.Desc}" FontSize="11.5" Margin="0,4,0,0"
+                                   TextWrapping="Wrap" MaxHeight="34" TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource TextTertiaryBrush}"
+                                   Visibility="{Binding Common.Desc, Converter={StaticResource StrToVis}}" />
+                        <Button Content="{Binding Common.ButtonText}" HorizontalAlignment="Left" Margin="0,6,0,0"
+                                Padding="12,4" Style="{StaticResource SubtleButtonStyle}"
+                                Visibility="{Binding Common.HasButton, Converter={StaticResource BoolToVis}}"
+                                Click="OnCommonButtonClick" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <controls:DynamicContentSelector x:Key="DynamicContentSelector"
+                                         VideoTemplate="{StaticResource DynVideoTemplate}"
+                                         PictureTemplate="{StaticResource DynPicturesTemplate}"
+                                         ForwardTemplate="{StaticResource DynForwardTemplate}"
+                                         ArticleTemplate="{StaticResource DynArticleTemplate}"
+                                         LiveTemplate="{StaticResource DynLiveTemplate}"
+                                         VoteTemplate="{StaticResource DynVoteTemplate}"
+                                         CommonTemplate="{StaticResource DynCommonTemplate}" />
+    </UserControl.Resources>
+
+    <!-- ★ 整卡可点(2026-11-04): 官方客户端点一下动态就进详情(完整内容 + 全部评论)。
+         子元素(头像/视频卡/图片/按钮)先处理并设 Handled, 所以它们各自的动作不受影响。 -->
+    <Border Background="{DynamicResource CardBackgroundBrush}"
+            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+            CornerRadius="10" Padding="14,12" Margin="8,6"
+            HorizontalAlignment="Stretch"
+            Cursor="Hand" MouseLeftButtonUp="OnCardClick">
+        <Border.ContextMenu>
+            <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                <MenuItem Header="复制正文" Click="OnCopyBody" />
+                <MenuItem Header="复制动态链接" Click="OnCopyLink" />
+                <Separator />
+                <MenuItem Header="屏蔽此 UP 主" Click="OnBlockUp" MinHeight="44" />
+                <MenuItem Header="屏蔽此视频标题" Click="OnBlockTitle" MinHeight="44" Visibility="{Binding HasVideo, Converter={StaticResource BoolToVis}}" />
+            </ContextMenu>
+        </Border.ContextMenu>
+        <StackPanel>
+            <!-- ===== 抬头: 头像 + 昵称 + 时间 ===== -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Width="34" Height="34" CornerRadius="17"
+                        Background="{DynamicResource AccentSoftFillBrush}"
+                        ClipToBounds="True" VerticalAlignment="Top"
+                        Cursor="Hand" MouseLeftButtonUp="OnAuthorClick">
+                    <Border helpers:Cover.Source="{Binding AuthorFace}" />
+                </Border>
+                <StackPanel Grid.Column="1" Margin="9,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding AuthorName}" FontSize="13" FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource AccentTextBrush}"
+                               Cursor="Hand" MouseLeftButtonUp="OnAuthorClick" />
+                    <TextBlock Text="{Binding PubTimeText}" FontSize="11" Margin="0,2,0,0"
+                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                </StackPanel>
+                <Button Grid.Column="2" Content="⋯" Width="44" Height="44" Padding="0" Style="{StaticResource SubtleButtonStyle}" Click="OnMoreClick" ToolTip="更多操作" AutomationProperties.Name="动态更多操作" />
+            </Grid>
+
+            <TextBlock Text="{Binding ContentTitle}" FontSize="15" FontWeight="SemiBold"
+                       TextWrapping="Wrap" Margin="0,9,0,0" Foreground="{DynamicResource TextPrimaryBrush}"
+                       Visibility="{Binding HasContentTitle, Converter={StaticResource BoolToVis}}" />
+            <!-- ===== 正文(转发理由 / 图文正文 / 纯文字) =====
+                 ★ 2026-11-04 换成 DynamicRichText: 话题 / @提及 / 表情要上色与可点,
+                   TextBlock 只能显示纯文本。没给 rich_text_nodes 时自动退回 Text。 -->
+            <controls:DynamicRichText x:Name="BodyText" Nodes="{Binding RichNodes}" Fallback="{Binding Text}"
+                                      NodeActivated="OnRichNodeActivated"
+                                      TextWrapping="Wrap" FontSize="13.5" Margin="0,9,0,0"
+                                      LineHeight="21" MaxHeight="180"
+                                      Foreground="{DynamicResource TextPrimaryBrush}"
+                                      LinkForeground="{DynamicResource AccentTextBrush}"
+                                      Visibility="{Binding HasText, Converter={StaticResource BoolToVis}}" />
+
+            <!-- ===== 内容区: 按类型切换 ===== -->
+            <!-- ★★★ 2026-11-04 修"卡片上直接印着 BiliDesk.Models.DynamicItem":
+                 模板选择器对纯文字/未知类型返回 null, 而 ContentControl 在选中 null 模板时
+                 会走**默认模板** —— 没有 ContentTemplate 就用 `Content.ToString()` 渲染。
+                 DynamicItem 没重写 ToString, 于是把类型名打了出来。
+                 修法: 用 Visibility 绑 HasAttachedCard 整块藏掉, 让选择器返回 null 时
+                 **根本不参与布局**, 从源头断掉默认渲染。
+                 (不要改成"给一个空 DataTemplate"—— 那会留下 Margin 与空隙。) -->
+            <ContentControl Content="{Binding}" Margin="0,9,0,0"
+                            Visibility="{Binding HasAttachedCard, Converter={StaticResource BoolToVis}}"
+                            ContentTemplateSelector="{StaticResource DynamicContentSelector}" />
+
+            <!-- ===== 热评(B 站 PC 客户端把评论直接挂在动态下面) ===== -->
+            <ItemsControl ItemsSource="{Binding TopComments}" Margin="0,10,0,0"
+                          >
+                <ItemsControl.Style>
+                    <Style TargetType="ItemsControl">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasComments}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger>
+                            <DataTrigger Binding="{Binding IsDetail, RelativeSource={RelativeSource AncestorType=controls:DynamicFeedCard}}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ItemsControl.Style>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{DynamicResource ControlFillHoverBrush}"
+                                CornerRadius="6" Padding="9,7" Margin="0,0,0,5">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding UserName}" FontSize="11.5"
+                                               FontWeight="SemiBold"
+                                               Foreground="{DynamicResource AccentTextBrush}"
+                                               TextTrimming="CharacterEllipsis" MaxWidth="160" />
+                                    <TextBlock Text="  ·  " FontSize="11.5"
+                                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                                    <TextBlock Text="{Binding LikeText}" FontSize="11"
+                                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="12.5"
+                                           Margin="0,3,0,0" MaxHeight="60"
+                                           TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- ===== 互动行(2026-11-04 改为图标 + 数字) =====
+                 照官方手机版: [转发图标 N] [评论图标 N] [点赞图标 N] 三等分,
+                 数字贴图标右侧; 点赞过整组变强调色; 复制链接靠右固定宽。
+                 ★ 为什么最后一列用固定 44 而不是 Auto: 前三列是 *, Auto 会让它们
+                   平分"剩余"空间而最后一列贴边, 视觉上三个图标位置不匀。
+                 ★ 数字为 0 时返回空串 —— 一排 "0" 只会显得没内容(见 XXXCountText)。 -->
+            <Grid Margin="0,10,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Button Grid.Column="0" Click="OnRepostClick" ToolTip="转发这条动态"
+                        Style="{StaticResource SubtleButtonStyle}" Padding="0,7"
+                        HorizontalContentAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <Path Data="{StaticResource ShareIconGeometry}" Width="18" Height="18" Stretch="Uniform" Fill="Transparent" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.7" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding ForwardCountText}" FontSize="12.5" Margin="6,0,0,0"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="1" Click="OnCommentClick" ToolTip="查看全部评论"
+                        Style="{StaticResource SubtleButtonStyle}" Padding="0,7"
+                        HorizontalContentAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE8F2;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                   FontSize="15" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding CommentCountText}" FontSize="12.5" Margin="6,0,0,0"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="2" Click="OnLikeClick" IsEnabled="{Binding CanLike}" ToolTip="点赞"
+                        Padding="0,7" HorizontalContentAlignment="Center">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsLiked}" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                    <StackPanel Orientation="Horizontal">
+                        <!-- ★ 用 B 站官方的点赞几何(LikeIconGeometry, 见 Themes/Icons.xaml),
+                             与播放器操作栏同一个图形 —— 不再用 Segoe 字体图标(E8E1)。
+                             字体图标和官方图形是两套线条语言, 放在同一个客户端里一眼能看出不一致。
+                             填色走 Fill(几何是纯填充图形, 不是描边), 已赞时整组变强调色。 -->
+                        <Path Data="{StaticResource LikeIconGeometry}" Width="20" Height="20"
+                              Stretch="Uniform" VerticalAlignment="Center">
+                            <Path.Style>
+                                <Style TargetType="Path">
+                                    <Setter Property="Fill" Value="{DynamicResource TextSecondaryBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLiked}" Value="True">
+                                            <Setter Property="Fill" Value="{DynamicResource AccentTextBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Path.Style>
+                        </Path>
+                        <TextBlock Text="{Binding LikeCountText}" FontSize="12.5" Margin="6,0,0,0"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
+
+            </Grid>
+        </StackPanel>
+    </Border>
+</UserControl>

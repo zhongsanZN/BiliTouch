@@ -1,0 +1,67 @@
+<UserControl x:Class="BiliDesk.Views.Pages.CachePage"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:helpers="clr-namespace:BiliDesk.Helpers" Background="{DynamicResource AppBackgroundBrush}">
+ <Grid>
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+  <Grid Margin="36,4,36,12">
+   <StackPanel>
+    <TextBlock Text="离线缓存" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}"/>
+    <TextBlock Text="{Binding Summary}" Margin="0,8,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
+   </StackPanel>
+   <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+   <Button Content="导入已有视频" Command="{Binding ImportCommand}" Style="{StaticResource SubtleButtonStyle}" MinHeight="44" Margin="0,0,8,0"/>
+   <Button Content="打开缓存文件夹" Command="{Binding OpenFolderCommand}" Style="{StaticResource SubtleButtonStyle}" HorizontalAlignment="Right" VerticalAlignment="Center" MinHeight="44"/>
+   </StackPanel>
+  </Grid>
+  <Grid Grid.Row="1" Margin="36,0,36,12">
+   <StackPanel>
+    <StackPanel Orientation="Horizontal">
+     <RadioButton Content="已缓存" IsChecked="{Binding IsCompletedTab}" GroupName="OfflineState" Style="{StaticResource SettingsTabStyle}"/>
+     <RadioButton Content="正在缓存" IsChecked="{Binding IsDownloadingTab}" GroupName="OfflineState" Style="{StaticResource SettingsTabStyle}" Margin="8,0,0,0"/>
+    </StackPanel>
+    <TextBlock Text="{Binding CacheDirectory,StringFormat=缓存位置：{0}}" Margin="0,10,0,0" Foreground="{DynamicResource TextTertiaryBrush}" TextWrapping="Wrap"/>
+   </StackPanel>
+  </Grid>
+  <DockPanel Grid.Row="2" Margin="36,0,36,24">
+   <Border DockPanel.Dock="Top" Background="{DynamicResource CardBackgroundBrush}" Padding="12" Margin="0,0,0,12" Visibility="{Binding IsEditMode,Converter={StaticResource BoolToVis}}">
+    <WrapPanel><TextBlock Text="{Binding SelectedText}" VerticalAlignment="Center" Margin="0,0,16,0" Foreground="{DynamicResource TextPrimaryBrush}"/>
+     <Button Content="全选" Command="{Binding SelectAllCommand}" Style="{StaticResource SubtleButtonStyle}" MinHeight="44"/>
+     <Button Content="删除所选" Command="{Binding DeleteSelectedCommand}" Style="{StaticResource DangerButtonStyle}" MinHeight="44" Margin="8,0"/>
+     <Button Content="完成" Command="{Binding ExitEditCommand}" Style="{StaticResource SubtleButtonStyle}" MinHeight="44"/>
+    </WrapPanel>
+   </Border>
+   <Grid>
+    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding ShowEmpty,Converter={StaticResource BoolToVis}}">
+     <TextBlock Text="{Binding EmptyText}" FontSize="18" HorizontalAlignment="Center" Foreground="{DynamicResource TextPrimaryBrush}"/>
+     <TextBlock Text="在视频菜单中选择「缓存视频」，完成后可在这里离线观看。" Margin="0,12" TextWrapping="Wrap" MaxWidth="400" TextAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}"/>
+    </StackPanel>
+    <TextBlock Text="{Binding Error}" TextWrapping="Wrap" Foreground="{DynamicResource DangerTextBrush}" Visibility="{Binding Error,Converter={StaticResource StrToVis}}"/>
+    <ListBox x:Name="CacheList" ItemsSource="{Binding VisibleItems}" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.IsVirtualizingWhenGrouping="True" VirtualizingPanel.VirtualizationMode="Recycling" ScrollViewer.CanContentScroll="True">
+     <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,0,0,10"/></Style></ListBox.ItemContainerStyle>
+     <ListBox.GroupStyle><GroupStyle><GroupStyle.HeaderTemplate><DataTemplate>
+      <StackPanel Margin="0,14,0,12"><TextBlock Text="{Binding Items[0].Title}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="{DynamicResource TextPrimaryBrush}"/>
+       <TextBlock Text="{Binding ItemCount,StringFormat={}{0} 集}" Margin="0,4,0,0" Foreground="{DynamicResource TextTertiaryBrush}"/></StackPanel>
+     </DataTemplate></GroupStyle.HeaderTemplate></GroupStyle></ListBox.GroupStyle>
+     <ListBox.ItemTemplate><DataTemplate>
+      <Border Background="{DynamicResource CardBackgroundBrush}" CornerRadius="12" Padding="14" MouseLeftButtonUp="OnRowClick">
+       <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <Border Width="136" Height="78" CornerRadius="8" Background="{DynamicResource PlaceholderBrush}"><Border CornerRadius="8" helpers:Cover.Source="{Binding Cover}"/></Border>
+        <StackPanel Grid.Column="1" Margin="16,0,14,0" VerticalAlignment="Center">
+         <TextBlock Text="{Binding PartTitle,StringFormat=分P：{0}}" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="{DynamicResource TextPrimaryBrush}"/>
+         <TextBlock Text="{Binding Author}" Margin="0,5,0,0" Foreground="{DynamicResource TextTertiaryBrush}"/>
+         <TextBlock Text="{Binding QualityText}" Margin="0,4,0,0" Foreground="{DynamicResource TextTertiaryBrush}"/>
+         <TextBlock Text="{Binding StatusText}" Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}"/>
+         <ProgressBar Value="{Binding Percent,Mode=OneWay}" Maximum="100" Height="3" Margin="0,8,0,0" Visibility="{Binding IsComplete,Converter={StaticResource InvBoolToVis}}"/>
+        </StackPanel>
+        <StackPanel Grid.Column="2" VerticalAlignment="Center">
+         <CheckBox IsChecked="{Binding IsSelected}" Content="选择" MinHeight="44" Click="OnSelectionClick" Visibility="{Binding DataContext.IsEditMode,RelativeSource={RelativeSource AncestorType=UserControl},Converter={StaticResource BoolToVis}}"/>
+         <Button Content="{Binding ActionText}" Command="{Binding DataContext.ActionCommand,RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Style="{StaticResource SubtleButtonStyle}" MinHeight="44" Visibility="{Binding DataContext.IsEditMode,RelativeSource={RelativeSource AncestorType=UserControl},Converter={StaticResource InvBoolToVis}}"/>
+        </StackPanel>
+       </Grid>
+      </Border>
+     </DataTemplate></ListBox.ItemTemplate>
+    </ListBox>
+   </Grid>
+  </DockPanel>
+ </Grid>
+</UserControl>
