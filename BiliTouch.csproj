@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <!-- 鎵樼洏鍥炬爣鐢?WinForms 鐨?NotifyIcon: 杩欐槸鎵樼洏浜や簰(姘旀场/鍙屽嚮/鍙抽敭鑿滃崟)鏈€鐪佷簨涓旀渶绋崇殑鏂规,
@@ -14,7 +15,7 @@
     <AssemblyTitle>BiliTouch</AssemblyTitle>
     <Product>BiliTouch</Product>
     <Authors>中三</Authors>
-    <Version>0.1.7</Version>
+    <Version>0.1.8</Version>
     <PlatformTarget>x64</PlatformTarget>
     <!--
       RollForward=Major: 框架依赖版(安装器)在机器上没有 .NET 10 桌面运行时、
@@ -115,6 +116,9 @@
       路 鍏冩暟鎹?婊ら暅: taglib(闊抽鏍囩), spatialaudio/mad(閲嶉噰鏍蜂笌绌洪棿闊抽)
       路 绾紪鐮佸櫒: x264/x265/aom/twolame/shine 鈥斺€?鎴戜滑鍙В鐮侊紝缂栫爜璧拌嚜鐮斾笅杞界閬?      路 VLC 鑷甫鐣岄潰/鎺ㄦ祦/鑴氭湰: gui, visualization, stream_out, access_output, services_discovery, lua, mux
     鈽?涓€寰?*淇濈暀**: 瑙ｇ爜(avcodec/dav1d)銆佽В灏佽(mp4/mkv/ts/adaptive)銆佽緭鍑?d3d11/d3d11va/dxva2/mmdevice/wasapi)銆?      璁块棶(http/https/file)銆佸瓧骞?libass/freetype)銆佺缉鏀?swscale)銆佹墦鍖?packetizer)銆?  -->
+  <Target Name="KeepVlcNativeFilesExternal" BeforeTargets="GenerateSingleFileBundle">
+    <ItemGroup><FilesToBundle Condition="$([System.String]::Copy('%(FilesToBundle.RelativePath)').StartsWith('libvlc'))"><ExcludeFromSingleFile>true</ExcludeFromSingleFile></FilesToBundle></ItemGroup>
+  </Target>
   <Target Name="TrimLibVLCPlugins" AfterTargets="Publish">
     <ItemGroup>
       <_VlcTrimDir Include="$(PublishDir)libvlc\win-x64\plugins\gui;

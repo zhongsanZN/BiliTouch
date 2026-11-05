@@ -140,10 +140,10 @@
     </UserControl.Resources>
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="{x:Static helpers:PageHeaderMetrics.HeaderRow}" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-<helpers:SkinSurface Kind="Home" Grid.RowSpan="2" VerticalAlignment="Top" Height="108"/>
+<helpers:SkinSurface Kind="Home" Grid.Row="0"/>
 
 
         <!-- 标题 + 刷新 -->
@@ -152,10 +152,10 @@
                     头部因此撑到 68 高: 标题贴顶(和左侧 logo 同一水平线), 右侧操作按钮
                     贴底 —— 它们的顶边落在 44, 正好让开窗口按钮, 谁也不压谁。
                 -->
-        <Grid x:Name="FollowHeader" Grid.Row="0" Margin="24,20,24,8" MinHeight="68">
+        <Grid x:Name="FollowHeader" Grid.Row="0" Margin="{x:Static helpers:PageHeaderMetrics.TitleMargin}">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <DockPanel VerticalAlignment="Top" Margin="0,0,12,0">
-                <TextBlock DockPanel.Dock="Left" Text="动态" Style="{StaticResource PageTitleStyle}" />
+                <TextBlock DockPanel.Dock="Left" x:Name="ShellPageTitle" Text="动态" Style="{StaticResource PageTitleStyle}" />
                 <TextBlock Text="{Binding Count, StringFormat=' · 关注 {0} 位 UP'}"
                            VerticalAlignment="Bottom" Margin="6,0,0,6" TextTrimming="CharacterEllipsis"
                            Foreground="{DynamicResource TextTertiaryBrush}" FontSize="14" />
@@ -226,10 +226,10 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- ===== 左: 全部动态 + UP 列表 ===== -->
-                <ScrollViewer x:Name="ContactsScroll" Grid.Column="0" VerticalScrollBarVisibility="Auto"
-                              ScrollChanged="UpListScroll_OnScrollChanged"
+                <Grid x:Name="ContactsScroll" Grid.Column="0"
                               Margin="12,4,0,20">
-                    <StackPanel Margin="8,0,8,0">
+                    <Grid Margin="8,0,8,0">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                         <!-- ===== 排序 + 未读汇总(2026-11-05 新增) =====
                              用户原话"没看懂动态的 up 主排序怎么做的, 未读已读机制好像也没做好"。
                              所以这里把规则**摆在界面上**: 三枚 chip 直接写明这档怎么排(悬浮说明说全),
@@ -242,7 +242,7 @@
 
                             <!-- 汇总徽标 + 全部标记已读: 同一行, 没有未读时徽标整块隐藏但按钮留着
                                  (按钮是"我确认都看过了"的手动出口, 不该跟着红点有无而忽隐忽现)。 -->
-                            <DockPanel Margin="0,4,0,0" LastChildFill="False">
+                            <WrapPanel Margin="0,4,0,0">
                                 <Border DockPanel.Dock="Left" CornerRadius="8" Padding="7,2" VerticalAlignment="Center"
                                         Background="{DynamicResource DangerBrush}"
                                         ToolTip="这些 UP 有未读动态（点开某个 UP 才算已读）"
@@ -257,7 +257,7 @@
                                     <TextBlock x:Name="MarkAllReadLabel" Text="{Binding MarkAllReadText}" FontSize="11.5"
                                                Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                                 </Button>
-                            </DockPanel>
+                            </WrapPanel>
                         </StackPanel>
 
                         <!-- 全部动态入口: 选中高亮跟 VM.IsAllSelected 走 -->
@@ -265,7 +265,7 @@
                              选中粉底(AccentSoftFillBrush) + 粉字(AccentTextBrush)。 -->
                         <!-- ★ 左内边距 28 = 6(UP 行左内边距) + 22(红点通道): 这样「全部动态」的
                              图标与下方各 UP 的头像落在同一条竖线上, 不会因为红点通道而错位。 -->
-                        <Border CornerRadius="10" Padding="28,10,12,10" Margin="0,4,0,6" Cursor="Hand"
+                        <Border Grid.Row="1" CornerRadius="10" Padding="28,10,12,10" Margin="0,4,0,6" Cursor="Hand"
                                 Tag="AllDynamics" MouseLeftButtonUp="OnSelectAll">
                             <Border.Style>
                                 <Style TargetType="Border">
@@ -303,23 +303,26 @@
                         </Border>
 
                         <!-- 关注的 UP(点击 = 只看 TA 的投稿) -->
-                        <ItemsControl ItemsSource="{Binding Users}">
-                            <ItemsControl.ItemTemplate>
+                        <ListBox x:Name="ContactsList" Grid.Row="2" ItemsSource="{Binding Users}" Background="Transparent" BorderThickness="0"
+                                  ScrollViewer.CanContentScroll="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel">
+                            <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="0"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem"><ContentPresenter/></ControlTemplate></Setter.Value></Setter></Style></ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <controls:ContactListRow Title="{Binding Name}" Avatar="{Binding Face}" IsSelected="{Binding IsSelected}" HasUnread="{Binding HasNew}" MouseLeftButtonUp="OnSelectUp" ToolTip="只看 TA 的动态">
                                      <controls:ContactListRow.ContextMenu><ContextMenu><MenuItem Header="打开 UP 主页" Click="OnVisitClick"/></ContextMenu></controls:ContactListRow.ContextMenu>
                                     </controls:ContactListRow>
                                 </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
 
                         <!-- 左栏补页 -->
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,6"
+                        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,6"
                                     Visibility="{Binding LoadingUsers, Converter={StaticResource BoolToVis}}">
                             <controls:LoadingRing Width="14" Height="14" />
                         </StackPanel>
-                    </StackPanel>
-                </ScrollViewer>
+                    </Grid>
+                </Grid>
 
                 <!-- ===== 右: 内容(两档排版, 右上角可切) ===== -->
                 <Grid x:Name="FollowFeedBody" Grid.Column="1" Margin="12,4,24,20" AutomationProperties.Name="{Binding SelectionTitle}">

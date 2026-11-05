@@ -45,7 +45,8 @@ internal static class Program
         var exit = 0;
         try
         {
-            if(args.Contains("--review-fixes")) ReviewFixTests.Run(Check);
+            if(args.Contains("--header-recovery")) HeaderRecoveryTests.Run(Check,Artifacts);
+            else if(args.Contains("--review-fixes")) ReviewFixTests.Run(Check);
             else if(args.Contains("--live-room-network")) LiveRoomTests.Network(Artifacts,args.FirstOrDefault(a=>a.StartsWith("--session="))?[10..]);
             else if(args.Contains("--live-room")) LiveRoomTests.Run(Check, Artifacts);
             else if(args.Contains("--continuation")) ContinuationTests.Run(Check, Artifacts);
