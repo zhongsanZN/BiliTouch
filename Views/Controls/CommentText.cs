@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
@@ -349,7 +349,7 @@ public class CommentText : RichTextBox
 
     private async System.Threading.Tasks.Task LoadEmoteAsync(Image image, string url, CommentItem owner)
     {
-        var bmp = await CoverLoader.LoadAsync(url, 40);
+        var bmp = await CoverLoader.LoadAsync(url, CoverLoader.DecodeWidthFor(image.Width, VisualTreeHelper.GetDpi(this).DpiScaleX));
         if (bmp == null) return;
         // 控件可能已经被复用到另一条评论上(列表虚拟化), 那就丢弃这次结果
         if (!ReferenceEquals(Comment, owner)) return;

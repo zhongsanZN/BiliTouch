@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -22,7 +22,7 @@ public partial class FollowPage : UserControl
     private static readonly TimeSpan LiveBoardPollInterval = TimeSpan.FromSeconds(60);
 
     /// <summary>未读红点轮询间隔: 比直播状态慢一拍, 避免每分钟多打一次动态接口。</summary>
-    private static readonly TimeSpan UnreadPollInterval = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan UnreadPollInterval = TimeSpan.FromSeconds(45);
 
     private DispatcherTimer? _liveBoardTimer;
     private DispatcherTimer? _unreadTimer;

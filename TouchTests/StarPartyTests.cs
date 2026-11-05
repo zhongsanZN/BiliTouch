@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
@@ -91,7 +91,7 @@ internal static class StarPartyTests
             var profileHost = new Window { Width = 1120, Height = 740, Content = profile }; windows.Add(profileHost); profileHost.Show(); Pump(150);
             profile.DataContext = new { IsLoggedIn = true, Name = "中三", Mid = 42, Face = "", Sign = "记录创作与生活 · 星引擎party闪亮启航", FollowingText = "1538", FollowersText = "1630", VideoCountText = "12", Error = "", ShowEmpty = false, Loading = false, Videos = Array.Empty<VideoItem>() };
             Pump(100); var frame = (SkinProfileLayout)profile.FindName("ProfileSkinLayout");
-            check(frame.Child!.TranslatePoint(new Point(), frame).Y < 1, "wide profile reserves a separate art column");
+            check(Math.Abs(frame.Child!.TranslatePoint(new Point(), frame).Y - 26) < 1, "wide profile preserves text padding over edge-to-edge artwork");
             Save(profileHost, Path.Combine(artifacts, "star-party-profile-wide.png"));
             profileHost.Width = 700; Pump(150);
             check(frame.Child.TranslatePoint(new Point(), frame).Y >= 190, "compact profile puts both characters above the personal information");

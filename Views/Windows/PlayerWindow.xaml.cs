@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -536,6 +536,11 @@ public partial class PlayerWindow : FluentWindow
         // 查找断链), PlacementTarget 为空 → 弹层跑到了浮层左上角(真机截图实证)。
         // 同时右缘对齐: Placement=Top 默认左缘对齐, 这两个弹层在控制栏右段, 左对齐偏丑;
         // Opened 时量出宽度差做负偏移, 弹层右缘与按钮右缘平齐。
+        VolumePopup.Child.MouseLeave += OnVolumeHoverLeave;
+        SpeedPopup.PlacementTarget = SpeedBtn;
+        RightAlignPopup(QualityPopup, BtnQuality);
+        RightAlignPopup(DanmakuAreaPopup, BtnDanmakuArea);
+        RightAlignPopup(SpeedPopup, SpeedBtn);
         QualityPopup.PlacementTarget = BtnQuality;
         DanmakuAreaPopup.PlacementTarget = BtnDanmakuArea;
         // 右缘对齐(弹层右缘 = 按钮右缘)。注意必须等弹层布局完成后再量宽:
@@ -1975,25 +1980,14 @@ public partial class PlayerWindow : FluentWindow
             ":http-user-agent=" + PlayerUserAgent
         };
 
-        // ★★★ 2026-10-17 播放器手术第 3 步: 分流设置 demuxer。
-        //
-        //   【无音轨 ⇒ 单文件源】: 加 :demux=avformat。
-        //     实测(探针 bd-probe-muxed2): 合流单流配 avformat, 来回 7 跳全部准确
-        //     (偏差 0.9~2.2s)且画面持续推进; 不加则落点准但**跳完冻住**(推进 0ms)。
-        //     ★★ 千万别给"带 input-slave"的那条路也加 —— 实测那样 seek 落点准但
-        //        state 直接变 **Ended**(画面永久卡死), 见 bd-probe-muxed5 的候选组。
-        //        这也是当年 avformat 被否掉的真正原因: 问题是"组合", 不是 demuxer 本身。
-        //
-        //   ★★ 2026-11-01 修「听视频模式快进直接提示已播完」: 「听视频」播的 DASH 音轨
-        //      也是**远端分片 fMP4**, 不是普通 MP4 —— avformat 对它的远跳会把落点甩到
-        //      流尾直接 EOF。所以它必须与 DASH 双流走同一条"不可靠"路(看门狗 + 重建),
-        //      既不加 avformat 也不标可靠。判据: 聆听态且 url 就是聆听音轨那条地址。
-        //      (durl 合流单流是普通 MP4, 不受影响; 本地文件同理。)
+        // Upstream v1.6.3: libvlc's MP4 demux drops the last fMP4 fragment.
+        // Use avformat on every VOD source; existing seek recovery remains in place.
+        options.Add(":demux=avformat"); // v1.6.3: read the final Bilibili fMP4 fragment.
         var isListenAudio = _isListenMode &&
                             string.Equals(url, _listenAudioUrl, StringComparison.Ordinal);
         if (string.IsNullOrEmpty(audioUrl) && !isListenAudio)
         {
-            options.Add(":demux=avformat");
+
             _isReliableSeekSource = true;
         }
         else if (!string.IsNullOrEmpty(audioUrl))
@@ -2004,7 +1998,7 @@ public partial class PlayerWindow : FluentWindow
         }
         else
         {
-            // 听视频音轨单流: demux 用默认(fMP4 与 input-slave 那条同款), seek 走不可靠路
+            // 聆听音轨仍保留 seek 看门狗，与解封装器选择无关。
             _isReliableSeekSource = false;
         }
 
@@ -3129,6 +3123,15 @@ public partial class PlayerWindow : FluentWindow
         if (length <= 0) return;
         targetMs = Math.Clamp(targetMs, 0, Math.Max(0, length - 500));
 
+        if (_ended || _mp.State == VLCState.Ended)
+        {
+            _ended = false;
+            EndOverlay.Visibility = Visibility.Collapsed;
+            MarkSeekIssued(targetMs);
+            RebuildMediaAndSeek(targetMs);
+            return;
+        }
+
         var cur = _lastKnownMs > 0 ? _lastKnownMs : 0;
         var delta = targetMs - cur;
 
@@ -3532,19 +3535,16 @@ public partial class PlayerWindow : FluentWindow
     /// 延迟一轮再决定收不收: 从喇叭挪到弹层的那一瞬间两者都不在 IsMouseOver,
     /// 立刻收会把"想拖滑杆"的用户挡在门外。
     /// </summary>
-    private void HideVolumePopupSoon()
+    private async void HideVolumePopupSoon()
     {
-        if (_closing || VolumePopup == null) return;
-        if (_volumePinned || _volumeHover) return;
-        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, new Action(() =>
-        {
-            if (_closing || VolumePopup == null) return;
-            if (_volumeHover || _volumePinned || VolumePopup.IsMouseOver || BtnVolume.IsMouseOver) return;
+        if (_closing || _volumePinned || _volumeHover) return;
+        await Task.Delay(350);
+        await Dispatcher.InvokeAsync(() => {
+            if (_closing || _volumeHover || _volumePinned || VolumePopup.IsMouseOver || BtnVolume.IsMouseOver) return;
             VolumePopup.IsOpen = false;
-        }));
+        });
     }
 
-    /// <summary>强行收起音量弹层(隐藏控制栏 / 切全屏 / 关闭窗口时调用)</summary>
     private void CloseVolumePopup()
     {
         _volumeHover = false; _volumePinned = false;
@@ -3974,10 +3974,12 @@ public partial class PlayerWindow : FluentWindow
     private void RightAlignPopup(System.Windows.Controls.Primitives.Popup popup,
         System.Windows.FrameworkElement target)
     {
-        var w = popup.ActualWidth;
-        if (w <= 0 && popup.Child is FrameworkElement fe) w = fe.ActualWidth;
-        if (w <= 0) w = target.ActualWidth;   // 最后的兜底: 至少不会把弹层推出窗外
-        popup.HorizontalOffset = target.ActualWidth - w;
+        popup.PlacementTarget = target;
+        popup.Placement = System.Windows.Controls.Primitives.PlacementMode.Custom;
+        popup.HorizontalOffset = 0;
+        popup.CustomPopupPlacementCallback = (size, anchor, offset) => new[] {
+            new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(anchor.Width - size.Width, -size.Height - 4), System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal) };
+
     }
 
     // ------------------------------------------------------------ 清晰度
@@ -5862,18 +5864,20 @@ public partial class PlayerWindow : FluentWindow
     }
 
     /// <summary>挂上逐帧推进器。CompositionTarget.Rendering 是**静态**事件, 必须在关窗时解绑</summary>
+    private System.Windows.Threading.DispatcherTimer? _danmakuFrameTimer;
     private void StartDanmakuClock()
     {
         if (_danmakuClockAttached || _closing) return;
         _danmakuClockAttached = true;
-        CompositionTarget.Rendering += OnDanmakuRendering;
+        _danmakuFrameTimer ??= new System.Windows.Threading.DispatcherTimer(TimeSpan.FromMilliseconds(16), System.Windows.Threading.DispatcherPriority.Render, OnDanmakuRendering, Dispatcher);
+        _danmakuFrameTimer.Start();
     }
 
     private void StopDanmakuClock()
     {
         if (!_danmakuClockAttached) return;
         _danmakuClockAttached = false;
-        CompositionTarget.Rendering -= OnDanmakuRendering;
+        _danmakuFrameTimer?.Stop();
     }
 
     /// <summary>
@@ -7595,7 +7599,47 @@ public partial class PlayerWindow : FluentWindow
     /// 确定后把勾选差集(新增/移出)一次提交给 deal 接口 —— 与网页端"选择收藏夹"行为一致。
     /// "取消收藏"也走同一个窗(把勾全去掉), 不再单独走一键直存默认夹的旧路径。
     /// </summary>
+    private bool _favoriteHeld;
+    private System.Windows.Threading.DispatcherTimer? _favoriteHoldTimer;
+    private void FavoritePress(object sender, InputEventArgs e)
+    {
+        _favoriteHeld = false;
+        _favoriteHoldTimer?.Stop();
+        _favoriteHoldTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(550) };
+        _favoriteHoldTimer.Tick += (_, _) => {
+            _favoriteHoldTimer.Stop(); _favoriteHeld = true;
+            OnFavoritePicker(sender, new RoutedEventArgs());
+        };
+        _favoriteHoldTimer.Start();
+    }
+    private void FavoriteRelease(object sender, InputEventArgs e) => _favoriteHoldTimer?.Stop();
     private async void OnFavoriteClick(object sender, RoutedEventArgs e)
+    {
+        _favoriteHoldTimer?.Stop();
+        if (_favoriteHeld) { _favoriteHeld = false; return; }
+        if (!Svc.Session.HasLogin) { Svc.Toast.Show("收藏需要先登录"); return; }
+        if (_aid <= 0 || _favBusy) return;
+        _favBusy = true;
+        var aid = _aid; var generation = _loadGen;
+        try {
+            var folders = await Svc.Api.GetVideoFavFoldersAsync(aid);
+            if (_closing || aid != _aid || generation != _loadGen) return;
+            if (!folders.ok || folders.folders == null) { Svc.Toast.Show(folders.err ?? "收藏夹读取失败"); return; }
+            var target = folders.folders.FirstOrDefault(f => f.IsDefault) ?? folders.folders.OrderBy(f => f.Id).FirstOrDefault();
+            if (target == null) { Svc.Toast.Show("请先创建默认收藏夹"); return; }
+            var existing = folders.folders.Where(f => f.HasVideo).Select(f => f.Id).ToArray();
+            var remove = existing.Length > 0;
+            var result = await Svc.Api.DealFavoriteAsync(aid, addIds: remove ? null : new[] { target.Id }, delIds: remove ? existing : null);
+            if (_closing || aid != _aid || generation != _loadGen) return;
+            if (!result.ok) { Svc.Toast.Show(result.err ?? "收藏失败"); return; }
+            SetFavorited(!remove);
+            PlayThemedAction(ThemeReaction.Favorite, BtnFavorite, FavIconBox, !remove);
+            if (remove) Svc.Toast.Show("已取消收藏");
+        }
+        finally { if (aid == _aid && generation == _loadGen) _favBusy = false; }
+    }
+
+    private async void OnFavoritePicker(object sender, RoutedEventArgs e)
     {
         if (!Svc.Session.HasLogin) { Svc.Toast.Show("收藏需要先登录"); return; }
         if (_aid <= 0 || _favBusy) return;
@@ -8261,6 +8305,21 @@ public partial class PlayerWindow : FluentWindow
         else OpenSeasonPanel();
     }
 
+    private async void OnSeasonSubscribeClick(object sender, RoutedEventArgs e)
+    {
+        if (!Svc.Session.HasLogin) { Svc.Toast.Show("请先登录后订阅合集"); return; }
+        var seasonId = _season?.SeasonId ?? 0;
+        if (seasonId <= 0) return;
+        SeasonSubscribeButton.IsEnabled = false;
+        try {
+            var result = await Svc.Api.SubscribeSeasonAsync(seasonId);
+            if (_closing || _season?.SeasonId != seasonId) return;
+            Svc.Toast.Show(result.ok ? "已订阅合集" : result.err ?? "订阅失败");
+            if (result.ok) SeasonSubscribeButton.Content = "已订阅";
+        }
+        finally { if (!_closing) SeasonSubscribeButton.IsEnabled = true; }
+    }
+
     private void OnSeasonCloseClick(object sender, RoutedEventArgs e) => CloseSeasonPanel();
 
     private void OpenSeasonPanel()
@@ -8332,6 +8391,7 @@ public partial class PlayerWindow : FluentWindow
         }
 
         _season = season;
+        SeasonSubscribeButton.Content = "订阅合集";
         _hasSeason = true;
         _currentSeasonEpisode = FindCurrentEpisode(season);
 
@@ -8469,14 +8529,20 @@ public partial class PlayerWindow : FluentWindow
         if (BtnPages == null) return;
         BtnPages.Visibility = _hasPages ? Visibility.Visible : Visibility.Collapsed;
         if (!_hasPages) ClosePagesPopup();
-        else UpdatePagesTitle();
+        else {
+            UpdatePagesTitle();
+            PagesList.ItemsSource = _pages;
+            PagesList.SelectedItem = _pages.FirstOrDefault(p => p.Cid == _currentCid);
+            PagesMetaText.Text = $"共 {_pages.Count} 个分P";
+            PagesPanel.Visibility = Visibility.Visible;
+        }
     }
 
     /// <summary>关掉分P 弹层(换片 / 单P 视频时调用)。没开就别动, 免得白白改一次 IsOpen</summary>
     private void ClosePagesPopup()
     {
-        if (PagesPopup == null || !PagesPopup.IsOpen) return;
-        PagesPopup.IsOpen = false;
+        if (PagesPanel == null || !(PagesPanel.Visibility == Visibility.Visible)) return;
+        PagesPanel.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>
@@ -8504,9 +8570,9 @@ public partial class PlayerWindow : FluentWindow
     /// <summary>点「分P」: 开/收弹层。不请求接口 —— pages 跟合集一样在详情里就拿到了</summary>
     private void OnPagesToggleClick(object sender, RoutedEventArgs e)
     {
-        if (_closing || !_hasPages || PagesPopup == null) return;
-        var open = PagesPopup.IsOpen;
-        PagesPopup.IsOpen = !open;
+        if (_closing || !_hasPages || PagesPanel == null) return;
+        var open = (PagesPanel.Visibility == Visibility.Visible);
+        PagesPanel.Visibility = open ? Visibility.Collapsed : Visibility.Visible;
         BtnPages.Tag = !open ? "on" : "off";
         if (!open)
         {
@@ -8536,7 +8602,7 @@ public partial class PlayerWindow : FluentWindow
         if (_closing || PagesList == null) return;
         if (PagesList.SelectedItem is not VideoPage p) return;
         if (p.Cid == _currentCid) return;
-        PagesPopup?.SetCurrentValue(System.Windows.Controls.Primitives.Popup.IsOpenProperty, false);
+
         _ = SwitchToPageAsync(p);
     }
 

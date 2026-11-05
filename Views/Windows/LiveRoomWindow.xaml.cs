@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Windows;
@@ -90,6 +90,10 @@ public partial class LiveRoomWindow : FluentWindow
             LiveSettingsButton.MinWidth = RoomLayout.ActualWidth < 760 ? 40 : 56;
             if (VolumePopup.IsOpen) EnsureVolumePopupAnchor();
         };
+        InitializeLiveTouch();
+        Loaded += (_, _) => RefreshLiveBackdrop();
+        SizeChanged += (_, _) => RefreshLiveBackdrop();
+        VolumePopup.Child.MouseLeave += VolumeHoverLeave;
         QualityPopup.PlacementTarget = QualityButton;
         QualityPopup.Opened += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(RightAlignQualityPopup));
     }
@@ -197,9 +201,18 @@ public partial class LiveRoomWindow : FluentWindow
         }
         finally { if (stream == _streamRequest) _changingStream = false; }
     }
+    private void RefreshLiveBackdrop()
+    {
+        try {
+            var host = LiveVideo.GetType().GetField("_videoHwndHost", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(LiveVideo) as System.Windows.Interop.HwndHost;
+            if (host != null && host.Handle != IntPtr.Zero) VideoBackdropInterop.EnsureBlackVideoHost(host.Handle);
+        } catch { }
+    }
+
     private void OnPlaying(object? sender, EventArgs args) => Dispatcher.BeginInvoke(() =>
     {
         if (IsClosing) return;
+        RefreshLiveBackdrop();
         PlaybackState.Visibility = Visibility.Collapsed; _retryCount = 0; _nextRetry = DateTimeOffset.MaxValue;
         StartControlsCountdown();
     });
@@ -402,18 +415,17 @@ public partial class LiveRoomWindow : FluentWindow
         EnsureVolumePopupAnchor();
         VolumePopup.IsOpen = true;
     }
-    private void VolumeHoverLeave(object sender, MouseEventArgs e)
+    private async void VolumeHoverLeave(object sender, MouseEventArgs e)
     {
         _volumeHover = false;
-        // 悬停离开且没被"点开"锁住时才收起。Popup 自己也收不到 MouseLeave, 这里靠按钮判定;
-        // 用延迟一拍的方式避免"从按钮挪到面板上"这一段被误收。
-        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
-        {
-            if (IsClosing) return;
-            if (_volumeHover || _volumePinned || VolumePopup.IsMouseOver || MuteButton.IsMouseOver) return;
+        if (IsClosing || _volumePinned || _volumeHover) return;
+        await Task.Delay(350);
+        await Dispatcher.InvokeAsync(() => {
+            if (IsClosing || _volumeHover || _volumePinned || VolumePopup.IsMouseOver || MuteButton.IsMouseOver) return;
             VolumePopup.IsOpen = false;
-        }));
+        });
     }
+
     private void EnsureVolumePopupAnchor()
     {
         // 面板必须锚在喇叭上: 窗口尺寸变化/全屏切换后 PlacementTarget 会失效, 重设一次。

@@ -1,4 +1,4 @@
-<views:FluentWindow x:Class="BiliTouch.Views.PlayerWindow"
+﻿<views:FluentWindow x:Class="BiliTouch.Views.PlayerWindow"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:views="clr-namespace:BiliTouch.Views"
@@ -11,7 +11,7 @@
              Title="BiliTouch 播放器" Width="1280" Height="760"
              MinWidth="840" MinHeight="600" WindowStartupLocation="CenterScreen"
              WindowStyle="None" ResizeMode="CanResize" UseLayoutRounding="True"
-             TextOptions.TextFormattingMode="Display">
+             TextOptions.TextFormattingMode="Ideal">
     <!--
         顶栏(标题 + 全屏; 2026-09-26 左上角"返回主界面"按钮已按用户要求删除,
         Esc 键仍可关播放器), 系统标题栏去掉了, 所以最右边补上最小化/最大化/关闭三个自绘按钮。
@@ -310,7 +310,7 @@
                         BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1"
                         Cursor="Hand"
                         MouseLeftButtonUp="OnReplyBoxClick"
-                        ToolTip="查看这条评论的全部回复"
+
                         Visibility="{Binding HasReplies, Converter={StaticResource BoolToVis}}">
                     <StackPanel>
                         <ItemsControl ItemsSource="{Binding PreviewReplies}">
@@ -1597,7 +1597,7 @@
                                     </Button>
                                     <!-- 收藏 -->
                                     <Button x:Name="BtnFavorite" Style="{StaticResource PlayerActionBtn}"  Grid.Column="2"
-                                            Click="OnFavoriteClick" ToolTip="收藏到云端收藏夹">
+                                            Click="OnFavoriteClick" PreviewMouseLeftButtonDown="FavoritePress" PreviewMouseLeftButtonUp="FavoriteRelease" MouseLeave="FavoriteRelease" ToolTip="点击收藏／取消收藏，长按选择收藏夹">
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                             <Grid x:Name="FavIconBox" Style="{StaticResource ActionIconBox}">
                                                 <Path Data="{StaticResource FavoriteIconGeometry}"
@@ -1754,13 +1754,59 @@
                                      ★ Popup 是独立 HWND, 位置由 PlacementTarget 保证, 不必担心
                                        盖住 VideoView 的 airspace(合集面板当年为这个才改用 Grid)。
                                      ★ MaxHeight 必填: 40 个 P 的纪录片不封顶的话弹层会顶出屏幕。 -->
-                                <Popup x:Name="PagesPopup" PlacementTarget="{Binding ElementName=BtnPages}"
-                                       Placement="Bottom" StaysOpen="False" AllowsTransparency="True"
-                                       PopupAnimation="Fade" Closed="OnPagesPopupClosed">
+
+
+                            <Grid x:Name="PageHost" Margin="0,12,0,0" MinHeight="120" ClipToBounds="True">
+                                <StackPanel x:Name="IntroPanel">
+                                    <!-- ============ 简介(2026-10-12 加折叠) ============
+                                         ★ 折叠是**给下面的「相关视频」让位置**: 很多 UP 主的简介
+                                           动辄几百字, 不折的话右半屏全被它吃掉,
+                                           用户得滚很久才看得到推荐列表。
+                                         ★ MaxHeight 判据选的是"折起来大约 6 行"(12px 字号 + 行高):
+                                           低于它就没必要折, 多出的展开按钮是纯噪音。 -->
+                                    <!-- 只读简介用 TextBlock 而不是 TextBox: TextBox 会把触摸笔/手指
+                                         的拖动解释成"选中文字", 于是右面板永远处于文字选中状态、
+                                         横滑也换不了 tab。这里不需要编辑/选中, 换成 TextBlock 后
+                                         触摸直接交给外层 ScrollViewer 平移 + 本窗口的横滑切 tab。 -->
+                                    <TextBlock x:Name="DescText" TextWrapping="Wrap"
+                                             Background="Transparent" Padding="0"
+                                             Foreground="{DynamicResource TextSecondaryBrush}"
+                                             FontSize="12" Text="加载中…"
+                                             MaxHeight="{StaticResource DescCollapsedHeight}" />
+                                    <!-- 展开/收起(2026-10-12 用户要求"加粗、居中、加展开/收起符号"):
+                                         ★ 加粗 + 居中: 它是简介的唯一操作入口, 之前是 12px 普通体
+                                           靠左, 夹在一大段灰色正文里几乎看不见。
+                                         ★ 符号用 **⌄ / ⌃**(U+2303 / U+2302): 这两个是"上下尖头",
+                                           语义直指"往下展开 / 往上收起"; 常见的 ▾ 会让人以为
+                                           折叠起来是个下拉菜单。
+                                         ★ 符号与文案**写在同一个 TextBlock 的两段**里(而不是两个控件):
+                                           它们要一起换方向, 分成两个控件就得在代码里同时改两处,
+                                           早晚会漏掉一个。
+                                         ★ 显式给 Foreground(局部值): 全局隐式 TextBlock 样式带
+                                           Foreground setter, 会吃掉继承来的强调色。 -->
+                                    <Button x:Name="BtnDescFold" Style="{StaticResource LinkButtonStyle}"
+                                            HorizontalAlignment="Center" Padding="6,4,6,4"
+                                            Margin="0,4,0,0" Focusable="False"
+                                            Visibility="Collapsed" Click="OnDescFoldClick"
+                                            ToolTip="展开完整简介">
+                                        <TextBlock x:Name="BtnDescFoldText" FontSize="12.5" FontWeight="SemiBold">
+                                            <TextBlock x:Name="BtnDescFoldGlyph" Text="&#x2303;"
+                                                       FontWeight="Normal" Margin="0,0,4,0" />
+                                            <Run x:Name="BtnDescFoldLabel" Text="展开简介" />
+                                        </TextBlock>
+                                    </Button>
+
+                                    <!-- ★★★ 2026-11-04 用户要求: **合集放在相关视频之上**。
+                                         理由(用户原话): "符合观众兴趣权重, 且可以避免现在存在的,
+                                         键鼠操作用户在从评论点回简介时, 直接跳转到底部的问题" ——
+                                         合集本来就在简介面板里、切 tab 时会被一起隐藏, 把它放在
+                                         相关视频**之前**可以让用户回到简介时第一眼看到的是合集(强相关),
+                                         而不是被一长串推荐视频顶到最底部。 -->
+                                                                    <Grid x:Name="PagesPanel" Visibility="Collapsed" Margin="20,16,20,0">
                                     <Border Background="{DynamicResource OverlaySurfaceBrush}"
                                             CornerRadius="10" BorderThickness="1"
                                             BorderBrush="{DynamicResource FlyoutBorderBrush}"
-                                            Width="300" MaxHeight="420">
+                                            MaxHeight="320">
                                         <Border.Effect>
                                             <DropShadowEffect BlurRadius="16" ShadowDepth="2" Opacity="0.3"
                                                               Direction="270" Color="#000000" />
@@ -1838,55 +1884,8 @@
                                             </ListBox>
                                         </Grid>
                                     </Border>
-                                </Popup>
-
-                            <Grid x:Name="PageHost" Margin="0,12,0,0" MinHeight="120" ClipToBounds="True">
-                                <StackPanel x:Name="IntroPanel">
-                                    <!-- ============ 简介(2026-10-12 加折叠) ============
-                                         ★ 折叠是**给下面的「相关视频」让位置**: 很多 UP 主的简介
-                                           动辄几百字, 不折的话右半屏全被它吃掉,
-                                           用户得滚很久才看得到推荐列表。
-                                         ★ MaxHeight 判据选的是"折起来大约 6 行"(12px 字号 + 行高):
-                                           低于它就没必要折, 多出的展开按钮是纯噪音。 -->
-                                    <!-- 只读简介用 TextBlock 而不是 TextBox: TextBox 会把触摸笔/手指
-                                         的拖动解释成"选中文字", 于是右面板永远处于文字选中状态、
-                                         横滑也换不了 tab。这里不需要编辑/选中, 换成 TextBlock 后
-                                         触摸直接交给外层 ScrollViewer 平移 + 本窗口的横滑切 tab。 -->
-                                    <TextBlock x:Name="DescText" TextWrapping="Wrap"
-                                             Background="Transparent" Padding="0"
-                                             Foreground="{DynamicResource TextSecondaryBrush}"
-                                             FontSize="12" Text="加载中…"
-                                             MaxHeight="{StaticResource DescCollapsedHeight}" />
-                                    <!-- 展开/收起(2026-10-12 用户要求"加粗、居中、加展开/收起符号"):
-                                         ★ 加粗 + 居中: 它是简介的唯一操作入口, 之前是 12px 普通体
-                                           靠左, 夹在一大段灰色正文里几乎看不见。
-                                         ★ 符号用 **⌄ / ⌃**(U+2303 / U+2302): 这两个是"上下尖头",
-                                           语义直指"往下展开 / 往上收起"; 常见的 ▾ 会让人以为
-                                           折叠起来是个下拉菜单。
-                                         ★ 符号与文案**写在同一个 TextBlock 的两段**里(而不是两个控件):
-                                           它们要一起换方向, 分成两个控件就得在代码里同时改两处,
-                                           早晚会漏掉一个。
-                                         ★ 显式给 Foreground(局部值): 全局隐式 TextBlock 样式带
-                                           Foreground setter, 会吃掉继承来的强调色。 -->
-                                    <Button x:Name="BtnDescFold" Style="{StaticResource LinkButtonStyle}"
-                                            HorizontalAlignment="Center" Padding="6,4,6,4"
-                                            Margin="0,4,0,0" Focusable="False"
-                                            Visibility="Collapsed" Click="OnDescFoldClick"
-                                            ToolTip="展开完整简介">
-                                        <TextBlock x:Name="BtnDescFoldText" FontSize="12.5" FontWeight="SemiBold">
-                                            <TextBlock x:Name="BtnDescFoldGlyph" Text="&#x2303;"
-                                                       FontWeight="Normal" Margin="0,0,4,0" />
-                                            <Run x:Name="BtnDescFoldLabel" Text="展开简介" />
-                                        </TextBlock>
-                                    </Button>
-
-                                    <!-- ★★★ 2026-11-04 用户要求: **合集放在相关视频之上**。
-                                         理由(用户原话): "符合观众兴趣权重, 且可以避免现在存在的,
-                                         键鼠操作用户在从评论点回简介时, 直接跳转到底部的问题" ——
-                                         合集本来就在简介面板里、切 tab 时会被一起隐藏, 把它放在
-                                         相关视频**之前**可以让用户回到简介时第一眼看到的是合集(强相关),
-                                         而不是被一长串推荐视频顶到最底部。 -->
-                                    <Grid x:Name="SeasonPanel" Visibility="Collapsed"
+                                </Grid>
+<Grid x:Name="SeasonPanel" Visibility="Collapsed"
                                           Background="Transparent" Margin="0,16,0,0" MaxHeight="420">
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto" />
@@ -1908,7 +1907,11 @@
                                                     <TextBlock x:Name="SeasonMetaText" Style="{StaticResource MetaTextStyle}"
                                                                Margin="0,4,0,0" Text="" />
                                                 </StackPanel>
-                                                <!-- 关闭按钮: 用显式 Style(项目硬规定, Button 不许裸写),
+                                                <StackPanel Grid.Column="1" Orientation="Vertical" Margin="8,0,0,0">
+<Button x:Name="SeasonSubscribeButton" Content="订阅合集" Style="{StaticResource SubtleButtonStyle}" Click="OnSeasonSubscribeClick"/>
+<Button Content="收起合集" Style="{StaticResource SubtleButtonStyle}" Click="OnSeasonCloseClick"/>
+</StackPanel>
+<!-- 关闭按钮: 用显式 Style(项目硬规定, Button 不许裸写),
                                                      图标字形必须写进显式 TextBlock —— 全局隐式 TextBlock 样式带 Foreground
                                                      setter, 会吃掉 Button.Foreground, 字形颜色就跟着主题跑偏了。 -->
 

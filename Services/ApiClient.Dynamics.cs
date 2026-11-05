@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using BiliTouch.Models;
@@ -7,6 +7,20 @@ namespace BiliTouch.Services;
 
 public partial class ApiClient
 {
+    public Task<(bool ok, string? err)> SubscribeSeasonAsync(long seasonId) =>
+        PostFormAsync("https://api.bilibili.com/x/v3/fav/season/fav", new() { ["season_id"] = seasonId.ToString(), ["platform"] = "web", ["switch"] = "1" });
+
+    public async Task<HashSet<long>> GetDynamicUnreadAuthorsAsync()
+    {
+        var unread = new HashSet<long>();
+        var (code, _, data) = await GetJsonAsync("https://api.bilibili.com/x/polymer/web-dynamic/v1/portal", null, referer: "https://t.bilibili.com/");
+        if (code == 0 && data != null && data.Value.TryGetProperty("up_list", out var list) && list.ValueKind == JsonValueKind.Array)
+            foreach (var up in list.EnumerateArray())
+                if (up.TryGetProperty("has_update", out var update) && (update.ValueKind == JsonValueKind.True || update.ToString() == "1"))
+                    unread.Add(GetLongLoose(up, "mid"));
+        return unread;
+    }
+
     public async Task<(bool ok, string? err, DynamicItem? item)> GetDynamicDetailAsync(string id)
     {
         if (!long.TryParse(id, out var value) || value <= 0) return (false,"动态 ID 无效",null);

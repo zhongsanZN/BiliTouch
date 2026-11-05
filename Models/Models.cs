@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -1042,6 +1042,7 @@ public class FavFolder : System.ComponentModel.INotifyPropertyChanged
     /// (响应里的 fav_state 字段); 普通的收藏夹列表接口不返回它, 此时保持 false。
     /// </summary>
     public bool HasVideo { get; set; }
+    public bool IsDefault { get; set; }
 
     private bool _isCurrent;
 

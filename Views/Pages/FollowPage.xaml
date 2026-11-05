@@ -1,4 +1,4 @@
-<UserControl helpers:TrackpadScroll.IsFeed="True" x:Class="BiliTouch.Views.Pages.FollowPage"
+﻿<UserControl helpers:TrackpadScroll.IsFeed="True" x:Class="BiliTouch.Views.Pages.FollowPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
@@ -143,6 +143,8 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
+<helpers:SkinSurface Kind="Home" Grid.RowSpan="2" VerticalAlignment="Top" Height="108"/>
+
 
         <!-- 标题 + 刷新 -->
         <!--
@@ -236,26 +238,7 @@
                                放列表中间会让人以为只管下面那几个。
                              ★ 选中态由 VM 的 SortTagXxx 三件套驱动(只在一处决定), 见 FollowViewModel。 -->
                         <StackPanel Margin="28,6,2,2">
-                            <StackPanel Orientation="Horizontal" ToolTip="{Binding SortModeTip}">
-                                <Button x:Name="SortRecentChip" Style="{StaticResource FollowSortChipStyle}"
-                                        Tag="{Binding SortTagRecent}" Command="{Binding SortRecentCommand}"
-                                        ToolTip="按每个 UP 最近一条动态的发布时间排，没抓到的排后面">
-                                    <TextBlock Text="最近更新" FontSize="12"
-                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                                </Button>
-                                <Button x:Name="SortUnreadChip" Style="{StaticResource FollowSortChipStyle}" Margin="2,0,0,0"
-                                        Tag="{Binding SortTagUnread}" Command="{Binding SortUnreadCommand}"
-                                        ToolTip="有未读红点的 UP 排最前，组内仍按最近更新时间排">
-                                    <TextBlock Text="未读优先" FontSize="12"
-                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                                </Button>
-                                <Button x:Name="SortOrderChip" Style="{StaticResource FollowSortChipStyle}" Margin="2,0,0,0"
-                                        Tag="{Binding SortTagOrder}" Command="{Binding SortOrderCommand}"
-                                        ToolTip="按关注先后排（接口原序），不随动态变化">
-                                    <TextBlock Text="关注顺序" FontSize="12"
-                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                                </Button>
-                            </StackPanel>
+
 
                             <!-- 汇总徽标 + 全部标记已读: 同一行, 没有未读时徽标整块隐藏但按钮留着
                                  (按钮是"我确认都看过了"的手动出口, 不该跟着红点有无而忽隐忽现)。 -->

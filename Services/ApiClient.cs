@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -2563,7 +2563,7 @@ public partial class ApiClient
             foreach (var seg in segments)
                 if (seg is { Count: > 0 }) merged.AddRange(seg);
 
-            if (merged.Count == 0) return result;
+            if (merged.Count == 0) return await FetchLegacyDanmakuAsync(cid, max).ConfigureAwait(false);
             merged.Sort((a, b) => a.Time.CompareTo(b.Time));
 
             foreach (var d in merged)
@@ -2578,6 +2578,29 @@ public partial class ApiClient
             App.ReportError(ex);
         }
         return result;
+    }
+
+    private async Task<List<RawDanmaku>> FetchLegacyDanmakuAsync(long cid, int max)
+    {
+        var items = new List<RawDanmaku>();
+        try {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"https://comment.bilibili.com/{cid}.xml");
+            request.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com/");
+            request.Headers.TryAddWithoutValidation("User-Agent", Ua);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            using var response = await _http.SendAsync(request, timeout.Token).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            var xml = System.Xml.Linq.XDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false));
+            foreach (var node in xml.Descendants("d")) {
+                var fields = ((string?)node.Attribute("p") ?? "").Split(',');
+                if (fields.Length < 4 || !double.TryParse(fields[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var time) || !int.TryParse(fields[1], out var mode)) continue;
+                uint.TryParse(fields[3], out var color);
+                items.Add(new RawDanmaku(time, node.Value, mode, color));
+                if (items.Count >= max) break;
+            }
+            items.Sort((a, b) => a.Time.CompareTo(b.Time));
+        } catch (Exception ex) { System.Diagnostics.Trace.WriteLine("Danmaku XML fallback: " + ex.Message); }
+        return items;
     }
 
     /// <summary>拉取单个弹幕段并解析为 RawDanmaku 列表(失败返回 null)</summary>
@@ -5232,7 +5255,8 @@ public partial class ApiClient
                         Title = GetStr(f, "title"),
                         MediaCount = GetInt(f, "media_count"),
                         // fav_state 为 1 表示该视频已在此收藏夹中
-                        HasVideo = GetInt(f, "fav_state") == 1
+                        HasVideo = GetInt(f, "fav_state") == 1,
+                        IsDefault = GetInt(f, "is_default") == 1 || GetStr(f, "title") == "默认收藏夹"
                     });
                 }
             }

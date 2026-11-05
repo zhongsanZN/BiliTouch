@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -66,8 +66,16 @@ public class DynamicRichText : TextBlock
         if (d is DynamicRichText text) text.Rebuild();
     }
 
+    private int _contentGeneration;
+    private async System.Threading.Tasks.Task LoadEmojiAsync(Image image, string url, int generation)
+    {
+        var bitmap = await Helpers.CoverLoader.LoadAsync(url, Helpers.CoverLoader.DecodeWidthFor(image.Width, VisualTreeHelper.GetDpi(this).DpiScaleX));
+        if (generation == _contentGeneration) image.Source = bitmap;
+    }
+
     private void Rebuild()
     {
+        ++_contentGeneration;
         Inlines.Clear();
         var nodes = Nodes;
         if (nodes == null)
@@ -91,6 +99,7 @@ public class DynamicRichText : TextBlock
                     Stretch = Stretch.Uniform,
                     ToolTip = node.Text.Length > 0 ? node.Text : null,
                 };
+                _ = LoadEmojiAsync(image, node.Emoji, _contentGeneration);
                 Inlines.Add(new InlineUIContainer(image) { BaselineAlignment = BaselineAlignment.Center });
                 continue;
             }

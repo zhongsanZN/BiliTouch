@@ -1,0 +1,118 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0/win-x64",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {},
+    ".NETCoreApp,Version=v10.0/win-x64": {
+      "BiliDesk/0.1.5": {
+        "dependencies": {
+          "LibVLCSharp": "3.8.0",
+          "LibVLCSharp.WPF": "3.8.0",
+          "Microsoft.Web.WebView2": "1.0.4191.47",
+          "Microsoft.Web.WebView2.Core": "1.0.4191.47",
+          "Microsoft.Web.WebView2.WinForms": "1.0.4191.47",
+          "Microsoft.Web.WebView2.Wpf": "1.0.4191.47"
+        },
+        "runtime": {
+          "BiliDesk.dll": {}
+        }
+      },
+      "LibVLCSharp/3.8.0": {
+        "runtime": {
+          "lib/net6.0/LibVLCSharp.dll": {
+            "assemblyVersion": "3.8.0.0",
+            "fileVersion": "3.8.0.0"
+          }
+        }
+      },
+      "LibVLCSharp.WPF/3.8.0": {
+        "dependencies": {
+          "LibVLCSharp": "3.8.0"
+        },
+        "runtime": {
+          "lib/net6.0-windows7.0/LibVLCSharp.WPF.dll": {
+            "assemblyVersion": "3.8.0.0",
+            "fileVersion": "3.8.0.0"
+          }
+        }
+      },
+      "Microsoft.Web.WebView2/1.0.4191.47": {
+        "native": {
+          "runtimes/win-x64/native/WebView2Loader.dll": {
+            "fileVersion": "1.0.4191.47"
+          }
+        }
+      },
+      "Microsoft.Web.WebView2.Core/1.0.4191.47": {
+        "runtime": {
+          "Microsoft.Web.WebView2.Core.dll": {
+            "assemblyVersion": "1.0.4191.47",
+            "fileVersion": "1.0.4191.47"
+          }
+        }
+      },
+      "Microsoft.Web.WebView2.WinForms/1.0.4191.47": {
+        "runtime": {
+          "Microsoft.Web.WebView2.WinForms.dll": {
+            "assemblyVersion": "1.0.4191.47",
+            "fileVersion": "1.0.4191.47"
+          }
+        }
+      },
+      "Microsoft.Web.WebView2.Wpf/1.0.4191.47": {
+        "runtime": {
+          "Microsoft.Web.WebView2.Wpf.dll": {
+            "assemblyVersion": "1.0.4191.47",
+            "fileVersion": "1.0.4191.47"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "BiliDesk/0.1.5": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "LibVLCSharp/3.8.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-vHHnH+nu3M8fb4jSt4Ad4aVOq7trW4ZBh85WFp7QaWPWDUX9SFVcgYc5IKOtyNh1IaBM/OmZV6NuvTz6eDv6tw==",
+      "path": "libvlcsharp/3.8.0",
+      "hashPath": "libvlcsharp.3.8.0.nupkg.sha512"
+    },
+    "LibVLCSharp.WPF/3.8.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-6AaIfxhPYH5gh9GbFZtz7rjsDZpxx0XS7V94tGK8bkBZzE0ZUpFD/3Zo0lsVsZCMY7nTE+e0wBsVW5uAZYL7Dg==",
+      "path": "libvlcsharp.wpf/3.8.0",
+      "hashPath": "libvlcsharp.wpf.3.8.0.nupkg.sha512"
+    },
+    "Microsoft.Web.WebView2/1.0.4191.47": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-Snb6mlTpuz6ZFjWMwIdg28Xp6kAUMy3zaLUyGbFSaw+/AJKlwoX8EiaWJ1eUMfKyJHksPkFjJHl1LIB7kX+0AQ==",
+      "path": "microsoft.web.webview2/1.0.4191.47",
+      "hashPath": "microsoft.web.webview2.1.0.4191.47.nupkg.sha512"
+    },
+    "Microsoft.Web.WebView2.Core/1.0.4191.47": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Microsoft.Web.WebView2.WinForms/1.0.4191.47": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Microsoft.Web.WebView2.Wpf/1.0.4191.47": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
@@ -162,7 +162,7 @@ internal static class DynamicTests
         check(!vm.Loading && vm.SelectionTitle == "fast 的动态", "selection title and loading");
         check(!vm.HasMore, "server terminal cursor respected");
         Wait(vm.CheckNewDynamicsAsync());
-        check(handler.Paths.Last().Contains("host_mid=20"), "new posts poll selected author");
+        check(handler.Paths.Any(p => p.Contains("feed/all")), "unread polling scans all followed authors even in a selected author view");
 
         var page = new FollowPage();
         var window = new Window { Content=page, Width=1100, Height=780, ShowInTaskbar=false };

@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using BiliTouch.Services;
@@ -24,7 +24,7 @@ public sealed class SkinSurface : FrameworkElement
         dc.PushClip(new RectangleGeometry(bounds));
         if (Kind == "Rail")
         {
-            dc.DrawRectangle(SkinService.Instance.Pattern(dark ? .09 : .07), null, bounds);
+            dc.DrawRectangle(SkinService.Instance.Pattern(dark ? .045 : .035), null, bounds);
             dc.DrawRectangle(new SolidColorBrush(Color.FromArgb(130, 255, 190, 56)), null,
                 new Rect(Math.Max(0, ActualWidth - 2), 0, 2, ActualHeight));
         }
@@ -99,7 +99,7 @@ public sealed class SkinProfileLayout : Decorator
         if (area.Width <= 0 || area.Height <= 0) return;
         dc.PushClip(new RectangleGeometry(area, 12, 12));
         var image = SkinService.Instance.Image("head_myself_bg");
-        var art = _narrow ? area : new Rect(ActualWidth * .30, 0, ActualWidth * .70, ActualHeight);
+        var art = area;
         var ratio = Math.Max(art.Width / image.PixelWidth, art.Height / image.PixelHeight);
         var width = image.PixelWidth * ratio; var height = image.PixelHeight * ratio;
         dc.DrawImage(image, new Rect(art.X + (art.Width - width) / 2, art.Y - (height - art.Height) * .22, width, height));

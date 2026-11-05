@@ -1,4 +1,4 @@
-<UserControl helpers:TrackpadScroll.IsFeed="True" x:Class="BiliTouch.Views.Pages.SearchPage"
+﻿<UserControl helpers:TrackpadScroll.IsFeed="True" x:Class="BiliTouch.Views.Pages.SearchPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:helpers="clr-namespace:BiliTouch.Helpers"
@@ -6,6 +6,8 @@
              Background="{DynamicResource AppBackgroundBrush}"
              PreviewMouseDown="OnPagePreviewMouseDown">
     <Grid>
+<helpers:SkinSurface Kind="Home" Grid.RowSpan="2" VerticalAlignment="Top" Height="108"/>
+
         <!-- ===== 搜索类别(视频 / 直播间 / 番剧): 左上角常驻 =====
              2026-10-03 用户要求把它从搜索卡内部挪到页面左上角 —— 搜索框聚焦才展开,
              类别不该藏在里面。白椭圆底 + 投影, 与收藏页夹子条同一形态。

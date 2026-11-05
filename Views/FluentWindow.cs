@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -25,6 +25,10 @@ public class FluentWindow : Window
 
     public FluentWindow()
     {
+        UseLayoutRounding = true;
+        SnapsToDevicePixels = true;
+        TextOptions.SetTextRenderingMode(this, TextRenderingMode.Auto);
+        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Ideal);
         Icon = AppBranding.WindowIcon;
         if(!Application.Current.Resources.Contains(AppTypography.ResourceKey))AppTypography.Apply(Svc.Settings.FontId);
         SetResourceReference(FontFamilyProperty,AppTypography.ResourceKey);

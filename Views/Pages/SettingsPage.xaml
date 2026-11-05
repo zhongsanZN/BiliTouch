@@ -1,4 +1,4 @@
-<UserControl x:Class="BiliTouch.Views.Pages.SettingsPage"
+﻿<UserControl xmlns:helpers="clr-namespace:BiliTouch.Helpers" x:Class="BiliTouch.Views.Pages.SettingsPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="{DynamicResource AppBackgroundBrush}">
@@ -26,6 +26,8 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
+<helpers:SkinSurface Kind="Home" Grid.RowSpan="2" VerticalAlignment="Top" Height="108"/>
+
                 <TextBlock Grid.Column="0" Text="应用设置" Style="{StaticResource PageTitleStyle}"
                            VerticalAlignment="Center" />
 
