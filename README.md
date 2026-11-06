@@ -27,7 +27,7 @@
 
 <br>
 
-<img width="100%" alt="BiliTouch 0.2.1 实际首页" src="docs/screenshot-home-0.2.1.png">
+<img width="100%" alt="BiliTouch 0.2.1 实际首页" src="docs/screenshot-home-current.png">
 
 </div>
 
