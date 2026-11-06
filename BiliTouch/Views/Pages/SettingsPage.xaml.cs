@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -9,12 +9,14 @@ namespace BiliTouch.Views.Pages;
 
 public partial class SettingsPage : UserControl
 {
+    internal TabNavigationGestures ModuleGestures {get;}
     private SettingsViewModel? _vm;
     private bool _subscribed;
 
     public SettingsPage()
     {
         InitializeComponent();
+        ModuleGestures = new TabNavigationGestures(this,ModuleContent,ModuleTabs);
         Loaded += OnLoaded;
     }
 

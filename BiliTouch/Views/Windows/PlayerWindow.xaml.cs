@@ -1118,6 +1118,7 @@ public partial class PlayerWindow : FluentWindow
         //   放在这里而不是只放构造函数里, 是为了让"设置页改完 → 点开下一个视频"立刻生效,
         //   不必重启。
         ApplyPreferredQuality();
+        _danmakuLoadCancellation?.Cancel();
         _danmaku.Clear();
         _danmakuRaw.Clear();
         // 相关视频同属"上一条视频"的界面内容: 换片瞬间就必须清掉, 不能等新片的
@@ -1237,6 +1238,7 @@ public partial class PlayerWindow : FluentWindow
         // 里面还是上一条的分P 列表 —— 而合集面板是窗口内的 Grid, 收起就跟着一起没了。
         _pages = new List<VideoPage>();
         _hasPages = false;
+        PagesSection.Visibility = Visibility.Collapsed;
         ClosePagesPopup();
     }
 
@@ -5368,24 +5370,28 @@ public partial class PlayerWindow : FluentWindow
     ///   GetDanmakuAsync 会走 "时长未知 ⇒ 按最多 20 段拉" 的兜底 —— 一个 3 分钟的短视频
     ///   也要发 20 个段请求, 白白浪费 19 个。传了时长就只拉真正存在的段(3 分钟 = 1 段)。
     /// </param>
+    private CancellationTokenSource? _danmakuLoadCancellation;
     private async Task LoadDanmakuAsync(long cid, int durationHintSec = -1)
     {
         if (cid <= 0) return;
+        _danmakuLoadCancellation?.Cancel();
+        var cancellation=_danmakuLoadCancellation=new CancellationTokenSource();
+        var generation=_loadGen;
         try
         {
             // 传视频总时长, 让接口只拉真正需要的分段(6 分钟一段), 长视频不再白拉几十个请求。
-            // 条数上限 6000: 覆盖绝大多数视频的完整弹幕量, 同时不至于让内存/排序压力过大。
+            // 保留最多 60000 条；超限按完整时间轴均匀采样，不能截断后半段。
             var durationSec = durationHintSec >= 0
                 ? durationHintSec
                 : _totalMs > 0 ? (int)(_totalMs / 1000) : 0;
-            var list = await Svc.Api.GetDanmakuAsync(cid, durationSec, 6000);
+            var list = await Svc.Api.GetDanmakuAsync(cid, durationSec, 60000, cancellation.Token);
             await Dispatcher.InvokeAsync(() =>
             {
                 if (_closing) return;
                 // ★ 取回来时这条弹幕还必须属于**当前这一段**: 预加载提前之后, 它和"换下一个视频"
                 //   之间的窗口从几百毫秒拉长到了整段取流时间, 旧 cid 的结果会把新视频的弹幕盖掉
                 //   (表现: 新视频弹幕全灭, 或者满屏上一条视频的弹幕)。
-                if (_currentCid != cid) return;
+                if (_currentCid != cid || generation != _loadGen) return;
                 // 原始列表按时间排好序存下来, 供后续"改屏蔽词立即重算"使用
                 _danmakuRaw.Clear();
                 _danmakuRaw.AddRange(list.OrderBy(d => d.Time));
@@ -8548,14 +8554,15 @@ public partial class PlayerWindow : FluentWindow
         _hasPages = _pages.Count > 1;
 
         if (BtnPages == null) return;
-        BtnPages.Visibility = _hasPages ? Visibility.Visible : Visibility.Collapsed;
+        PagesSection.Visibility = _hasPages ? Visibility.Visible : Visibility.Collapsed;
         if (!_hasPages) ClosePagesPopup();
         else {
             UpdatePagesTitle();
             PagesList.ItemsSource = _pages;
             PagesList.SelectedItem = _pages.FirstOrDefault(p => p.Cid == _currentCid);
-            PagesMetaText.Text = $"共 {_pages.Count} 个分P";
+            PagesMetaText.Text = $"分P {CurrentPageIndex()}/{_pages.Count}";
             PagesPanel.Visibility = Visibility.Visible;
+            UpdatePagesTitle();
         }
     }
 
@@ -8564,6 +8571,7 @@ public partial class PlayerWindow : FluentWindow
     {
         if (PagesPanel == null || !(PagesPanel.Visibility == Visibility.Visible)) return;
         PagesPanel.Visibility = Visibility.Collapsed;
+        UpdatePagesTitle();
     }
 
     /// <summary>
@@ -8574,9 +8582,8 @@ public partial class PlayerWindow : FluentWindow
     {
         if (BtnPages == null || BtnPagesText == null) return;
         var cur = CurrentPageIndex();
-        BtnPagesText.Text = cur > 0
-            ? $"分P {cur}/{_pages.Count}"
-            : $"分P ({_pages.Count})";
+        PagesMetaText.Text = cur > 0 ? $"分P {cur}/{_pages.Count}" : $"分P · {_pages.Count} 集";
+        BtnPagesText.Text = PagesPanel.Visibility == Visibility.Visible ? "收起分P" : "展开分P";
     }
 
     /// <summary>当前正在播的是第几个 P(1 起; 定位不上返回 0)</summary>
@@ -8595,6 +8602,7 @@ public partial class PlayerWindow : FluentWindow
         var open = (PagesPanel.Visibility == Visibility.Visible);
         PagesPanel.Visibility = open ? Visibility.Collapsed : Visibility.Visible;
         BtnPages.Tag = !open ? "on" : "off";
+        UpdatePagesTitle();
         if (!open)
         {
             if (PagesList != null)
@@ -8602,7 +8610,7 @@ public partial class PlayerWindow : FluentWindow
                 PagesList.ItemsSource = _pages;
                 PagesList.SelectedItem = _pages.FirstOrDefault(p => p.Cid == _currentCid);
             }
-            PagesMetaText.Text = $"共 {_pages.Count} 个分P";
+            PagesMetaText.Text = $"分P {CurrentPageIndex()}/{_pages.Count}";
         }
     }
 

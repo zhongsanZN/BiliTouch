@@ -1734,14 +1734,7 @@
                                            pages 里永远有 1 项, 判 Count > 1 才知道是不是真分P。
                                          ★ 文案随播放位置变成 "分P 12/40" —— 40 段的纪录片只靠弹层
                                            里的高亮, 用户根本不知道自己在第几段。 -->
-                                    <Button x:Name="BtnPages" Grid.Column="3" Visibility="Collapsed"
-                                            Style="{StaticResource ContentActionTabStyle}"
-                                            HorizontalAlignment="Left" VerticalAlignment="Center"
-                                            Click="OnPagesToggleClick"
-                                            ToolTip="查看/切换分P">
-                                        <TextBlock x:Name="BtnPagesText" Text="分P" FontSize="15"
-                                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                                    </Button>
+
                                 </Grid>
                             </Border>
 
@@ -1806,7 +1799,17 @@
                                          合集本来就在简介面板里、切 tab 时会被一起隐藏, 把它放在
                                          相关视频**之前**可以让用户回到简介时第一眼看到的是合集(强相关),
                                          而不是被一长串推荐视频顶到最底部。 -->
-                                                                    <Grid x:Name="PagesPanel" Visibility="Collapsed" Margin="20,16,20,0">
+                                                                    <Grid x:Name="PagesSection" Visibility="Collapsed" Margin="0,16,0,0">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0" Padding="20,14,14,8">
+        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="PagesMetaText" Text="分P" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <Button x:Name="BtnPages" Grid.Column="1" Style="{StaticResource SubtleButtonStyle}" Click="OnPagesToggleClick" ToolTip="展开或收起分P">
+                <TextBlock x:Name="BtnPagesText" Text="收起分P" Foreground="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}"/>
+            </Button>
+        </Grid>
+    </Border>
+<Grid x:Name="PagesPanel" Grid.Row="1" Visibility="Collapsed" Margin="0">
                                     <Border Background="{DynamicResource OverlaySurfaceBrush}"
                                             CornerRadius="10" BorderThickness="1"
                                             BorderBrush="{DynamicResource FlyoutBorderBrush}"
@@ -1820,9 +1823,7 @@
                                                 <RowDefinition Height="Auto" />
                                                 <RowDefinition Height="*" />
                                             </Grid.RowDefinitions>
-                                            <TextBlock x:Name="PagesMetaText" Grid.Row="0" Text="共 0 个分P"
-                                                       Style="{StaticResource MetaTextStyle}"
-                                                       Margin="14,11,14,7" />
+
                                             <!-- ListBox 而非 ItemsControl: 靠 SelectedItem 给"正在播的那一段"高亮,
                                                  且自带 BringIntoView(打开时自动滚到当前段)。 -->
                                             <ListBox x:Name="PagesList" Grid.Row="1"
@@ -1889,6 +1890,7 @@
                                         </Grid>
                                     </Border>
                                 </Grid>
+</Grid>
 <Grid x:Name="SeasonPanel" Visibility="Collapsed"
                                           Background="Transparent" Margin="0,16,0,0" MaxHeight="420">
                                         <Grid.RowDefinitions>

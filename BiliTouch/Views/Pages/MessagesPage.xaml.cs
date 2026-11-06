@@ -9,11 +9,13 @@ using BiliTouch.ViewModels;
 namespace BiliTouch.Views.Pages;
 public partial class MessagesPage : UserControl
 {
+    internal TabNavigationGestures ModuleGestures {get;}
  private MessagesViewModel? Vm=>DataContext as MessagesViewModel;
  private bool _scrollScheduled;
  public MessagesPage()
  {
   InitializeComponent();
+        ModuleGestures = new TabNavigationGestures(this,ModuleContent,ModuleTabs);
   ContactSelection.Install(SessionScroll,item=>{if(item is MsgSession session)_=OpenSessionAsync(session);});
   DataContextChanged+=(_,e)=>{if(e.OldValue is MessagesViewModel old)old.Messages.CollectionChanged-=OnMessagesChanged;if(e.NewValue is MessagesViewModel vm)vm.Messages.CollectionChanged+=OnMessagesChanged;};
   Loaded+=async(_,_)=>{if(Vm!=null && Vm.Sessions.Count==0)await Vm.LoadAsync();};

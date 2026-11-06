@@ -130,8 +130,11 @@
         <!-- 刷新使用独立覆盖层，不参与标题行测量；位置与动态页保持一致。 -->
         <Canvas Grid.Row="0" Grid.RowSpan="3" Panel.ZIndex="10">
             <Button x:Name="HomePartitionButton" Width="44" Height="44" Canvas.Right="76" Canvas.Top="44"
-                    Style="{StaticResource BareIconButtonStyle}" Click="OnPartitionClick" ToolTip="分区" AutomationProperties.Name="分区">
-                <helpers:SkinActionIcon Kind="Puzzle" Width="42" Height="42" Fill="{DynamicResource TextPrimaryBrush}" />
+                    Click="OnPartitionClick" ToolTip="分区" AutomationProperties.Name="分区">
+                <Button.Style><Style TargetType="Button" BasedOn="{StaticResource IconButtonStyle}"><Style.Triggers><DataTrigger Binding="{Binding IsEnabled,Source={x:Static helpers:SkinService.Instance}}" Value="True"><Setter Property="Background" Value="Transparent" /></DataTrigger></Style.Triggers></Style></Button.Style>
+                <helpers:SkinActionIcon Kind="Puzzle" Stretch="Uniform" Fill="{DynamicResource TextPrimaryBrush}">
+                    <helpers:SkinActionIcon.Style><Style TargetType="helpers:SkinActionIcon"><Setter Property="Width" Value="20"/><Setter Property="Height" Value="20"/><Style.Triggers><DataTrigger Binding="{Binding IsEnabled,Source={x:Static helpers:SkinService.Instance}}" Value="True"><Setter Property="Width" Value="42"/><Setter Property="Height" Value="42"/></DataTrigger></Style.Triggers></Style></helpers:SkinActionIcon.Style>
+                </helpers:SkinActionIcon>
             </Button>
             <Button x:Name="HomeRefreshButton" Width="44" Height="44" Canvas.Right="24" Canvas.Top="44"
                     Style="{StaticResource IconButtonStyle}" Click="OnRefreshClick" ToolTip="刷新">

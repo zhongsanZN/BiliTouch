@@ -95,7 +95,7 @@ public partial class MainWindow : FluentWindow
     protected override void OnHorizontalWheel(int delta)
     {
         if (delta == 0) return;
-        if (_vm.Current is not (PageKey.Home or PageKey.Mine)) return;
+        if (_vm.Current is not (PageKey.Home or PageKey.Mine or PageKey.Settings or PageKey.Messages)) return;
 
         // ★★★ 2026-11-04 第四次修触控板横滑。这一版把"限位"的判据彻底换掉。
         //
@@ -132,7 +132,8 @@ public partial class MainWindow : FluentWindow
         _hWheelConsumed = true;
 
         // ★ 方向: delta > 0 ⇒ 手指向左滑 ⇒ 内容向左跟手 ⇒ 露出**右**边那页 ⇒ +1
-        if(_vm.Current==PageKey.Mine && PageOf(PageKey.Mine) is MinePage mine)
+        if(CurrentModuleGestures is {} gestures) gestures.Step(_hWheelInvert?-dir:dir);
+        else if(_vm.Current==PageKey.Mine && PageOf(PageKey.Mine) is MinePage mine)
             mine.HandleHorizontalWheel(_hWheelInvert?-dir:dir);
         else if (PageOf(PageKey.Home) is HomePage home)
             home.HandleHorizontalWheel(_hWheelInvert ? -dir : dir);
@@ -223,6 +224,12 @@ public partial class MainWindow : FluentWindow
     /// 两个侧键都当返回: 各家鼠标把拇指键映射成哪个 XButton 并不统一, 本应用也没有
     /// "前进"这个语义可用(播放器那边同样处理)。
     /// </summary>
+    private TabNavigationGestures? CurrentModuleGestures => _vm.Current switch
+    {
+        PageKey.Settings => (PageOf(PageKey.Settings) as SettingsPage)?.ModuleGestures,
+        PageKey.Messages => (PageOf(PageKey.Messages) as MessagesPage)?.ModuleGestures,
+        _ => null
+    };
     private void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton != MouseButton.XButton1 && e.ChangedButton != MouseButton.XButton2) return;
@@ -233,7 +240,8 @@ public partial class MainWindow : FluentWindow
             HidePartition();
             return;
         }
-        if (EmbeddedHost.Visibility != Visibility.Visible) return;
+        if (EmbeddedHost.Visibility != Visibility.Visible)
+        { if(CurrentModuleGestures is {} gestures){gestures.Step(e.ChangedButton==MouseButton.XButton1?-1:1);e.Handled=true;}return; }
         e.Handled = true;
         GoBackEmbedded();
     }

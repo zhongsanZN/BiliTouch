@@ -9,7 +9,7 @@
             <Grid.RowDefinitions><RowDefinition Height="{x:Static helpers:PageHeaderMetrics.TitleRow}"/><RowDefinition Height="{x:Static helpers:PageHeaderMetrics.TabsRow}"/></Grid.RowDefinitions>
             <helpers:SkinSurface Grid.RowSpan="2" Kind="Home"/>
             <TextBlock x:Name="ShellPageTitle" Text="应用设置" Style="{StaticResource PageTitleStyle}" Margin="{x:Static helpers:PageHeaderMetrics.TitleMargin}" VerticalAlignment="Top"/>
-                <helpers:NavigationTabs Grid.Row="1" HorizontalAlignment="Left" Margin="{x:Static helpers:PageHeaderMetrics.TabsMargin}">
+                <helpers:NavigationTabs x:Name="ModuleTabs" Grid.Row="1" HorizontalAlignment="Left" Margin="{x:Static helpers:PageHeaderMetrics.TabsMargin}">
                     <StackPanel Orientation="Horizontal">
                         <RadioButton GroupName="SettingsTab" Style="{StaticResource UnderlineTabStyle}"
                                      Content="通用"
@@ -26,7 +26,7 @@
                     </StackPanel>
                 </helpers:NavigationTabs>
         </Grid>
-        <ScrollViewer FocusVisualStyle="{x:Null}" Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,8,0">
+        <ScrollViewer x:Name="ModuleContent" FocusVisualStyle="{x:Null}" Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,8,0">
         <StackPanel Margin="36,12,36,32">
             <!-- ============ 内容区 ============
                  Tab 切换 = ContentControl + DataTriggers 换 ContentTemplate。

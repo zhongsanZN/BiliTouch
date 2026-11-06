@@ -39,7 +39,7 @@ internal static class Release022Tests {
   var task=gallery.OpenAsync(new[]{url,url+"?next"},0);var deadline=Environment.TickCount64+5000;while(!task.IsCompleted && Environment.TickCount64<deadline)Pump(20);task.GetAwaiter().GetResult();Pump(100);
   var picture=Field<Image>(gallery,"_image");check(picture.Width>gallery.NaturalWidth*2,"fit mode enlarges a smaller original to use the available gallery area");
   var previous=Field<Button>(gallery,"_previous");var next=Field<Button>(gallery,"_next");check(previous.HorizontalAlignment==HorizontalAlignment.Left && next.HorizontalAlignment==HorizontalAlignment.Right && previous.VerticalAlignment==VerticalAlignment.Center,"gallery navigation belongs to the left and right picture edges");
-  var fit=Field<Button>(gallery,"_fitButton");fit.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));Pump(50);check(Math.Abs(picture.Width-gallery.NaturalWidth)<1,"original-size control performs a visible size change");fit.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));Pump(50);check(picture.Width>gallery.NaturalWidth*2,"fit control restores the enlarged fitted picture");
+  check(!Desc<Button>(gallery).Any(b=>b.Content is TextBlock t && t.Text is "原尺寸" or "适应窗口"),"gallery fits automatically without a lower-left size toggle");
   check(Field<Button>(gallery,"_save").VerticalAlignment==VerticalAlignment.Bottom && Field<Button>(gallery,"_collapse").VerticalAlignment==VerticalAlignment.Top,"save and close controls sit at picture corners");
   Pixels(gallery,Path.Combine(output,"release022-gallery.png"));
   gallery.SetInline(true);var viewport=Field<Grid>(gallery,"_viewport");bool bubbled=false;

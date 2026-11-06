@@ -1426,10 +1426,31 @@ public partial class ApiClient
     ///   1(转发)/ 11(视频) → 11;  2(图文)/ 4(文字)/ 17 → 17;  其它默认 11。
     /// ★ oid 用 `dynamic_id`(不是 id_str 的字符串形式), 接口要的是数字。
     /// </summary>
-    public Task<(bool ok, string? err)> LikeDynamicAsync(string id, bool liked) =>
-        PostFormAsync("https://api.bilibili.com/x/dynamic/feed/dyn/thumb",
-            new Dictionary<string, string> { ["dyn_id_str"] = id, ["up"] = liked ? "1" : "0" },
-            "https://t.bilibili.com/");
+    internal static HttpRequestMessage BuildDynamicLikeRequest(string id,bool liked,string csrf,string cookie)
+    {
+        var request=new HttpRequestMessage(HttpMethod.Post,"https://api.bilibili.com/x/dynamic/feed/dyn/thumb?csrf="+Uri.EscapeDataString(csrf));
+        request.Headers.TryAddWithoutValidation("Cookie",cookie);
+        request.Headers.TryAddWithoutValidation("Referer","https://t.bilibili.com/");
+        request.Headers.TryAddWithoutValidation("Origin","https://t.bilibili.com");
+        request.Content=new StringContent(JsonSerializer.Serialize(new{dyn_id_str=id,up=liked?1:2,spmid="333.1369.0.0",from_spmid="333.999.0.0"}),Encoding.UTF8,"application/json");
+        return request;
+    }
+    public async Task<(bool ok,string? err)> LikeDynamicAsync(string id,bool liked)
+    {
+        if(!long.TryParse(id,out var numeric) || numeric<=0)return(false,"动态编号无效");
+        var csrf=SessionManager.Instance.Current.BiliJct;
+        if(string.IsNullOrEmpty(csrf))return(false,"请先登录后点赞");
+        try
+        {
+            await EnsureWriteReadyAsync();
+            using var request=BuildDynamicLikeRequest(id,liked,csrf,AppendFingerprint(SessionManager.Instance.BuildCookieHeader()));
+            using var response=await _http.SendAsync(request);
+            using var json=JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var code=json.RootElement.TryGetProperty("code",out var codeNode)?codeNode.GetInt32():-999;
+            return code==0?(true,null):(false,GetStr(json.RootElement,"message"));
+        }
+        catch(Exception ex){return(false,ex.Message);}
+    }
 
     public async Task<List<Models.DynamicComment>?> GetDynamicCommentsAsync(string commentOid, int replyType, int count = 2)
     {
@@ -2513,13 +2534,13 @@ public partial class ApiClient
     /// <param name="max">条数上限</param>
     /// <returns>按时间排序的弹幕(时间秒 / 文本 / 模式 / 颜色)</returns>
     public async Task<List<RawDanmaku>>
-        GetDanmakuAsync(long cid, int durationSec = 0, int max = 6000)
+        GetDanmakuAsync(long cid, int durationSec = 0, int max = 60000, CancellationToken cancellationToken = default)
     {
         var result = new List<RawDanmaku>();
 
         // 启动硬超时: 单 SocketsHttpHandler 实例共用连接池, 超时设 15s 就够,
         // 但外层再兜一个, 防止某个段卡住时整页干等。
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         try
         {
@@ -2530,7 +2551,7 @@ public partial class ApiClient
             segCount = Math.Min(segCount, 120); // 上限保护(12 小时)
 
             var segments = new List<RawDanmaku>[segCount];
-            var sem = new SemaphoreSlim(4); // 并发闸门: 同时最多 4 个段请求
+            using var sem = new SemaphoreSlim(4); // 并发闸门: 同时最多 4 个段请求
 
             var tasks = new List<Task>(segCount);
             for (var i = 0; i < segCount; i++)
@@ -2541,8 +2562,15 @@ public partial class ApiClient
                     await sem.WaitAsync(cts.Token).ConfigureAwait(false);
                     try
                     {
-                        segments[index] = await FetchDanmakuSegmentAsync(cid, index + 1, cts.Token)
-                            .ConfigureAwait(false) ?? new List<RawDanmaku>();
+                        List<RawDanmaku>? segment=null;
+                        for(var attempt=0;attempt<2 && segment==null;attempt++)
+                        {
+                            using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+                            timeout.CancelAfter(TimeSpan.FromSeconds(12));
+                            segment=await FetchDanmakuSegmentAsync(cid,index+1,timeout.Token).ConfigureAwait(false);
+                            if(segment==null && !cts.IsCancellationRequested)await Task.Delay(150,cts.Token).ConfigureAwait(false);
+                        }
+                        segments[index]=segment ?? new();
                     }
                     catch
                     {
@@ -2563,21 +2591,26 @@ public partial class ApiClient
             foreach (var seg in segments)
                 if (seg is { Count: > 0 }) merged.AddRange(seg);
 
+            if (cancellationToken.IsCancellationRequested) return result;
             if (merged.Count == 0) return await FetchLegacyDanmakuAsync(cid, max).ConfigureAwait(false);
             merged.Sort((a, b) => a.Time.CompareTo(b.Time));
 
-            foreach (var d in merged)
-            {
-                if (result.Count >= max) break;
-                if (string.IsNullOrWhiteSpace(d.Text)) continue;
-                result.Add(d);
-            }
+            result.AddRange(LimitDanmakuTimeline(merged.Where(d=>!string.IsNullOrWhiteSpace(d.Text)).ToList(),max));
         }
         catch (Exception ex)
         {
             App.ReportError(ex);
         }
         return result;
+    }
+
+    // Bound memory without dropping the latter half of a dense video's timeline.
+    internal static IEnumerable<RawDanmaku> LimitDanmakuTimeline(List<RawDanmaku> items,int max)
+    {
+        if(max<=0)yield break;
+        if(items.Count<=max){foreach(var item in items)yield return item;yield break;}
+        if(max==1){yield return items[0];yield break;}
+        for(var i=0;i<max;i++)yield return items[(int)((long)i*(items.Count-1)/(max-1))];
     }
 
     private async Task<List<RawDanmaku>> FetchLegacyDanmakuAsync(long cid, int max)
@@ -2596,11 +2629,11 @@ public partial class ApiClient
                 if (fields.Length < 4 || !double.TryParse(fields[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var time) || !int.TryParse(fields[1], out var mode)) continue;
                 uint.TryParse(fields[3], out var color);
                 items.Add(new RawDanmaku(time, node.Value, mode, color));
-                if (items.Count >= max) break;
+
             }
             items.Sort((a, b) => a.Time.CompareTo(b.Time));
         } catch (Exception ex) { System.Diagnostics.Trace.WriteLine("Danmaku XML fallback: " + ex.Message); }
-        return items;
+        return LimitDanmakuTimeline(items,max).ToList();
     }
 
     /// <summary>拉取单个弹幕段并解析为 RawDanmaku 列表(失败返回 null)</summary>

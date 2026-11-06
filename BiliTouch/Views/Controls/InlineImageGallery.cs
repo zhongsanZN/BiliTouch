@@ -19,8 +19,7 @@ public sealed class InlineImageGallery:UserControl
     private readonly TextBlock _status=new(){VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(10,0,4,0)};
     private readonly TextBlock _hint=new(){HorizontalAlignment=HorizontalAlignment.Center,VerticalAlignment=VerticalAlignment.Center};
     private readonly Button _previous,_next;
-    private readonly Button _fitButton,_save;
-    private bool _fitted=true;
+    private readonly Button _save;
     private readonly Border _frame;
     private readonly Button _collapse;
     private string[] _urls=Array.Empty<string>();
@@ -43,9 +42,8 @@ public sealed class InlineImageGallery:UserControl
         _next=Button("›",()=>Move(1));_next.ToolTip="下一张";_next.HorizontalAlignment=HorizontalAlignment.Right;_next.VerticalAlignment=VerticalAlignment.Center;
         _collapse=Button("×",()=>CloseRequested?.Invoke());_collapse.ToolTip="关闭图片";_collapse.HorizontalAlignment=HorizontalAlignment.Right;_collapse.VerticalAlignment=VerticalAlignment.Top;
         var save=_save=Button("保存",()=>_=MediaActions.SaveImageAsync(CurrentUrl,"评论图片"));save.HorizontalAlignment=HorizontalAlignment.Right;save.VerticalAlignment=VerticalAlignment.Bottom;
-        _fitButton=Button("原尺寸",()=>{if(Zoom>1)ResetView();else{_fitted=!_fitted;ApplyFit();}});_fitButton.ToolTip="切换适应窗口与原始尺寸";_fitButton.HorizontalAlignment=HorizontalAlignment.Left;_fitButton.VerticalAlignment=VerticalAlignment.Bottom;
         _status.HorizontalAlignment=HorizontalAlignment.Center;_status.VerticalAlignment=VerticalAlignment.Bottom;_status.Margin=new Thickness(0,0,0,18);_status.Foreground=Brushes.White;_status.Background=new SolidColorBrush(Color.FromArgb(160,24,24,24));
-        foreach(var control in new UIElement[]{_previous,_next,_collapse,save,_fitButton,_status})_viewport.Children.Add(control);
+        foreach(var control in new UIElement[]{_previous,_next,_collapse,save,_status})_viewport.Children.Add(control);
         _frame=new Border{CornerRadius=new CornerRadius(8),Padding=new Thickness(0),Background=Brushes.Transparent,Child=_viewport};Content=_frame;
         _viewport.SizeChanged+=(_,_)=>ResetView();
         _viewport.PreviewMouseWheel+=(_,e)=>{if(IsInline)return;SetZoom(Zoom*(e.Delta>0?1.15:1/1.15));e.Handled=true;};
@@ -91,21 +89,20 @@ public sealed class InlineImageGallery:UserControl
     {
         _scale.ScaleX=_scale.ScaleY=1;_pan.X=_pan.Y=0;
         if(_naturalWidth<=0 || _naturalHeight<=0 || _viewport.ActualWidth<=0 || _viewport.ActualHeight<=0)return;
-        _fitted=true;ApplyFit();
+        ApplyFit();
     }
     private void ApplyFit()
     {
         _scale.ScaleX=_scale.ScaleY=1;_pan.X=_pan.Y=0;
         if(_naturalWidth<=0 || _naturalHeight<=0 || _viewport.ActualWidth<=0 || _viewport.ActualHeight<=0)return;
-        var fit=_fitted?Math.Min(_viewport.ActualWidth/_naturalWidth,_viewport.ActualHeight/_naturalHeight):1;
+        var fit=Math.Min(_viewport.ActualWidth/_naturalWidth,_viewport.ActualHeight/_naturalHeight);
         _image.Width=_naturalWidth*fit;_image.Height=_naturalHeight*fit;
-        ((TextBlock)_fitButton.Content).Text=_fitted?"原尺寸":"适应窗口";
         PositionControls();
     }
     private void SetZoom(double value){_scale.ScaleX=_scale.ScaleY=Math.Clamp(value,1,8);ClampPan();PositionControls();}
     private void PositionControls(){
         var x=Math.Max(0,(_viewport.ActualWidth-_image.Width*Zoom)/2)+8;var y=Math.Max(0,(_viewport.ActualHeight-_image.Height*Zoom)/2)+8;
-        _previous.Margin=new Thickness(x,8,8,8);_next.Margin=new Thickness(8,8,x,8);_collapse.Margin=new Thickness(8,y,x,8);_save.Margin=new Thickness(8,8,x,y);_fitButton.Margin=new Thickness(x,8,8,y);_status.Margin=new Thickness(0,0,0,y+10);
+        _previous.Margin=new Thickness(x,8,8,8);_next.Margin=new Thickness(8,8,x,8);_collapse.Margin=new Thickness(8,y,x,8);_save.Margin=new Thickness(8,8,x,y);_status.Margin=new Thickness(0,0,0,y+10);
     }
     private void ClampPan()
     {
