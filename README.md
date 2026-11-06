@@ -10,7 +10,7 @@
 
 作者：**中三** · 当前版本：**0.2.3**
 
-[下载安装](https://github.com/zhongsanZN/BiliTouch/releases/latest) · [触控与手势](#触控与手势) · [功能改进](#功能改进) · [版本记录](docs/RELEASES.md) · [上游鸣谢](docs/ACKNOWLEDGEMENTS.md)
+[下载安装](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.2.3/BiliTouch-0.2.3-setup.exe) · [触控与手势](#触控与手势) · [功能改进](#功能改进) · [版本记录](docs/RELEASES.md) · [上游鸣谢](docs/ACKNOWLEDGEMENTS.md)
 
 *WPF · .NET 10 · LibVLC · Windows 10 / 11 x64*
 

@@ -128,3 +128,5 @@ if ($LASTEXITCODE -ne 0) { throw "setup.exe 编译失败" }
 Write-Host "完成:"
 Write-Host "  安装器     : $(Join-Path $Out "BiliTouch-$Version-setup.exe")"
 Write-Host "  便携版 zip : $zip"
+
+# GitHub Release 只上传 setup.exe；便携包留作本机构建产物。参见 Publish/RELEASE_POLICY.md。
