@@ -1,0 +1,22 @@
+name: Windows build
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore BiliTouch/BiliTouch.csproj
+      - name: Build application
+        run: dotnet build BiliTouch/BiliTouch.csproj -c Release --no-restore
+      - name: Compile WPF regression harness
+        run: dotnet build tests/TouchTests/TouchTests.csproj -c Release
