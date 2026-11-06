@@ -1,4 +1,4 @@
-<UserControl x:Class="BiliTouch.Views.Pages.MineOverviewPage"
+﻿<UserControl x:Class="BiliTouch.Views.Pages.MineOverviewPage"
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:helpers="clr-namespace:BiliTouch.Helpers" xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
  Background="{DynamicResource AppBackgroundBrush}">
@@ -10,9 +10,9 @@
   </StackPanel>
   <ScrollViewer x:Name="ProfileScroll" VerticalScrollBarVisibility="Auto" ScrollChanged="OnScrollChanged" Visibility="{Binding IsLoggedIn,Converter={StaticResource BoolToVis}}">
    <StackPanel Margin="36,8,36,28">
-    <Border Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="18" Padding="26" Margin="0,0,0,24">
+    <Border Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="18" Padding="0" Margin="0,0,0,24">
       <helpers:SkinProfileLayout x:Name="ProfileSkinLayout">
-      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <Grid Margin="26"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
       <Border Width="88" Height="88" CornerRadius="44" Background="{DynamicResource AccentSoftFillBrush}" VerticalAlignment="Top"><Border CornerRadius="44" helpers:Cover.Source="{Binding Face}"/></Border>
       <StackPanel Grid.Column="1" Margin="22,0,0,0">
        <TextBlock Text="{Binding Name}" FontSize="26" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap"/>

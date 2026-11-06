@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -48,8 +48,8 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     protected override FrameworkElement? ScaleRoot => InfoPanel;
 
-    private readonly LibVLC _libVLC;
-    private readonly MediaPlayer _mp;
+    private LibVLC _libVLC = null!;
+    private MediaPlayer _mp = null!;
     private readonly DispatcherTimer _progressTimer;
     private string _currentBvid = "";
     /// <summary>当前播的是离线缓存里的本地文件(没有 aid/cid, 也没有在线互动)</summary>
@@ -536,6 +536,11 @@ public partial class PlayerWindow : FluentWindow
         // 查找断链), PlacementTarget 为空 → 弹层跑到了浮层左上角(真机截图实证)。
         // 同时右缘对齐: Placement=Top 默认左缘对齐, 这两个弹层在控制栏右段, 左对齐偏丑;
         // Opened 时量出宽度差做负偏移, 弹层右缘与按钮右缘平齐。
+        VolumePopup.Child.MouseLeave += OnVolumeHoverLeave;
+        SpeedPopup.PlacementTarget = SpeedBtn;
+        RightAlignPopup(QualityPopup, BtnQuality);
+        RightAlignPopup(DanmakuAreaPopup, BtnDanmakuArea);
+        RightAlignPopup(SpeedPopup, SpeedBtn);
         QualityPopup.PlacementTarget = BtnQuality;
         DanmakuAreaPopup.PlacementTarget = BtnDanmakuArea;
         // 右缘对齐(弹层右缘 = 按钮右缘)。注意必须等弹层布局完成后再量宽:
@@ -608,170 +613,10 @@ public partial class PlayerWindow : FluentWindow
             $"plugins dir = {VlcCore.PluginsDirectory} exists = {Directory.Exists(VlcCore.PluginsDirectory)}\n"
         );
 
-        _mp = new MediaPlayer(_libVLC);
-        // 登记窗口级 MediaPlayer: 进程退出时 VlcCore 据此判断能否安全释放共享原生库
         _playerRegistered = true;
         VlcCore.RegisterPlayer();
-        VideoView.MediaPlayer = _mp;
-
-        _mp.TimeChanged += OnTimeChanged;
-        _mp.LengthChanged += OnLengthChanged;
-        _mp.EndReached += OnEndReached;
-        // Playing 事件触发时隐藏加载遮罩; 若刚切完清晰度则恢复进度
-        // 注意: LibVLC 事件都在其内部线程触发, 必须用 BeginInvoke 异步派发到 UI 线程。
-        // 若用同步 Invoke, UI 线程可能正阻塞在 _mp 属性调用等 LibVLC 内部锁, 双方互相等待 => 死锁
-        // 另外每个派发体都要先判 _closing: 窗口已开始关闭时回调可能仍在队列里, 必须丢弃。
-        _mp.Playing += (_, _) => Dispatcher.BeginInvoke(new Action(() =>
-        {
-            if (_closing) return;
-            // 首帧耗时(从 PlayMedia 算起): 与 [Timing] 那行对齐, 用来验证起播优化有没有效果
-            if (_playWatch != null)
-            {
-                WriteLibVLCDebug($"[Timing] first-frame={_playWatch.ElapsedMilliseconds}ms\n");
-                _playWatch = null;
-            }
-            // aout(音频输出)就绪后把应用侧记住的音量补写回去:
-            // 无 aout 时 libvlc_audio_set_volume 是静默丢弃的(反编译 3.8.0 确认 setter 不看返回值),
-            // 长视频远端 DASH 在起播/缓冲/换清晰度期间常出现"用户滚轮调了音量但 aout 还没建好"的窗口,
-            // 不补写的话 aout 就绪后音量会回到原生侧的旧值 —— 表现就是"滚轮调音量没反应"。
-            // 放在函数最前: 后面 _resumeAfterSwitchMs 的 MarkSeekIssued 可能立刻进入 seek 静音,
-            // 顺序反了会把静音状态顶掉(声音先于画面出来)。
-            try { _mp.Volume = _volumeCache; } catch { }
-            LogAudioStateOnce();
-            HideLoading();
-            // 把 EOF 时切黑的手势层还原成近透明(见 OnEndReached 里切黑的原因):
-            // 新 input 的 vout 已经起来, 后面要能看见画面。
-            // ★★ 必须走 <see cref="ReleaseFullscreenCover"/> 而不是直接赋值(2026-10-13 修):
-            //   原来这里是 `VideoAreaRoot.Background = VideoAreaBackBrush;` + 顺手把
-            //   `_fullscreenCoverArmed = false;` —— 两条都**绕过了 _resizeHold 闸门**。
-            //   后果: 拖边缘 resize 期间 LibVLC 反复重协商 vout, 每出一帧就触发一次 Playing
-            //   ⇒ 遮罩被撤掉、露出黑底, 下一轮重协商又压黑 —— 用户看到的就是
-            //   "视频区边缘黑/亮交替抽动"(同一道闸本来就是为了这个才加的, 见 ArmResizeCover)。
-            //   顺带还解释了"拖动时偶尔能看到一块白": 撤罩那一瞬 vout 还没帧, 白底露出来。
-            ReleaseFullscreenCover();
-            // ★★★ 绝对兜底(2026-10-17 修"点重播黑屏", 第三版)。
-            //
-            //   前两版分别判 `_fullscreenCoverArmed`(被 OnModalResizeStarted 清零 ⇒ 失效)
-            //   与"底色 == Brushes.Black"(理论上无条件成立, 用户仍报黑屏)。两次都失败,
-            //   说明不能再猜 —— **要么这个 Playing 压根没触发, 要么压住画面的不是这一层。**
-            //   所以把现场全部记进 vlc-debug.txt: 下次复现看日志就能定位。
-            //
-            //   ★ 特别注意: VideoAreaRoot 是 VideoView.Content 浮层窗口里的一层, 位于
-            //   vout HWND **之上**; 若真正压住画面的是 vout HWND **自身的类背景刷**
-            //   (见 ApplyHwndHostBlackBackground / VideoBackdropInterop), 改这里就是改错了地方。
-            WriteLibVLCDebug(
-                $"\n[Playing] armed={_fullscreenCoverArmed} resizeHold={_resizeHold} " +
-                $"maxArmed={_maximizeCoverArmed} ended={_ended} " +
-                $"bg={DescribeVideoAreaBg()} " +
-                $"time={SafeReadTime()} state={_mp.State}\n");
-            if (VideoAreaRoot != null && VideoAreaRoot.Background == Brushes.Black)
-            {
-                _fullscreenCoverArmed = false;
-                VideoAreaRoot.Background = VideoAreaBackBrush;
-                WriteLibVLCDebug("[Playing] 已强制揭幕手势层\n");
-            }
-            // ★ 视频没填满时的白色边带(2026-10-17): 起播后要把那块原生窗口底色刷黑。
-            //   ★★ 不能只调一次就完事: 实测 `Playing` 触发时 libvlc 的 `Static` 子窗口
-            //      **还没建出来**(那一刻拿到的句柄是 0, 修复静默跳过), vout 建好之后才有。
-            //      所以这里起一个**有限次重试**的定时器, 命中即停。
-            //   ★ 用定时器而不是单个 BeginInvoke: vout 建立耗时随片源/网速变化(实测 200ms~1s),
-            //     排一拍常常还是太早。重试上限 10 次 × 120ms ≈ 1.2s, 足够覆盖;
-            //     命中后立刻停, 不常驻。
-            StartVideoBackdropFix();
-            UpdatePlayButton();
-            StartControlsHideCountdown();   // 播放中才开始倒计时自动隐藏
-            // 聆听态: 起播后把文案里的秒数对齐到真实位置(切流前后 _mp.Time 会有几十毫秒偏差),
-            // 并确保声波律动已经在跑(切清晰度/换片都会重建 Media, 但定时器是窗口级的, 不会断)。
-            if (_isListenMode)
-            {
-                UpdateListenLabel();
-                StartListenWave();
-            }
-            if (_resumeAfterSwitchMs > 0)
-            {
-                var resume = _resumeAfterSwitchMs;
-                _resumeAfterSwitchMs = 0;
-                try { _mp.Time = resume; } catch { }
-                // 走一次 MarkSeekIssued: 钉住进度条/时间显示, 并启动 seek 看门狗,
-                // 否则恢复进度那一下也可能被回写顶回 0(表现是"切完清晰度从头播")。
-                // ★ 不再叠"补跳"定时器(2026-10-17 手术删): 补跳那一套(反复重设 Time
-                //   + 要求连续 3 次稳住)实测会把位置冲过头, 而且主路已换成 seek 一次
-                //   就准的合流单流。万一这一次没接住, 交给下面的看门狗重建一次即可。
-                MarkSeekIssued(resume);
-            }
-        }));
-        // 暂停/停止时同步按钮图标(否则起播后图标停留在初始状态, 看起来像"反了")
-        _mp.Paused += (_, _) => Dispatcher.BeginInvoke(new Action(() =>
-        {
-            if (_closing) return;
-            // ★ 弹幕时钟跟着视频冻结/解冻(用户要求"视频暂停时弹幕不动")。
-            //   ★ LibVLCSharp 的 `Paused` 事件签名是 **EventHandler<EventArgs>**(参数里没有
-            //     "新的暂停态"), 而 `MediaPlayer` 也**没有** `IsPaused` 属性 —— 只有 `IsPlaying`。
-            //     播完(EndReached)时 IsPlaying 同样为 false, 顺带把弹幕也停了, 正合需要。
-            //     这里的一次原生调用没问题 —— 暂停是低频事件, 与逐帧路径(必须零原生调用)
-            //     不在一条路上。
-            try { SetDanmakuClockRunning(_mp.IsPlaying); } catch { /* 原生对象可能已失效 */ }
-            UpdatePlayButton();
-            ShowControls();   // 暂停时控制栏常显(没有"遮挡内容"的问题, 且用户多半要操作)
-        }));
-        _mp.EncounteredError += (_, _) => Dispatcher.BeginInvoke(new Action(() =>
-        {
-            if (_closing) return;
-            HideLoading();
-            FailOverlay.Visibility = Visibility.Visible;
-            var msg = "视频播放出错, 请检查网络或尝试其他清晰度";
-            FailText.Text = msg;
-            // 诊断: 把出错时正在播的 URL 也写进 debug 文件
-            WriteLibVLCDebug(
-                $"\n[EncounteredError] bvid={_currentBvid} cid={_currentCid} lastUrl={_lastPlayUrl}\n");
-        }));
-
-        // ★★★ vout 建立/重建的那一刻就把原生窗口底色处理掉(2026-10-17, 修"最大化/还原后白块")。
-        //   为什么必须要这个事件、不能只靠定时器: libvlc 的 `Static` 子窗口是**新建**出来的,
-        //   它第一次上屏时就已经是白的了 —— 定时器最快也要 120ms 之后才轮到, 那 120ms
-        //   在浅色主题下就是用户看到的那一下"白块"。何况最大化/还原/换清晰度都会重建它。
-        //   ⇒ 挂在这里: vout 一出现就立刻刷黑 + 起一轮短时守护。
-        // ★★ 这里**故意同步执行、不走 Dispatcher**(与别的事件处理器不同):
-        //   `Vout` 在 libvlc 的 vout 线程上触发, 而"改类背景刷"是纯 Win32 调用,
-        //   不碰任何 WPF 对象 —— 走 Dispatcher 会把动作推迟到下一轮消息循环, 就晚了。
-        //   原生回调里抛异常会直接终结进程, 所以整段包在 try 里。
-        // ★ 参数 `Count` = 当前 vout 个数; 为 0 表示 vout 被销毁, 不必处理。
-        _mp.Vout += (_, e) =>
-        {
-            if (_closing || e.Count <= 0) return;
-            try
-            {
-                var hwnd = FindVideoStaticWindow();
-                if (hwnd != IntPtr.Zero) VideoBackdropInterop.PaintClassBackgroundBlack(hwnd);
-            }
-            catch { /* 原生回调里绝不能抛 */ }
-
-            // UI 线程上再起一轮短时守护(兜住"vout 稍后才建好"与"稍后又被重绘"）
-            try
-            {
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    if (_closing) return;
-                    // ★★★ 重播黑屏的**主修**(2026-10-17): 这里才是可靠的揭幕时机。
-                    //
-                    //   `Playing` 那侧连修三次都没生效, 因为 vout 窗口是**独立于 MediaPlayer
-                    //   状态**建起来的: 重播时 input 确实在播(Time 在走), 但若 `Playing`
-                    //   因 EOF→新 input 的状态切换而没再发一次, 那一侧的兜底就一次都不跑,
-                    //   手势层的不透明黑永久留着 —— 而它位于 vout HWND 之上, 于是"黑幕后面
-                    //   视频正常播放"(用户原话)。
-                    //   ★ `Vout` 每次重建 vout 都发, 重播必然过这里 ⇒ 揭幕不会漏。
-                    //   顺带解释了"双击全屏后恢复": 全屏必然重建 vout, 于是顺带把黑幕撤了。
-                    if (VideoAreaRoot != null && VideoAreaRoot.Background == Brushes.Black)
-                    {
-                        _fullscreenCoverArmed = false;
-                        VideoAreaRoot.Background = VideoAreaBackBrush;
-                        WriteLibVLCDebug("[Vout] vout 重建, 强制揭幕手势层\n");
-                    }
-                    StartVideoBackdropFix();
-                }));
-            }
-            catch { /* 窗口正在销毁 */ }
-        };
+        CreateNativeVideoPlayer();
+        InitializeEnhancementUi();
 
         _currentBvid = bvid;
         // ★ 这条构造函数路径(直接带 bvid new 出窗口)**不走 ResetForNewMedia**
@@ -1932,6 +1777,174 @@ public partial class PlayerWindow : FluentWindow
     ///
     /// 之前 6 个播放点全都是 `_mp.Play(new Media(...))` 直接把 Media 丢掉, 一个都没释放。
     /// </summary>
+    private void CreateNativeVideoPlayer()
+    {
+        var player = new MediaPlayer(_libVLC);
+        _mp = player;
+        VideoView.MediaPlayer = _mp;
+
+        _mp.TimeChanged += OnTimeChanged;
+        _mp.LengthChanged += OnLengthChanged;
+        _mp.EndReached += OnEndReached;
+        // Playing 事件触发时隐藏加载遮罩; 若刚切完清晰度则恢复进度
+        // 注意: LibVLC 事件都在其内部线程触发, 必须用 BeginInvoke 异步派发到 UI 线程。
+        // 若用同步 Invoke, UI 线程可能正阻塞在 _mp 属性调用等 LibVLC 内部锁, 双方互相等待 => 死锁
+        // 另外每个派发体都要先判 _closing: 窗口已开始关闭时回调可能仍在队列里, 必须丢弃。
+        _mp.Playing += (_, _) => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_closing || !ReferenceEquals(player,_mp)) return;
+            // 首帧耗时(从 PlayMedia 算起): 与 [Timing] 那行对齐, 用来验证起播优化有没有效果
+            if (_playWatch != null)
+            {
+                WriteLibVLCDebug($"[Timing] first-frame={_playWatch.ElapsedMilliseconds}ms\n");
+                _playWatch = null;
+            }
+            // aout(音频输出)就绪后把应用侧记住的音量补写回去:
+            // 无 aout 时 libvlc_audio_set_volume 是静默丢弃的(反编译 3.8.0 确认 setter 不看返回值),
+            // 长视频远端 DASH 在起播/缓冲/换清晰度期间常出现"用户滚轮调了音量但 aout 还没建好"的窗口,
+            // 不补写的话 aout 就绪后音量会回到原生侧的旧值 —— 表现就是"滚轮调音量没反应"。
+            // 放在函数最前: 后面 _resumeAfterSwitchMs 的 MarkSeekIssued 可能立刻进入 seek 静音,
+            // 顺序反了会把静音状态顶掉(声音先于画面出来)。
+            try { _mp.Volume = _volumeCache; } catch { }
+            LogAudioStateOnce();
+            HideLoading();
+            // 把 EOF 时切黑的手势层还原成近透明(见 OnEndReached 里切黑的原因):
+            // 新 input 的 vout 已经起来, 后面要能看见画面。
+            // ★★ 必须走 <see cref="ReleaseFullscreenCover"/> 而不是直接赋值(2026-10-13 修):
+            //   原来这里是 `VideoAreaRoot.Background = VideoAreaBackBrush;` + 顺手把
+            //   `_fullscreenCoverArmed = false;` —— 两条都**绕过了 _resizeHold 闸门**。
+            //   后果: 拖边缘 resize 期间 LibVLC 反复重协商 vout, 每出一帧就触发一次 Playing
+            //   ⇒ 遮罩被撤掉、露出黑底, 下一轮重协商又压黑 —— 用户看到的就是
+            //   "视频区边缘黑/亮交替抽动"(同一道闸本来就是为了这个才加的, 见 ArmResizeCover)。
+            //   顺带还解释了"拖动时偶尔能看到一块白": 撤罩那一瞬 vout 还没帧, 白底露出来。
+            ReleaseFullscreenCover();
+            // ★★★ 绝对兜底(2026-10-17 修"点重播黑屏", 第三版)。
+            //
+            //   前两版分别判 `_fullscreenCoverArmed`(被 OnModalResizeStarted 清零 ⇒ 失效)
+            //   与"底色 == Brushes.Black"(理论上无条件成立, 用户仍报黑屏)。两次都失败,
+            //   说明不能再猜 —— **要么这个 Playing 压根没触发, 要么压住画面的不是这一层。**
+            //   所以把现场全部记进 vlc-debug.txt: 下次复现看日志就能定位。
+            //
+            //   ★ 特别注意: VideoAreaRoot 是 VideoView.Content 浮层窗口里的一层, 位于
+            //   vout HWND **之上**; 若真正压住画面的是 vout HWND **自身的类背景刷**
+            //   (见 ApplyHwndHostBlackBackground / VideoBackdropInterop), 改这里就是改错了地方。
+            WriteLibVLCDebug(
+                $"\n[Playing] armed={_fullscreenCoverArmed} resizeHold={_resizeHold} " +
+                $"maxArmed={_maximizeCoverArmed} ended={_ended} " +
+                $"bg={DescribeVideoAreaBg()} " +
+                $"time={SafeReadTime()} state={_mp.State}\n");
+            if (VideoAreaRoot != null && VideoAreaRoot.Background == Brushes.Black)
+            {
+                _fullscreenCoverArmed = false;
+                VideoAreaRoot.Background = VideoAreaBackBrush;
+                WriteLibVLCDebug("[Playing] 已强制揭幕手势层\n");
+            }
+            // ★ 视频没填满时的白色边带(2026-10-17): 起播后要把那块原生窗口底色刷黑。
+            //   ★★ 不能只调一次就完事: 实测 `Playing` 触发时 libvlc 的 `Static` 子窗口
+            //      **还没建出来**(那一刻拿到的句柄是 0, 修复静默跳过), vout 建好之后才有。
+            //      所以这里起一个**有限次重试**的定时器, 命中即停。
+            //   ★ 用定时器而不是单个 BeginInvoke: vout 建立耗时随片源/网速变化(实测 200ms~1s),
+            //     排一拍常常还是太早。重试上限 10 次 × 120ms ≈ 1.2s, 足够覆盖;
+            //     命中后立刻停, 不常驻。
+            StartVideoBackdropFix();
+            UpdatePlayButton();
+            StartControlsHideCountdown();   // 播放中才开始倒计时自动隐藏
+            // 聆听态: 起播后把文案里的秒数对齐到真实位置(切流前后 _mp.Time 会有几十毫秒偏差),
+            // 并确保声波律动已经在跑(切清晰度/换片都会重建 Media, 但定时器是窗口级的, 不会断)。
+            if (_isListenMode)
+            {
+                UpdateListenLabel();
+                StartListenWave();
+            }
+            if (_resumeAfterSwitchMs > 0)
+            {
+                var resume = _resumeAfterSwitchMs;
+                _resumeAfterSwitchMs = 0;
+                try { _mp.Time = resume; } catch { }
+                // 走一次 MarkSeekIssued: 钉住进度条/时间显示, 并启动 seek 看门狗,
+                // 否则恢复进度那一下也可能被回写顶回 0(表现是"切完清晰度从头播")。
+                // ★ 不再叠"补跳"定时器(2026-10-17 手术删): 补跳那一套(反复重设 Time
+                //   + 要求连续 3 次稳住)实测会把位置冲过头, 而且主路已换成 seek 一次
+                //   就准的合流单流。万一这一次没接住, 交给下面的看门狗重建一次即可。
+                MarkSeekIssued(resume);
+            }
+            if(_pauseAfterEnhancementSwitch){_pauseAfterEnhancementSwitch=false;_mp.SetPause(true);}
+        }));
+        // 暂停/停止时同步按钮图标(否则起播后图标停留在初始状态, 看起来像"反了")
+        _mp.Paused += (_, _) => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_closing || !ReferenceEquals(player,_mp)) return;
+            // ★ 弹幕时钟跟着视频冻结/解冻(用户要求"视频暂停时弹幕不动")。
+            //   ★ LibVLCSharp 的 `Paused` 事件签名是 **EventHandler<EventArgs>**(参数里没有
+            //     "新的暂停态"), 而 `MediaPlayer` 也**没有** `IsPaused` 属性 —— 只有 `IsPlaying`。
+            //     播完(EndReached)时 IsPlaying 同样为 false, 顺带把弹幕也停了, 正合需要。
+            //     这里的一次原生调用没问题 —— 暂停是低频事件, 与逐帧路径(必须零原生调用)
+            //     不在一条路上。
+            try { SetDanmakuClockRunning(_mp.IsPlaying); } catch { /* 原生对象可能已失效 */ }
+            UpdatePlayButton();
+            ShowControls();   // 暂停时控制栏常显(没有"遮挡内容"的问题, 且用户多半要操作)
+        }));
+        _mp.EncounteredError += (_, _) => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_closing || !ReferenceEquals(player,_mp)) return;
+            HideLoading();
+            FailOverlay.Visibility = Visibility.Visible;
+            var msg = "视频播放出错, 请检查网络或尝试其他清晰度";
+            FailText.Text = msg;
+            // 诊断: 把出错时正在播的 URL 也写进 debug 文件
+            WriteLibVLCDebug(
+                $"\n[EncounteredError] bvid={_currentBvid} cid={_currentCid} lastUrl={_lastPlayUrl}\n");
+        }));
+
+        // ★★★ vout 建立/重建的那一刻就把原生窗口底色处理掉(2026-10-17, 修"最大化/还原后白块")。
+        //   为什么必须要这个事件、不能只靠定时器: libvlc 的 `Static` 子窗口是**新建**出来的,
+        //   它第一次上屏时就已经是白的了 —— 定时器最快也要 120ms 之后才轮到, 那 120ms
+        //   在浅色主题下就是用户看到的那一下"白块"。何况最大化/还原/换清晰度都会重建它。
+        //   ⇒ 挂在这里: vout 一出现就立刻刷黑 + 起一轮短时守护。
+        // ★★ 这里**故意同步执行、不走 Dispatcher**(与别的事件处理器不同):
+        //   `Vout` 在 libvlc 的 vout 线程上触发, 而"改类背景刷"是纯 Win32 调用,
+        //   不碰任何 WPF 对象 —— 走 Dispatcher 会把动作推迟到下一轮消息循环, 就晚了。
+        //   原生回调里抛异常会直接终结进程, 所以整段包在 try 里。
+        // ★ 参数 `Count` = 当前 vout 个数; 为 0 表示 vout 被销毁, 不必处理。
+        _mp.Vout += (_, e) =>
+        {
+            if (_closing || !ReferenceEquals(player,_mp) || e.Count <= 0) return;
+            try
+            {
+                var hwnd = FindVideoStaticWindow();
+                if (hwnd != IntPtr.Zero) VideoBackdropInterop.PaintClassBackgroundBlack(hwnd);
+            }
+            catch { /* 原生回调里绝不能抛 */ }
+
+            // UI 线程上再起一轮短时守护(兜住"vout 稍后才建好"与"稍后又被重绘"）
+            try
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (_closing || !ReferenceEquals(player,_mp)) return;
+                    // ★★★ 重播黑屏的**主修**(2026-10-17): 这里才是可靠的揭幕时机。
+                    //
+                    //   `Playing` 那侧连修三次都没生效, 因为 vout 窗口是**独立于 MediaPlayer
+                    //   状态**建起来的: 重播时 input 确实在播(Time 在走), 但若 `Playing`
+                    //   因 EOF→新 input 的状态切换而没再发一次, 那一侧的兜底就一次都不跑,
+                    //   手势层的不透明黑永久留着 —— 而它位于 vout HWND 之上, 于是"黑幕后面
+                    //   视频正常播放"(用户原话)。
+                    //   ★ `Vout` 每次重建 vout 都发, 重播必然过这里 ⇒ 揭幕不会漏。
+                    //   顺带解释了"双击全屏后恢复": 全屏必然重建 vout, 于是顺带把黑幕撤了。
+                    if (VideoAreaRoot != null && VideoAreaRoot.Background == Brushes.Black)
+                    {
+                        _fullscreenCoverArmed = false;
+                        VideoAreaRoot.Background = VideoAreaBackBrush;
+                        WriteLibVLCDebug("[Vout] vout 重建, 强制揭幕手势层\n");
+                    }
+                    StartVideoBackdropFix();
+                }));
+            }
+            catch { /* 窗口正在销毁 */ }
+        };
+
+    }
+
     private bool PlayMedia(Media media)
     {
         try
@@ -1975,25 +1988,14 @@ public partial class PlayerWindow : FluentWindow
             ":http-user-agent=" + PlayerUserAgent
         };
 
-        // ★★★ 2026-10-17 播放器手术第 3 步: 分流设置 demuxer。
-        //
-        //   【无音轨 ⇒ 单文件源】: 加 :demux=avformat。
-        //     实测(探针 bd-probe-muxed2): 合流单流配 avformat, 来回 7 跳全部准确
-        //     (偏差 0.9~2.2s)且画面持续推进; 不加则落点准但**跳完冻住**(推进 0ms)。
-        //     ★★ 千万别给"带 input-slave"的那条路也加 —— 实测那样 seek 落点准但
-        //        state 直接变 **Ended**(画面永久卡死), 见 bd-probe-muxed5 的候选组。
-        //        这也是当年 avformat 被否掉的真正原因: 问题是"组合", 不是 demuxer 本身。
-        //
-        //   ★★ 2026-11-01 修「听视频模式快进直接提示已播完」: 「听视频」播的 DASH 音轨
-        //      也是**远端分片 fMP4**, 不是普通 MP4 —— avformat 对它的远跳会把落点甩到
-        //      流尾直接 EOF。所以它必须与 DASH 双流走同一条"不可靠"路(看门狗 + 重建),
-        //      既不加 avformat 也不标可靠。判据: 聆听态且 url 就是聆听音轨那条地址。
-        //      (durl 合流单流是普通 MP4, 不受影响; 本地文件同理。)
+        // Upstream v1.6.3: libvlc's MP4 demux drops the last fMP4 fragment.
+        // Use avformat on every VOD source; existing seek recovery remains in place.
+        options.Add(":demux=avformat"); // v1.6.3: read the final Bilibili fMP4 fragment.
         var isListenAudio = _isListenMode &&
                             string.Equals(url, _listenAudioUrl, StringComparison.Ordinal);
         if (string.IsNullOrEmpty(audioUrl) && !isListenAudio)
         {
-            options.Add(":demux=avformat");
+
             _isReliableSeekSource = true;
         }
         else if (!string.IsNullOrEmpty(audioUrl))
@@ -2004,7 +2006,7 @@ public partial class PlayerWindow : FluentWindow
         }
         else
         {
-            // 听视频音轨单流: demux 用默认(fMP4 与 input-slave 那条同款), seek 走不可靠路
+            // 聆听音轨仍保留 seek 看门狗，与解封装器选择无关。
             _isReliableSeekSource = false;
         }
 
@@ -2193,6 +2195,7 @@ public partial class PlayerWindow : FluentWindow
         // ★ 投币态**不能**取自详情(那个字段根本不存在, 见 GetCoinCountAsync 的说明),
         //   这里先复位, 真实值由随后的 RefreshCoinStateAsync 异步补上。
         _isCoined = false;
+        ThemedCoinIcon.Count = 0;
         // 计数直接来自详情(view 接口的 stat), 比旧的"点赞/投币/收藏"三个字信息量大
         _likeCount = detail.LikeCount;
         _coinCount = detail.CoinCount;
@@ -3129,6 +3132,15 @@ public partial class PlayerWindow : FluentWindow
         if (length <= 0) return;
         targetMs = Math.Clamp(targetMs, 0, Math.Max(0, length - 500));
 
+        if (_ended || _mp.State == VLCState.Ended)
+        {
+            _ended = false;
+            EndOverlay.Visibility = Visibility.Collapsed;
+            MarkSeekIssued(targetMs);
+            RebuildMediaAndSeek(targetMs);
+            return;
+        }
+
         var cur = _lastKnownMs > 0 ? _lastKnownMs : 0;
         var delta = targetMs - cur;
 
@@ -3254,7 +3266,7 @@ public partial class PlayerWindow : FluentWindow
     private void OnLengthChanged(object? sender, MediaPlayerLengthChangedEventArgs e) =>
         Dispatcher.BeginInvoke(new Action(() =>
         {
-            if (_closing) return;
+            if (_closing || (sender is MediaPlayer source && !ReferenceEquals(source,_mp))) return;
             _totalMs = e.Length;
             UpdateTotalDurationText();
         }));
@@ -3265,7 +3277,7 @@ public partial class PlayerWindow : FluentWindow
     private void OnTimeChanged(object? sender, MediaPlayerTimeChangedEventArgs e) =>
         Dispatcher.BeginInvoke(new Action(() =>
         {
-            if (_closing) return;
+            if (_closing || (sender is MediaPlayer source && !ReferenceEquals(source,_mp))) return;
             // 记下最后已知位置: EOF 之后 _mp.Time 会归零(那条 input 已结束),
             // "提前结束自救"只能靠这里留底
             //
@@ -3350,7 +3362,7 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void OnEndReached(object? sender, EventArgs e) => Dispatcher.BeginInvoke(new Action(() =>
     {
-        if (_closing) return;
+        if (_closing || (sender is MediaPlayer source && !ReferenceEquals(source,_mp))) return;
 
         // ---- 提前结束的自救 ----
         // DASH 音轨(input-slave)先于视频到 EOF 时, LibVLC 会结束整个 input:
@@ -3532,19 +3544,16 @@ public partial class PlayerWindow : FluentWindow
     /// 延迟一轮再决定收不收: 从喇叭挪到弹层的那一瞬间两者都不在 IsMouseOver,
     /// 立刻收会把"想拖滑杆"的用户挡在门外。
     /// </summary>
-    private void HideVolumePopupSoon()
+    private async void HideVolumePopupSoon()
     {
-        if (_closing || VolumePopup == null) return;
-        if (_volumePinned || _volumeHover) return;
-        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, new Action(() =>
-        {
-            if (_closing || VolumePopup == null) return;
-            if (_volumeHover || _volumePinned || VolumePopup.IsMouseOver || BtnVolume.IsMouseOver) return;
+        if (_closing || _volumePinned || _volumeHover) return;
+        await Task.Delay(350);
+        await Dispatcher.InvokeAsync(() => {
+            if (_closing || _volumeHover || _volumePinned || VolumePopup.IsMouseOver || BtnVolume.IsMouseOver) return;
             VolumePopup.IsOpen = false;
-        }));
+        });
     }
 
-    /// <summary>强行收起音量弹层(隐藏控制栏 / 切全屏 / 关闭窗口时调用)</summary>
     private void CloseVolumePopup()
     {
         _volumeHover = false; _volumePinned = false;
@@ -3974,10 +3983,12 @@ public partial class PlayerWindow : FluentWindow
     private void RightAlignPopup(System.Windows.Controls.Primitives.Popup popup,
         System.Windows.FrameworkElement target)
     {
-        var w = popup.ActualWidth;
-        if (w <= 0 && popup.Child is FrameworkElement fe) w = fe.ActualWidth;
-        if (w <= 0) w = target.ActualWidth;   // 最后的兜底: 至少不会把弹层推出窗外
-        popup.HorizontalOffset = target.ActualWidth - w;
+        popup.PlacementTarget = target;
+        popup.Placement = System.Windows.Controls.Primitives.PlacementMode.Custom;
+        popup.HorizontalOffset = 0;
+        popup.CustomPopupPlacementCallback = (size, anchor, offset) => new[] {
+            new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(anchor.Width - size.Width, -size.Height - 4), System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal) };
+
     }
 
     // ------------------------------------------------------------ 清晰度
@@ -5381,11 +5392,12 @@ public partial class PlayerWindow : FluentWindow
 
                 _danmaku.Clear();
                 _danmaku.AddRange(ApplyDanmakuFilter(_danmakuRaw));
-                _indexInLib = 0;
+                WriteLibVLCDebug($"[Danmaku] cid={cid} fetched={_danmakuRaw.Count} visible={_danmaku.Count} enabled={_danmakuOn} types={Svc.Settings.HasVisibleDanmakuTypes}\n");
+                _indexInLib = LowerBound(_danmaku, Math.Max(0, _mp.Time / 1000d));
                 ResetLanes();
             });
         }
-        catch { /* 静默 */ }
+        catch (Exception ex) { WriteLibVLCDebug($"[Danmaku] cid={cid} load failed: {ex.GetType().Name}\n"); }
     }
 
     /// <summary>
@@ -5862,18 +5874,20 @@ public partial class PlayerWindow : FluentWindow
     }
 
     /// <summary>挂上逐帧推进器。CompositionTarget.Rendering 是**静态**事件, 必须在关窗时解绑</summary>
+    private System.Windows.Threading.DispatcherTimer? _danmakuFrameTimer;
     private void StartDanmakuClock()
     {
         if (_danmakuClockAttached || _closing) return;
         _danmakuClockAttached = true;
-        CompositionTarget.Rendering += OnDanmakuRendering;
+        _danmakuFrameTimer ??= new System.Windows.Threading.DispatcherTimer(TimeSpan.FromMilliseconds(16), System.Windows.Threading.DispatcherPriority.Render, OnDanmakuRendering, Dispatcher);
+        _danmakuFrameTimer.Start();
     }
 
     private void StopDanmakuClock()
     {
         if (!_danmakuClockAttached) return;
         _danmakuClockAttached = false;
-        CompositionTarget.Rendering -= OnDanmakuRendering;
+        _danmakuFrameTimer?.Stop();
     }
 
     /// <summary>
@@ -5933,6 +5947,7 @@ public partial class PlayerWindow : FluentWindow
     /// <summary>切换弹幕开关(控制栏按钮 / 快捷键 D), 并同步到全局设置</summary>
     private void ToggleDanmaku()
     {
+        if (!Svc.Settings.HasVisibleDanmakuTypes) { Svc.Settings.RestoreDanmakuTypes(); Svc.Toast.Show("已恢复显示全部弹幕类型"); return; }
         _danmakuOn = !_danmakuOn;
         Svc.Settings.UpdateDanmakuSettings(_danmakuOn, Svc.Settings.DanmakuAreaPercent, Svc.Settings.DanmakuSmartFilter);
         Svc.Toast.Show(_danmakuOn ? "弹幕已开启" : "弹幕已关闭");
@@ -5946,6 +5961,11 @@ public partial class PlayerWindow : FluentWindow
 
     /// <summary>控制栏上的弹幕开关按钮</summary>
     private void OnDanmakuToggleClick(object sender, RoutedEventArgs e) => ToggleDanmaku();
+    private void OnRestoreDanmakuTypesClick(object sender, RoutedEventArgs e)
+    {
+        Svc.Settings.RestoreDanmakuTypes();
+        Svc.Toast.Show("已恢复显示全部弹幕类型");
+    }
 
     /// <summary>
     /// 刷新弹幕按钮的文案与可用状态。
@@ -5964,11 +5984,12 @@ public partial class PlayerWindow : FluentWindow
         BtnDanmaku.Opacity = usable ? 1.0 : 0.4;
         if (DanmakuComposer != null) DanmakuComposer.Visibility = usable ? Visibility.Visible : Visibility.Collapsed;
 
-        DanmakuOffSlash.Visibility = _danmakuOn ? Visibility.Collapsed : Visibility.Visible;
-        BtnDanmaku.ToolTip = _danmakuOn ? "关闭弹幕 (D)" : "开启弹幕 (D)";
-        System.Windows.Automation.AutomationProperties.SetName(BtnDanmaku, _danmakuOn ? "关闭弹幕" : "开启弹幕");
+        var blockedByTypes = _danmakuOn && !Svc.Settings.HasVisibleDanmakuTypes;
+        DanmakuOffSlash.Visibility = _danmakuOn && !blockedByTypes ? Visibility.Collapsed : Visibility.Visible;
+        BtnDanmaku.ToolTip = blockedByTypes ? "全部弹幕类型已关闭，点击恢复显示" : _danmakuOn ? "关闭弹幕 (D)" : "开启弹幕 (D)";
+        System.Windows.Automation.AutomationProperties.SetName(BtnDanmaku, blockedByTypes ? "恢复弹幕类型" : _danmakuOn ? "关闭弹幕" : "开启弹幕");
         // 局部值直接给刷子, 不引资源: 控制栏压在画面上, 颜色要跟主题无关(永远是白系)
-        DanmakuGlyph.Stroke = new SolidColorBrush(_danmakuOn
+        DanmakuGlyph.Stroke = new SolidColorBrush(_danmakuOn && !blockedByTypes
             ? Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF)   // 开: 接近纯白
             : Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)); // 关: 压暗, 一眼看出状态
     }
@@ -6021,11 +6042,13 @@ public partial class PlayerWindow : FluentWindow
         if(_danmakuOn)StartDanmakuClock();
     }
 
+    internal static double DanmakuViewportScale(double width) => width <= 0 ? 1 : Math.Clamp(Math.Sqrt(width / 1000d), .58, 1);
+    private void OnDanmakuViewportChanged(object sender, SizeChangedEventArgs e) { if (_mp != null && !_closing) ApplyDanmakuLook(); }
     private void ApplyDanmakuLook()
     {
         var s = Svc.Settings;
         var nextOpacity = Helpers.DanmakuMotion.OpacityFromPercent(s.DanmakuOpacityPercent);
-        var nextFont = Helpers.DanmakuMotion.FontSizeFromPercent(s.DanmakuFontScalePercent, DanmakuBaseFontSize);
+        var nextFont = Helpers.DanmakuMotion.FontSizeFromPercent(s.DanmakuFontScalePercent, DanmakuBaseFontSize) * DanmakuViewportScale(DanmakuCanvas.ActualWidth);
         var nextLevel = Math.Clamp(s.DanmakuSpeedLevel,
             Helpers.DanmakuMotion.MinSpeedLevel, Helpers.DanmakuMotion.MaxSpeedLevel);
 
@@ -6965,6 +6988,7 @@ public partial class PlayerWindow : FluentWindow
         var (ok, _, coins) = await Svc.Api.GetCoinCountAsync(_aid);
         if (!ok) { WriteLibVLCDebug($"\n[Coined] 查询失败 aid={_aid}\n"); return; }
         _isCoined = coins > 0;
+        ThemedCoinIcon.Count = coins;
         if (!_closing) UpdateActionCounts();
     }
 
@@ -7048,6 +7072,7 @@ public partial class PlayerWindow : FluentWindow
             // 同一个视频最多投 2 枚, 本地只记"已投过"的点亮态(下次进来以详情接口为准)
             _isCoined = true;
             _coinCount += count;
+            ThemedCoinIcon.Count = count;
             // 赞是服务端顺带点的, 本地状态要跟着走 —— 否则按钮还显示"未赞"、计数也少 1
             if (wantLike) { _isLiked = true; _likeCount += 1; }
             UpdateActionCounts();
@@ -7595,7 +7620,47 @@ public partial class PlayerWindow : FluentWindow
     /// 确定后把勾选差集(新增/移出)一次提交给 deal 接口 —— 与网页端"选择收藏夹"行为一致。
     /// "取消收藏"也走同一个窗(把勾全去掉), 不再单独走一键直存默认夹的旧路径。
     /// </summary>
+    private bool _favoriteHeld;
+    private System.Windows.Threading.DispatcherTimer? _favoriteHoldTimer;
+    private void FavoritePress(object sender, InputEventArgs e)
+    {
+        _favoriteHeld = false;
+        _favoriteHoldTimer?.Stop();
+        _favoriteHoldTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(550) };
+        _favoriteHoldTimer.Tick += (_, _) => {
+            _favoriteHoldTimer.Stop(); _favoriteHeld = true;
+            OnFavoritePicker(sender, new RoutedEventArgs());
+        };
+        _favoriteHoldTimer.Start();
+    }
+    private void FavoriteRelease(object sender, InputEventArgs e) => _favoriteHoldTimer?.Stop();
     private async void OnFavoriteClick(object sender, RoutedEventArgs e)
+    {
+        _favoriteHoldTimer?.Stop();
+        if (_favoriteHeld) { _favoriteHeld = false; return; }
+        if (!Svc.Session.HasLogin) { Svc.Toast.Show("收藏需要先登录"); return; }
+        if (_aid <= 0 || _favBusy) return;
+        _favBusy = true;
+        var aid = _aid; var generation = _loadGen;
+        try {
+            var folders = await Svc.Api.GetVideoFavFoldersAsync(aid);
+            if (_closing || aid != _aid || generation != _loadGen) return;
+            if (!folders.ok || folders.folders == null) { Svc.Toast.Show(folders.err ?? "收藏夹读取失败"); return; }
+            var target = folders.folders.FirstOrDefault(f => f.IsDefault) ?? folders.folders.OrderBy(f => f.Id).FirstOrDefault();
+            if (target == null) { Svc.Toast.Show("请先创建默认收藏夹"); return; }
+            var existing = folders.folders.Where(f => f.HasVideo).Select(f => f.Id).ToArray();
+            var remove = existing.Length > 0;
+            var result = await Svc.Api.DealFavoriteAsync(aid, addIds: remove ? null : new[] { target.Id }, delIds: remove ? existing : null);
+            if (_closing || aid != _aid || generation != _loadGen) return;
+            if (!result.ok) { Svc.Toast.Show(result.err ?? "收藏失败"); return; }
+            SetFavorited(!remove);
+            PlayThemedAction(ThemeReaction.Favorite, BtnFavorite, FavIconBox, !remove);
+            if (remove) Svc.Toast.Show("已取消收藏");
+        }
+        finally { if (aid == _aid && generation == _loadGen) _favBusy = false; }
+    }
+
+    private async void OnFavoritePicker(object sender, RoutedEventArgs e)
     {
         if (!Svc.Session.HasLogin) { Svc.Toast.Show("收藏需要先登录"); return; }
         if (_aid <= 0 || _favBusy) return;
@@ -8261,6 +8326,21 @@ public partial class PlayerWindow : FluentWindow
         else OpenSeasonPanel();
     }
 
+    private async void OnSeasonSubscribeClick(object sender, RoutedEventArgs e)
+    {
+        if (!Svc.Session.HasLogin) { Svc.Toast.Show("请先登录后订阅合集"); return; }
+        var seasonId = _season?.SeasonId ?? 0;
+        if (seasonId <= 0) return;
+        SeasonSubscribeButton.IsEnabled = false;
+        try {
+            var result = await Svc.Api.SubscribeSeasonAsync(seasonId);
+            if (_closing || _season?.SeasonId != seasonId) return;
+            Svc.Toast.Show(result.ok ? "已订阅合集" : result.err ?? "订阅失败");
+            if (result.ok) SeasonSubscribeButton.Content = "已订阅";
+        }
+        finally { if (!_closing) SeasonSubscribeButton.IsEnabled = true; }
+    }
+
     private void OnSeasonCloseClick(object sender, RoutedEventArgs e) => CloseSeasonPanel();
 
     private void OpenSeasonPanel()
@@ -8332,6 +8412,7 @@ public partial class PlayerWindow : FluentWindow
         }
 
         _season = season;
+        SeasonSubscribeButton.Content = "订阅合集";
         _hasSeason = true;
         _currentSeasonEpisode = FindCurrentEpisode(season);
 
@@ -8469,14 +8550,20 @@ public partial class PlayerWindow : FluentWindow
         if (BtnPages == null) return;
         BtnPages.Visibility = _hasPages ? Visibility.Visible : Visibility.Collapsed;
         if (!_hasPages) ClosePagesPopup();
-        else UpdatePagesTitle();
+        else {
+            UpdatePagesTitle();
+            PagesList.ItemsSource = _pages;
+            PagesList.SelectedItem = _pages.FirstOrDefault(p => p.Cid == _currentCid);
+            PagesMetaText.Text = $"共 {_pages.Count} 个分P";
+            PagesPanel.Visibility = Visibility.Visible;
+        }
     }
 
     /// <summary>关掉分P 弹层(换片 / 单P 视频时调用)。没开就别动, 免得白白改一次 IsOpen</summary>
     private void ClosePagesPopup()
     {
-        if (PagesPopup == null || !PagesPopup.IsOpen) return;
-        PagesPopup.IsOpen = false;
+        if (PagesPanel == null || !(PagesPanel.Visibility == Visibility.Visible)) return;
+        PagesPanel.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>
@@ -8504,9 +8591,9 @@ public partial class PlayerWindow : FluentWindow
     /// <summary>点「分P」: 开/收弹层。不请求接口 —— pages 跟合集一样在详情里就拿到了</summary>
     private void OnPagesToggleClick(object sender, RoutedEventArgs e)
     {
-        if (_closing || !_hasPages || PagesPopup == null) return;
-        var open = PagesPopup.IsOpen;
-        PagesPopup.IsOpen = !open;
+        if (_closing || !_hasPages || PagesPanel == null) return;
+        var open = (PagesPanel.Visibility == Visibility.Visible);
+        PagesPanel.Visibility = open ? Visibility.Collapsed : Visibility.Visible;
         BtnPages.Tag = !open ? "on" : "off";
         if (!open)
         {
@@ -8536,7 +8623,7 @@ public partial class PlayerWindow : FluentWindow
         if (_closing || PagesList == null) return;
         if (PagesList.SelectedItem is not VideoPage p) return;
         if (p.Cid == _currentCid) return;
-        PagesPopup?.SetCurrentValue(System.Windows.Controls.Primitives.Popup.IsOpenProperty, false);
+
         _ = SwitchToPageAsync(p);
     }
 
@@ -9735,6 +9822,7 @@ public partial class PlayerWindow : FluentWindow
 
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
+        if(_enhancementSwitching){e.Cancel=true;_closeAfterEnhancementSwitch=true;return;}
         // 为什么要"先隐藏 -> 后台拆解 -> 再真正 Close":
         // LibVLC 的 Stop/Dispose 会阻塞等待解复用/解码线程退出(实测约 1 秒),
         // 原先在 UI 线程同步调用, 表现就是"点了关闭要卡一下窗口才消失"。

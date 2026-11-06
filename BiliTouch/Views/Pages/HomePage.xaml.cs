@@ -431,6 +431,8 @@ public partial class HomePage : UserControl
     }
 
     /// <summary>工具栏刷新键 + 错误条里的「重试」都走这一条</summary>
+    private void OnPartitionClick(object sender, RoutedEventArgs e) => (Window.GetWindow(this) as MainWindow)?.OpenPartition();
+
     private void OnRefreshClick(object sender, RoutedEventArgs e) => _ = RefreshCurrentTabAsync();
 
     /// <summary>

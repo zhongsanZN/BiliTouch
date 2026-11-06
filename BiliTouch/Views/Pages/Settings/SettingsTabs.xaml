@@ -1,4 +1,4 @@
-<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
                     xmlns:helpers="clr-namespace:BiliTouch.Helpers">
@@ -398,7 +398,9 @@
                                                             FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                                             FontSize="9" ToolTip="撤销这条屏蔽"
                                                             Command="{Binding DataContext.RemoveFilterRuleCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
-                                                </StackPanel>
+                                                    
+
+        </StackPanel>
                                             </Border>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -428,6 +430,29 @@
                         </Grid>
                 </StackPanel>
             </Border>
+<ContentControl Content="实验性" ContentTemplate="{StaticResource SectionHeaderTemplate}" Margin="0,24,0,8"/>
+            <Border Style="{StaticResource SettingsCardStyle}"><StackPanel>
+                <Grid Style="{StaticResource SettingsRowStyle}"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel><TextBlock Text="视频画质增强" FontWeight="SemiBold"/><TextBlock Text="启用厂商超分、视频处理器缩放与可选 HDR 增强，并显示播放控制栏开关。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/></StackPanel>
+                    <CheckBox Grid.Column="1" IsChecked="{Binding ExperimentalVideoEnhancement,Mode=TwoWay}" Style="{StaticResource SettingsToggleStyle}"/>
+                </Grid>
+                <StackPanel Visibility="{Binding ExperimentalVideoEnhancement,Converter={StaticResource BoolToVis}}">
+                    <Grid Style="{StaticResource SettingsRowStyle}"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="默认开启增强" VerticalAlignment="Center"/><CheckBox Grid.Column="1" IsChecked="{Binding VideoEnhancementActive,Mode=TwoWay}" Style="{StaticResource SettingsToggleStyle}"/>
+                    </Grid>
+                    <Grid Style="{StaticResource SettingsRowStyle}"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="增强方案" VerticalAlignment="Center"/><ComboBox Grid.Column="1" ItemsSource="{Binding EnhancementModes}" SelectedItem="{Binding VideoEnhancementMode,Mode=TwoWay}" Style="{StaticResource SettingsComboStyle}"/>
+                    </Grid>
+                    <TextBlock Text="NVIDIA / Intel / 摩尔线程自动请求对应厂商超分；AMD 及其他显卡使用视频处理器缩放。实际启用状态见控制栏按钮提示。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
+                    <Grid Style="{StaticResource SettingsRowStyle}"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="处理显卡偏好" VerticalAlignment="Center"/><ComboBox Grid.Column="1" Width="280" ItemsSource="{Binding EnhancementAdapters}" DisplayMemberPath="Name" SelectedValuePath="Id" SelectedValue="{Binding EnhancementAdapterId,Mode=TwoWay}" Style="{StaticResource SettingsComboStyle}"/>
+                    </Grid>
+                    <TextBlock Text="{Binding EnhancementAdapterHint}" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
+                    <Grid Style="{StaticResource SettingsRowStyle}"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel><TextBlock Text="SDR 转 HDR"/><TextBlock Text="仅 NVIDIA 显卡与 HDR 显示环境尝试启用，默认关闭。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/></StackPanel><CheckBox Grid.Column="1" IsChecked="{Binding VideoEnhancementHdr,Mode=TwoWay}" Style="{StaticResource SettingsToggleStyle}"/>
+                    </Grid>
+                </StackPanel>
+            </StackPanel></Border>
         </StackPanel>
     </DataTemplate>
 
@@ -647,11 +672,11 @@
                            一条弹幕可能同时是"滚动 + 彩色", 用户要能同时关掉/保留任意组合。
                          ★ 四个开关全开 = 不过滤(默认), 播放器那边有对应的短路, 不白跑一遍过滤。 -->
                     <StackPanel Style="{StaticResource SettingsRowStyle}">
-                        <TextBlock Text="按类型过滤" Style="{StaticResource SettingsRowTitleStyle}" />
+                        <TextBlock Text="显示的弹幕类型" Style="{StaticResource SettingsRowTitleStyle}" />
                         <TextBlock Text="{Binding DanmakuTypeFilterHint}"
                                    Style="{StaticResource SettingsRowDescStyle}" />
                         <WrapPanel Margin="0,12,0,0">
-                            <ToggleButton Style="{StaticResource SettingsFilterChipStyle}" Content="滚动"
+                            <ToggleButton Style="{StaticResource SettingsFilterChipStyle}" Content="滚动" ToolTip="选中时显示滚动弹幕"
                                           IsChecked="{Binding DanmakuFilterScroll, Mode=TwoWay}" />
                             <ToggleButton Style="{StaticResource SettingsFilterChipStyle}" Content="固定"
                                           Margin="8,0,0,0"
@@ -752,6 +777,7 @@
                                              Content="极快" Cursor="Hand" Margin="8,0,0,0"
                                              IsChecked="{Binding DanmakuSpeedIs4, Mode=TwoWay}" />
                             </WrapPanel>
+                          <Button Content="恢复显示全部类型" Command="{Binding RestoreDanmakuTypesCommand}" Style="{StaticResource SubtleButtonStyle}" HorizontalAlignment="Left" Margin="0,8,0,0"/>
                         </StackPanel>
                     </StackPanel>
                     <Border Style="{StaticResource SettingsRowDivider}" />

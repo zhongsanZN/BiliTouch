@@ -1,4 +1,4 @@
-<UserControl helpers:TrackpadScroll.IsFeed="True" x:Class="BiliTouch.Views.Pages.SearchPage"
+﻿<UserControl helpers:TrackpadScroll.IsFeed="True" x:Class="BiliTouch.Views.Pages.SearchPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:helpers="clr-namespace:BiliTouch.Helpers"
@@ -6,17 +6,19 @@
              Background="{DynamicResource AppBackgroundBrush}"
              PreviewMouseDown="OnPagePreviewMouseDown">
     <Grid>
+<helpers:SkinSurface Kind="Home" Grid.RowSpan="2" VerticalAlignment="Top" Height="112"/>
+
         <!-- ===== 搜索类别(视频 / 直播间 / 番剧): 左上角常驻 =====
              2026-10-03 用户要求把它从搜索卡内部挪到页面左上角 —— 搜索框聚焦才展开,
              类别不该藏在里面。白椭圆底 + 投影, 与收藏页夹子条同一形态。
              三类内容来自**完全不同的接口**(search_type=video / live_room / bangumi),
              切换时必须重搜一次 —— 由 VM 的 Kind setter 负责。
              ★ 番剧这一档是 2026-10-11 用户要求加的。 -->
-        <Border HorizontalAlignment="Left" VerticalAlignment="Top"
-                Margin="36,24,0,0" Panel.ZIndex="5"
+        <Border x:Name="SearchKindTabs" HorizontalAlignment="Left" VerticalAlignment="Top"
+                Margin="24,68,0,0" Panel.ZIndex="5"
                 Background="{DynamicResource CardBackgroundBrush}"
                 BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
-                CornerRadius="22" Padding="5">
+                CornerRadius="22" Padding="3">
             <Border.Effect>
                 <DropShadowEffect BlurRadius="14" ShadowDepth="1" Opacity="0.08" />
             </Border.Effect>
@@ -40,7 +42,7 @@
         <!-- 结果区。顶部空出的 76 = 16(上边距) + 48(收起态搜索框高) + 12(间隙) ——
              搜索框是**浮在上面**的(见文件末尾那块, 不参与这层布局), 所以展开时它直接盖住结果区顶部,
              结果列表不会被挤得抖一下(与首页那张卡一个思路)。 -->
-        <Grid Margin="0,76,0,0">
+        <Grid x:Name="SearchResultsBody" Margin="0,112,0,0" ClipToBounds="True">
             <!-- 初始空状态 -->
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
                         Visibility="{Binding IsIdle, Converter={StaticResource BoolToVis}}">
@@ -170,7 +172,7 @@
                ① 搜索框(自带圆角底 + 聚焦粉色光晕); ② 内容框(白底细描边, 与搜索框隔开 10px)。 -->
         <Border x:Name="SearchCard" Panel.ZIndex="31"
                 HorizontalAlignment="Center" VerticalAlignment="Top"
-                Margin="0,16,0,0" Width="440" Height="48"
+                Margin="0,12,0,0" Width="440" Height="48" ClipToBounds="True"
                 GotKeyboardFocus="OnCardGotKeyboardFocus"
                 LostKeyboardFocus="OnCardLostKeyboardFocus"
                 PreviewKeyDown="OnCardPreviewKeyDown">
@@ -205,7 +207,9 @@
                                  VerticalContentAlignment="Center"
                                  FocusVisualStyle="{x:Null}"
                                  Text="{Binding Keyword, UpdateSourceTrigger=PropertyChanged}"
-                                 KeyDown="OnKeyDown" TextChanged="OnTextChanged" />
+                                 KeyDown="OnKeyDown" TextChanged="OnTextChanged">
+                            <TextBox.Template><ControlTemplate TargetType="TextBox"><ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center" FocusVisualStyle="{x:Null}"/></ControlTemplate></TextBox.Template>
+                        </TextBox>
 
                         <Button x:Name="BtnClear" Content="&#xE711;"
                                 FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
@@ -232,7 +236,7 @@
                 <!-- 默认 Hidden 而不是 Auto: 展开动画期间高度在变, Auto 会中途闪一下滚动条。
                      动画结束由代码切回 Auto(那时内容已按最终高度排好, 需要才出现)。 -->
                 <Border x:Name="SearchContentBox" Grid.Row="1" Margin="0,10,0,0" Opacity="0"
-                        CornerRadius="10"
+                        CornerRadius="10" Visibility="Collapsed"
                         Background="{DynamicResource FlyoutBackgroundBrush}"
                         BorderBrush="{DynamicResource FlyoutBorderBrush}" BorderThickness="1">
                     <ScrollViewer x:Name="SearchCardScroll" Margin="0,0,4,0"

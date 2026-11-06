@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -1042,6 +1042,7 @@ public class FavFolder : System.ComponentModel.INotifyPropertyChanged
     /// (响应里的 fav_state 字段); 普通的收藏夹列表接口不返回它, 此时保持 false。
     /// </summary>
     public bool HasVideo { get; set; }
+    public bool IsDefault { get; set; }
 
     private bool _isCurrent;
 
@@ -1429,6 +1430,11 @@ public class BlockedUpEntry
 /// <summary>应用设置</summary>
 public class AppSettings
 {
+    public bool ExperimentalVideoEnhancement {get;set;}
+    public bool VideoEnhancementActive {get;set;}=true;
+    public string VideoEnhancementMode {get;set;}="自动厂商增强";
+    public bool VideoEnhancementHdr {get;set;}
+    public string EnhancementAdapterId {get;set;}="auto";
     public string FontId {get;set;}="System";
     public bool UseWebPlayerLayout { get; set; }
     public int TouchpadFeedSensitivity { get; set; } = 75;
@@ -1574,6 +1580,7 @@ public class AppSettings
     /// 位运算每次都要拆合容易写错; 存 JSON 时 bool 可读、老配置缺字段自动拿默认值。
     /// 默认全部 true —— 过滤是减法功能, 默认不该动用户能看到的弹幕。
     /// </summary>
+    public int DanmakuTypeSelectionVersion { get; set; }
     public bool DanmakuFilterScroll { get; set; } = true;
 
     /// <summary>固定弹幕(顶部/底部)</summary>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,6 +25,7 @@ public static class VlcCore
     private static readonly object Gate = new();
     private static LibVLC? _instance;
     private static int _livePlayers;
+    private static readonly Dictionary<string,LibVLC> EnhancementInstances = new();
 
     /// <summary>libvlc.dll / libvlccore.dll 所在目录</summary>
     public static string LibVlcDirectory =>
@@ -50,7 +51,9 @@ public static class VlcCore
     {
         lock (Gate)
         {
-            if (_instance != null) return _instance;
+            var profile = EnhancementProfile.Current;
+            if (_instance != null && !profile.Enabled) return _instance;
+            if(profile.Enabled && EnhancementInstances.TryGetValue(profile.Key,out var enhanced))return enhanced;
 
             // VideoLAN.LibVLC.Windows 把原生库部署到 <outdir>/libvlc/win-x64/,
             // 而 LibVLC 默认只在 exe 同目录查找, 所以显式把路径告诉它。
@@ -83,12 +86,14 @@ public static class VlcCore
             //   ⇒ seek 的问题改为在播放器层处理(见 PlayerWindow.RecoverFromFailedSeek)。
             var caching = BufferPolicy.Resolve(BufferMediaKind.VodSingle, null, shortVideo: false,
                 SettingsStore.Instance.NetworkCachingMs, SettingsStore.Instance.AutoBufferPolicy);
-            _instance = new LibVLC(
-                "--intf=dummy",
-                "--no-osd",
-                "--network-caching=" + caching);
-
-            return _instance;
+            var options = new List<string>{"--intf=dummy","--no-osd","--network-caching="+caching};
+            if(profile.Enabled) options.AddRange(profile.Options);
+            var instance = new LibVLC(options.ToArray());
+            VideoEnhancement.Observe(instance,profile);
+            // Keep every profile instance alive until process shutdown. Core.Initialize is process-wide;
+            // toggling must never dispose a LibVLC instance while a player still references it.
+            if(profile.Enabled)EnhancementInstances[profile.Key]=instance;else _instance=instance;
+            return instance;
         }
     }
 
@@ -122,8 +127,10 @@ public static class VlcCore
     {
         lock (Gate)
         {
-            if (_instance == null) return;
             if (Volatile.Read(ref _livePlayers) > 0) return;
+            foreach(var core in EnhancementInstances.Values){try{core.Dispose();}catch{}}
+            EnhancementInstances.Clear();
+            if (_instance == null) return;
             try { _instance.Dispose(); } catch { /* 退出阶段忽略 */ }
             _instance = null;
         }

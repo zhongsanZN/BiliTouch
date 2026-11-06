@@ -16,7 +16,7 @@
 #
 # 注意: 这里的默认版本号要跟 App.AppVersion / csproj 的 <Version> / installer.iss 的
 # MyAppVersion 一起改 —— 它只决定 zip 的文件名, 不参与程序内部显示。
-param([string]$Version = "0.1.6")
+param([string]$Version = "0.2.0")
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -53,7 +53,7 @@ foreach ($dir in @($PortableDir, $InstallerDir)) {
 
 Write-Host "== 1/5 便携版(自包含 + 压缩) =="
 dotnet publish (Join-Path $Root "BiliTouch\BiliTouch.csproj") -c Release -r win-x64 `
-    --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true `
+    --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false `
     -o $PortableDir
 if ($LASTEXITCODE -ne 0) { throw "便携版发布失败" }
 
@@ -63,6 +63,11 @@ dotnet publish (Join-Path $Root "BiliTouch\BiliTouch.csproj") -c Release -r win-
     -o $InstallerDir
 if ($LASTEXITCODE -ne 0) { throw "安装器载荷发布失败" }
 
+foreach ($payload in @($PortableDir,$InstallerDir)) {
+    foreach ($required in @('libvlc.dll','libvlccore.dll','plugins\demux\libmp4_plugin.dll','plugins\codec\libavcodec_plugin.dll')) {
+        if (!(Test-Path -LiteralPath (Join-Path $payload "libvlc\win-x64\$required"))) { throw "发布包缺少原生播放依赖: $payload / $required" }
+    }
+}
 Write-Host "== 3/5 校验 WPF 原生库版本(防旧 .NET 残留混进包) =="
 # 只查 WPF 那三个 dll: 它们的文件版本大版本号必须等于 app 目标框架的大版本(net10.0 → 10)。
 # D3DCompiler_47_cor3.dll 是 Windows SDK 的、vcruntime140_cor3.dll 是 VC 运行时的,
@@ -113,9 +118,13 @@ $zip = Join-Path $Out "BiliTouch-$Version-portable.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path (Join-Path $PortableDir "*") -DestinationPath $zip
 
-Write-Host ""
+# Setup is a required deliverable, not a manual follow-up.
+$isccCandidates = @((Join-Path $Root '..\.tools\inno612\app\ISCC.exe'), "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")
+$iscc = $isccCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (!$iscc) { $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source }
+if (!$iscc) { throw "找不到 Inno Setup 编译器，不能将本次发布标记为完成" }
+& $iscc ("/DMySourceDir=" + $InstallerDir) ("/O" + $Out) (Join-Path $Root 'Publish\installer.iss')
+if ($LASTEXITCODE -ne 0) { throw "setup.exe 编译失败" }
 Write-Host "完成:"
-Write-Host "  便携版目录 : $PortableDir"
+Write-Host "  安装器     : $(Join-Path $Out "BiliTouch-$Version-setup.exe")"
 Write-Host "  便携版 zip : $zip"
-Write-Host "  安装器载荷 : $InstallerDir"
-Write-Host "  下一步     : 用 Inno Setup 编译 Publish\installer.iss (载荷目录与它同级)"

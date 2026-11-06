@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <img src="BiliTouch/Assets/app.png" width="104" alt="BiliTouch 图标">
 
@@ -6,7 +6,9 @@
 
 **面向触摸屏、触控板手势与人体工学优化的哔哩哔哩第三方 Windows 客户端**
 
-作者：**中三** · 当前版本：**0.1.6**
+作者：**中三** · 当前版本：**0.2.0**
+
+仓库：[zhongsanZN/BiliTouch](https://github.com/zhongsanZN/BiliTouch) · [下载与历史版本](https://github.com/zhongsanZN/BiliTouch/releases)
 
 原作者、上游项目与许可证信息见[鸣谢](docs/ACKNOWLEDGEMENTS.md)。
 
@@ -16,7 +18,7 @@
 
 <br>
 
-**BiliTouch v0.1.6**
+**BiliTouch v0.2.0**
 [![Platform](https://img.shields.io/badge/Windows-10%2B-0078D4?logo=windows11&logoColor=white&style=flat-square)](#-下载安装)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white&style=flat-square)](#-从源码构建)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](LICENSE)
@@ -78,7 +80,7 @@
 
 ## 📥 下载安装
 
-本地发行包位于上级 `dist/BiliTouch-0.1.6`。BiliTouch 独立发布渠道尚未配置，程序不会将 BiliTouch 上游安装包作为本分支更新。原上游提供的发行形式如下：
+本地发行包位于上级 `dist/BiliTouch-0.2.0`。BiliTouch 独立发布渠道尚未配置，程序不会将 BiliTouch 上游安装包作为本分支更新。原上游提供的发行形式如下：
 
 | 发行包 | 说明 |
 | :--- | :--- |

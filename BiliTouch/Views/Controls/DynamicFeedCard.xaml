@@ -1,4 +1,4 @@
-<UserControl x:Class="BiliTouch.Views.Controls.DynamicFeedCard"
+﻿<UserControl x:Class="BiliTouch.Views.Controls.DynamicFeedCard"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
@@ -558,10 +558,10 @@
                              与播放器操作栏同一个图形 —— 不再用 Segoe 字体图标(E8E1)。
                              字体图标和官方图形是两套线条语言, 放在同一个客户端里一眼能看出不一致。
                              填色走 Fill(几何是纯填充图形, 不是描边), 已赞时整组变强调色。 -->
-                        <Path Data="{StaticResource LikeIconGeometry}" Width="20" Height="20"
+                        <helpers:SkinActionIcon Kind="Like" Data="{StaticResource LikeIconGeometry}" Width="20" Height="20"
                               Stretch="Uniform" VerticalAlignment="Center">
-                            <Path.Style>
-                                <Style TargetType="Path">
+                            <helpers:SkinActionIcon.Style>
+                                <Style TargetType="helpers:SkinActionIcon">
                                     <Setter Property="Fill" Value="{DynamicResource TextSecondaryBrush}" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsLiked}" Value="True">
@@ -569,8 +569,8 @@
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
-                            </Path.Style>
-                        </Path>
+                            </helpers:SkinActionIcon.Style>
+                        </helpers:SkinActionIcon>
                         <TextBlock Text="{Binding LikeCountText}" FontSize="12.5" Margin="6,0,0,0"
                                    VerticalAlignment="Center" />
                     </StackPanel>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -33,6 +33,19 @@ public class SettingsStore
     public const int TouchpadSensitivityMin=25, TouchpadSensitivityMax=175;
     public void SetTouchpadFeedSensitivity(int value)
     {value=Math.Clamp(value,TouchpadSensitivityMin,TouchpadSensitivityMax);if(TouchpadFeedSensitivity==value)return;TouchpadFeedSensitivity=value;Save();}
+    public bool ExperimentalVideoEnhancement {get;set;}
+    public bool VideoEnhancementActive {get;set;}=true;
+    public string VideoEnhancementMode {get;set;}="自动厂商增强";
+    public bool VideoEnhancementHdr {get;set;}
+    public string EnhancementAdapterId {get;set;}="auto";
+    public event Action? VideoEnhancementChanged;
+    public void UpdateVideoEnhancement(bool? experimental=null,bool? active=null,string? mode=null,bool? hdr=null,string? adapter=null)
+    {
+        ExperimentalVideoEnhancement=experimental??ExperimentalVideoEnhancement;VideoEnhancementActive=active??VideoEnhancementActive;
+        if(mode!=null)VideoEnhancementMode=mode=="视频处理器缩放"?mode:"自动厂商增强";
+        VideoEnhancementHdr=hdr??VideoEnhancementHdr;if(adapter!=null)EnhancementAdapterId=adapter;
+        Save();VideoEnhancementChanged?.Invoke();
+    }
     public bool UseWebPlayerLayout { get; set; }
     public void SetWebPlayerLayout(bool enabled)
     {if(UseWebPlayerLayout==enabled)return;UseWebPlayerLayout=enabled;Save();LayoutChanged?.Invoke();}
@@ -183,6 +196,10 @@ public class SettingsStore
     ///   · 与 DanmakuColorful 那种"单项开关"语义一致 —— 新增一类只要加一个 bool。
     /// ★ 默认全部显示(true): 过滤是"减法"功能, 默认不该动用户能看到的弹幕。
     /// </summary>
+    public int DanmakuTypeSelectionVersion { get; private set; } = 1;
+    public bool HasVisibleDanmakuTypes => DanmakuFilterScroll || DanmakuFilterFixed || DanmakuFilterColorful || DanmakuFilterAdvanced;
+    public void RestoreDanmakuTypes() => UpdateDanmakuSettings(true, DanmakuAreaPercent, DanmakuSmartFilter,
+        filterScroll: true, filterFixed: true, filterColorful: true, filterAdvanced: true);
     public bool DanmakuFilterScroll { get; set; } = true;
 
     /// <summary>固定弹幕(顶部/底部)</summary>
@@ -431,7 +448,12 @@ public class SettingsStore
             if (File.Exists(FilePath))
             {
                 var s = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), JsonOpts);
-                if (s != null) ApplySanitized(s);
+                if (s != null)
+                {
+                    ApplySanitized(s);
+                    // Persist the one-time migration so later explicit choices are respected.
+                    if (s.DanmakuTypeSelectionVersion == 0) Save();
+                }
             }
         }
         catch
@@ -491,6 +513,9 @@ public class SettingsStore
         //   0 要保留(它的语义是"自动"), 所以只在 >0 时夹。
         FontId=AppTypography.Normalize(s.FontId);
         UseWebPlayerLayout = s.UseWebPlayerLayout;
+        ExperimentalVideoEnhancement=s.ExperimentalVideoEnhancement;VideoEnhancementActive=s.VideoEnhancementActive;
+        VideoEnhancementMode=s.VideoEnhancementMode=="视频处理器缩放"?s.VideoEnhancementMode:"自动厂商增强";
+        VideoEnhancementHdr=s.VideoEnhancementHdr;EnhancementAdapterId=s.EnhancementAdapterId??"auto";
         TouchpadFeedSensitivity = Math.Clamp(s.TouchpadFeedSensitivity<=0?75:s.TouchpadFeedSensitivity,TouchpadSensitivityMin,TouchpadSensitivityMax);
         CardColumns = s.CardColumns <= 0
             ? 0
@@ -526,6 +551,9 @@ public class SettingsStore
         DanmakuFilterFixed = s.DanmakuFilterFixed;
         DanmakuFilterColorful = s.DanmakuFilterColorful;
         DanmakuFilterAdvanced = s.DanmakuFilterAdvanced;
+        if (s.DanmakuTypeSelectionVersion == 0 && DanmakuEnabled && !HasVisibleDanmakuTypes)
+            DanmakuFilterScroll = DanmakuFilterFixed = DanmakuFilterColorful = DanmakuFilterAdvanced = true;
+        DanmakuTypeSelectionVersion = 1;
 
         // ★ 新增的弹幕外观三项(2026-10-12): 老配置没有这些字段, 会拿到属性初始化值
         //   (80 / 100 / 2), 正好就是设计默认值, 不需要版本兼容。
@@ -734,6 +762,8 @@ public class SettingsStore
         SkinUseAccent = SkinUseAccent,
         FontId=FontId,
         UseWebPlayerLayout = UseWebPlayerLayout,
+        ExperimentalVideoEnhancement=ExperimentalVideoEnhancement,VideoEnhancementActive=VideoEnhancementActive,
+        VideoEnhancementMode=VideoEnhancementMode,VideoEnhancementHdr=VideoEnhancementHdr,EnhancementAdapterId=EnhancementAdapterId,
         TouchpadFeedSensitivity = TouchpadFeedSensitivity,
         AcrylicMaterial = AcrylicMaterial,
         AcrylicBackground = AcrylicBackground,
@@ -749,6 +779,7 @@ public class SettingsStore
         DanmakuSmartFilter = DanmakuSmartFilter,
         DanmakuColorful = DanmakuColorful,
         DanmakuBlockKeywords = DanmakuBlockKeywords,
+        DanmakuTypeSelectionVersion = DanmakuTypeSelectionVersion,
         DanmakuFilterScroll = DanmakuFilterScroll,
         DanmakuFilterFixed = DanmakuFilterFixed,
         DanmakuFilterColorful = DanmakuFilterColorful,

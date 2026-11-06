@@ -1,4 +1,4 @@
-# .NET / Visual Studio
+﻿# .NET / Visual Studio
 bin/
 obj/
 .vs/
@@ -37,3 +37,6 @@ BiliTouch/BiliTouch_*_wpftmp.csproj
 # Downloaded source packages and isolated embedded-browser profiles
 /artifacts/assets-import/
 /artifacts/touch-tests/WebView2Data/
+
+# Generated diagnostics and publish payloads are local, never repository source.
+/artifacts/

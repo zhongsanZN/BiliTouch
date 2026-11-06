@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -41,12 +41,12 @@ public sealed class SkinService : INotifyPropertyChanged
 
     // Pixel sample excludes the yellow rim and transparent padding. FlipXY makes each
     // boundary continuous without stretching, repainting or duplicating the wordmark.
-    public Brush Pattern(double opacity = 1)
+    public Brush Pattern(double opacity = 1, double phaseX = 0)
     {
         var brush = new ImageBrush(Image("tail_bg"))
         {
             Viewbox = new Rect(0.08, 0.24, 0.80, 0.70), ViewboxUnits = BrushMappingMode.RelativeToBoundingBox,
-            Viewport = new Rect(0, 0, 460, 81), ViewportUnits = BrushMappingMode.Absolute,
+            Viewport = new Rect(-phaseX, 0, 460, 81), ViewportUnits = BrushMappingMode.Absolute,
             TileMode = TileMode.FlipXY, Stretch = Stretch.Fill, Opacity = opacity
         };
         brush.Freeze();

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 
 namespace BiliTouch.Services;
@@ -26,6 +26,8 @@ public class TrayService : IDisposable
     private System.Windows.Forms.NotifyIcon? _icon;
     private bool _disposed;
     private System.Drawing.Icon? _appIcon;
+
+    public bool IsAvailable => !_disposed && _icon?.Visible == true;
 
     public void Initialize()
     {
@@ -99,6 +101,7 @@ public class TrayService : IDisposable
         {
             var win = SvcWindow.Main;
             if (win == null) return;
+            if (!IsAvailable) { win.WindowState = WindowState.Minimized; return; }
             win.Hide();
             NotifyMinimizedToTray();
         }));

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -38,11 +38,11 @@ public sealed class UpdateInfo
 /// </summary>
 public static class UpdateChecker
 {
-    // 上游发行包不能覆盖 BiliTouch；独立发行仓库确定后再接入。
-    public static bool IsConfigured => false;
+    // 只从中三维护的独立仓库检查更新，禁止把上游发行作为本分支更新。
+    public static bool IsConfigured => true;
 
     /// <summary>Release 数据所在的仓库(owner/repo)。改名要连着 ReleasePageUrl 一起改。</summary>
-    public const string RepoOwner = "ABING1111";
+    public const string RepoOwner = "zhongsanZN";
     public const string RepoName = "BiliTouch";
 
     /// <summary>releases/latest 网页地址(弹窗里「前往 GitHub 下载」按钮的落点)。</summary>

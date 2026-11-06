@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -133,10 +133,9 @@ internal static class FollowSortTests
             Item("c1", 300, 1000), Item("a1", 100, 900), Item("b1", 200, 800),
         };
         FollowSorting.ApplyBadges(users2, page1, read, write);
-        check(users2.All(u => u.NewCount == 0),
-            "首次没有基准: 只建基准、不亮红点(第一次打开不该满屏红点)");
-        check(store[100] == "a1" && store[200] == "b1" && store[300] == "c1",
-            "首次把每个 UP 最新一条记成基准");
+        check(users2.Where(u => u.Mid != 400).All(u => u.NewCount == 1), "首次发现动态应显示未读");
+        check(store.Count == 0, "探查动态不能自动写入已读基准");
+        foreach (var item in page1) write(item.AuthorMid, item.Id); // Simulate opening each author.
         check(!store.ContainsKey(400), "本页没出现的 UP 不建基准(也无从判断)");
 
         // 第二轮: 300 发了新动态, 200 的基准那条还在这一页里(没有新的)
@@ -269,41 +268,8 @@ internal static class FollowSortTests
         var unreadChip = FindByName<Button>(page, "SortUnreadChip");
         var orderChip = FindByName<Button>(page, "SortOrderChip");
         var markButton = FindByName<Button>(page, "MarkAllReadButton");
-        check(recentChip != null && unreadChip != null && orderChip != null,
-            "左栏顶部三枚排序 chip 都在可视树里");
-        check(markButton != null, "「全部标记已读」按钮在可视树里");
-
-        var chipTexts = new[] { recentChip!, unreadChip!, orderChip! }
-            .Select(x => TextOf(x) ?? "").ToList();
-        check(chipTexts.SequenceEqual(new[] { "最近更新", "未读优先", "关注顺序" }),
-            $"三枚 chip 的文案都是中文 → {string.Join(" / ", chipTexts)}");
-
-        // chip 文字必须是**显式 TextBlock** 且带自己的 Foreground:
-        // 这是"全局隐式 TextBlock 样式带 Foreground setter, 会吃掉 ContentPresenter 透传值"那个坑的机器判据。
-        var chipBlocks = Descendants<TextBlock>(recentChip!).ToList();
-        check(chipBlocks.Count > 0, "chip 里是显式 TextBlock(不是 Content 字符串)");
-        check(chipBlocks.All(t => t.ReadLocalValue(TextBlock.ForegroundProperty) == DependencyProperty.UnsetValue
-                                  || t.GetBindingExpression(TextBlock.ForegroundProperty) != null),
-            "chip 文字的 Foreground 走绑定(选中时能变粉字, 不会被隐式样式压成灰)");
-
-        // 选中态: 默认只有「最近更新」是 Tag=on(数据触发器 DataTrigger 认的就是这个值)
-        check(recentChip!.Tag as string == "on" && unreadChip!.Tag as string == "off" && orderChip!.Tag as string == "off",
-            "默认选中「最近更新」, 另两枚 off(只在一处决定, 不会两枚都亮)");
-        check(vm.SortModeTip.Contains("最近更新") && vm.SortModeTip.Contains("发布时间"),
-            $"排序控件的悬浮说明写清了这档怎么排 → {vm.SortModeTip}");
-
-        // 点 chip → 模式切换 + 选中态搬走 + 列表跟着变
-        unreadChip.Command.Execute(null);
-        Pump();
-        check(vm.FollowSortMode == FollowSortMode.UnreadFirst, "点 chip 切到「未读优先」");
-        check(recentChip.Tag as string == "off" && unreadChip.Tag as string == "on",
-            "选中态从「最近更新」搬到「未读优先」");
-
-        orderChip.Command.Execute(null);
-        Pump();
-        check(vm.FollowSortMode == FollowSortMode.FollowOrder && Ids(vm.Users) == "100,200,300,400,500",
-            "点「关注顺序」chip 立刻按接口原序重排");
-
+        check(recentChip == null && unreadChip == null && orderChip == null, "三枚多余排序按钮已删除");
+        check(markButton != null, "全部标记已读仍可用");
         // 左栏 XAML 真的绑了 HasNew(未读红点的可见性依据)
         var rows = Descendants<ContactListRow>(page).ToList();
         check(rows.Count > 0, "左栏渲染出了 UP 行");
@@ -327,11 +293,6 @@ internal static class FollowSortTests
         check(vm.Users.All(u => u.NewCount == 0), "「全部标记已读」把所有红点清零");
         check(vm.MarkAllReadText == "已标记", $"点完按钮文案短暂变「已标记」→ {vm.MarkAllReadText}");
         check(!vm.HasUnreadSummary, "清零后汇总徽标立刻消失");
-
-        // 三枚 chip 必须排在一行里(左栏只有 252 宽, 挤到换行就是排版坏了)
-        var chipRow = recentChip.Parent as Panel;
-        check(chipRow != null && chipRow.ActualWidth > 180,
-            $"三枚排序 chip 所在的一行有可用宽度({chipRow?.ActualWidth:0}px)");
 
         // 界面快照留档(与其它页面一致, 存 artifacts); 失败只提示不判失败 ——
         // 这条测的是功能, 截图是给人工看观感的。

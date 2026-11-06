@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using BiliTouch.Services;
@@ -22,39 +22,47 @@ public sealed class SkinSurface : FrameworkElement
         var dark = Svc.Theme.IsDark;
         var bounds = new Rect(RenderSize);
         dc.PushClip(new RectangleGeometry(bounds));
+        var foundation = dark ? Color.FromRgb(88,37,63) : Color.FromRgb(255,220,237);
         if (Kind == "Rail")
         {
-            dc.DrawRectangle(SkinService.Instance.Pattern(dark ? .09 : .07), null, bounds);
-            dc.DrawRectangle(new SolidColorBrush(Color.FromArgb(130, 255, 190, 56)), null,
-                new Rect(Math.Max(0, ActualWidth - 2), 0, 2, ActualHeight));
+            var baseColor = ((SolidColorBrush)FindResource("SideBarBackgroundBrush")).Color;
+            var baseFill = new LinearGradientBrush();
+            baseFill.MappingMode = BrushMappingMode.Absolute;
+            baseFill.StartPoint = new Point(0,0); baseFill.EndPoint = new Point(0,Math.Max(240,ActualHeight));
+            baseFill.GradientStops.Add(new GradientStop(foundation,0));
+            baseFill.GradientStops.Add(new GradientStop(foundation,Math.Min(.95,112/Math.Max(240,ActualHeight))));
+            baseFill.GradientStops.Add(new GradientStop(baseColor,1));
+            dc.DrawRectangle(baseFill,null,bounds);
+            dc.DrawRectangle(SkinService.Instance.Pattern(dark ? .14 : .12),null,bounds);
         }
         else
         {
-            // Preserve the wordmark on the original LEFT. The entire decoration fades
-            // towards the right, where the underlying window material remains visible.
-            var fade = new LinearGradientBrush(Colors.White, Colors.Transparent, 0);
-            fade.GradientStops.Insert(1, new GradientStop(Color.FromArgb(185, 255, 255, 255), .38));
+            var fade = new LinearGradientBrush(Colors.White,Colors.Transparent,0);
+            fade.GradientStops.Insert(1,new GradientStop(Colors.White,.15));
             dc.PushOpacityMask(fade);
-            dc.DrawRectangle(new SolidColorBrush(dark ? Color.FromRgb(54, 29, 47) : Color.FromRgb(255, 232, 243)), null, bounds);
-            var original = SkinService.Instance.Image("head_bg");
-            double originalWidth = ActualHeight * original.PixelWidth / original.PixelHeight;
-            // Exclude the original 27-pixel yellow rim. Draw one continuous rim below,
-            // rather than joining a thick source-image stripe to a thinner new stripe.
-            originalWidth = ActualHeight * original.PixelWidth / (original.PixelHeight - 27);
-            var originalBrush = new ImageBrush(original) { Viewbox = new Rect(0, 27.0 / 264, 1, 237.0 / 264), Stretch = Stretch.Fill };
-            var blendStart = Math.Max(0, originalWidth - 100);
-            var blendOut = new LinearGradientBrush(Colors.White, Colors.Transparent, new Point(blendStart, 0), new Point(originalWidth, 0)) { MappingMode = BrushMappingMode.Absolute };
-            var blendIn = new LinearGradientBrush(Colors.Transparent, Colors.White, new Point(blendStart, 0), new Point(originalWidth, 0)) { MappingMode = BrushMappingMode.Absolute };
-            dc.PushOpacity(dark ? .30 : .45);
-            dc.PushOpacityMask(blendIn);
-            dc.DrawRectangle(SkinService.Instance.Pattern(), null, bounds);
-            dc.Pop();
-            dc.PushOpacityMask(blendOut);
-            dc.DrawRectangle(originalBrush, null, new Rect(0, 0, originalWidth, ActualHeight));
-            dc.Pop(); dc.Pop();
-            dc.Pop();
-            dc.DrawRectangle(new LinearGradientBrush(Color.FromRgb(255, 177, 43), Color.FromRgb(255, 220, 65), 0), null,
-                new Rect(0, 0, ActualWidth, 3));
+            dc.DrawRectangle(new SolidColorBrush(foundation),null,bounds);
+            var origin = Window.GetWindow(this) is {} window ? TranslatePoint(new Point(),window).X : 0;
+            dc.DrawRectangle(SkinService.Instance.Pattern(dark ? .14 : .12,origin),null,bounds);
+            // Keep the original wordmark subdued; its left edge fades in from the rail seam.
+            var art = SkinService.Instance.Image("head_bg");
+            var width = ActualHeight * art.PixelWidth / (art.PixelHeight-27);
+            var brush = new ImageBrush(art) { Viewbox = new Rect(0,27d/264,1,237d/264), Stretch=Stretch.Fill };
+            var mask = new LinearGradientBrush();
+            mask.GradientStops.Add(new GradientStop(Colors.Transparent,0));
+            mask.GradientStops.Add(new GradientStop(Colors.White,.14));
+            mask.GradientStops.Add(new GradientStop(Colors.White,.65));
+            mask.GradientStops.Add(new GradientStop(Colors.Transparent,1));
+            dc.PushOpacity(dark ? .16 : .22); dc.PushOpacityMask(mask);
+            dc.DrawRectangle(brush,null,new Rect(0,0,width,ActualHeight));
+            dc.Pop(); dc.Pop(); dc.Pop();
+        }
+        // The original gold rim joins the themed surfaces and softens the content boundary.
+        var rim = new SolidColorBrush(Color.FromArgb(dark ? (byte)170 : (byte)210,255,211,75));
+        if(Kind=="Rail") dc.DrawRectangle(rim,null,new Rect(Math.Max(0,ActualWidth-1),0,1,ActualHeight));
+        else {
+            var gold = new LinearGradientBrush(Color.FromArgb(210,255,211,75),Colors.Transparent,0);
+            gold.GradientStops.Insert(1,new GradientStop(Color.FromArgb(150,255,211,75),.4));
+            dc.DrawRectangle(gold,null,new Rect(0,Math.Max(0,ActualHeight-1.5),ActualWidth,1.5));
         }
         dc.Pop();
     }
@@ -75,18 +83,18 @@ public sealed class SkinProfileLayout : Decorator
     {
         if (Child == null) return new Size();
         if (!SkinService.Instance.IsEnabled) { Child.Measure(available); return Child.DesiredSize; }
-        _narrow = available.Width < 660;
-        _artWidth = _narrow ? 0 : available.Width * .40;
+        _narrow = available.Width < 760;
+        _artWidth = _narrow ? 0 : available.Width * .52;
         Child.Measure(new Size(Math.Max(0, available.Width - _artWidth), available.Height));
         return new Size(Child.DesiredSize.Width + _artWidth,
-            _narrow ? Child.DesiredSize.Height + 190 : Math.Max(210, Child.DesiredSize.Height));
+            _narrow ? Child.DesiredSize.Height + 260 : Math.Max(260, Child.DesiredSize.Height));
     }
     protected override Size ArrangeOverride(Size final)
     {
         if (Child != null)
         {
             var active = SkinService.Instance.IsEnabled;
-            Child.Arrange(active ? (_narrow ? new Rect(0, 190, final.Width, Math.Max(0, final.Height - 190))
+            Child.Arrange(active ? (_narrow ? new Rect(0, 260, final.Width, Math.Max(0, final.Height - 260))
                 : new Rect(0, 0, Math.Max(0, final.Width - _artWidth - 12), final.Height)) : new Rect(final));
         }
         return final;
@@ -94,25 +102,23 @@ public sealed class SkinProfileLayout : Decorator
     protected override void OnRender(DrawingContext dc)
     {
         if (!SkinService.Instance.IsEnabled) return;
-        var area = _narrow ? new Rect(0, 0, ActualWidth, 174)
+        var area = _narrow ? new Rect(0, 0, ActualWidth, 260)
             : new Rect(0, 0, ActualWidth, ActualHeight);
         if (area.Width <= 0 || area.Height <= 0) return;
         dc.PushClip(new RectangleGeometry(area, 12, 12));
         var image = SkinService.Instance.Image("head_myself_bg");
-        var art = _narrow ? area : new Rect(ActualWidth * .30, 0, ActualWidth * .70, ActualHeight);
-        var ratio = Math.Max(art.Width / image.PixelWidth, art.Height / image.PixelHeight);
-        var width = image.PixelWidth * ratio; var height = image.PixelHeight * ratio;
-        dc.DrawImage(image, new Rect(art.X + (art.Width - width) / 2, art.Y - (height - art.Height) * .22, width, height));
+        // Reserve the complete width of the two faces, cropping only the lower body.
+        var art = _narrow ? area : new Rect(ActualWidth - _artWidth,0,_artWidth,ActualHeight);
+        dc.PushClip(new RectangleGeometry(art));
+        var ratio = Math.Max(art.Width/image.PixelWidth, art.Height/(image.PixelHeight*.62));
+        var width = image.PixelWidth*ratio; var height = image.PixelHeight*ratio;
+        dc.DrawImage(image,new Rect(art.X+(art.Width-width)/2,art.Y+art.Height*.5-height*.36,width,height));
+        dc.Pop();
         if (!_narrow)
         {
-            var card = ((SolidColorBrush)FindResource("CardBackgroundBrush")).Color;
-            card.A = 255;
-            var veil = new LinearGradientBrush();
-            veil.GradientStops.Add(new GradientStop(card, 0));
-            veil.GradientStops.Add(new GradientStop(card, .36));
-            veil.GradientStops.Add(new GradientStop(Color.FromArgb(215, card.R, card.G, card.B), .52));
-            veil.GradientStops.Add(new GradientStop(Color.FromArgb(0, card.R, card.G, card.B), .80));
-            dc.DrawRectangle(veil, null, area);
+            var card = ((SolidColorBrush)FindResource("CardBackgroundBrush")).Color; card.A=255;
+            var edge = new LinearGradientBrush(card,Color.FromArgb(0,card.R,card.G,card.B),0);
+            dc.DrawRectangle(edge,null,new Rect(art.X-1,0,64,ActualHeight));
         }
         dc.Pop();
     }

@@ -1,4 +1,4 @@
-<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:sys="clr-namespace:System;assembly=System.Runtime">
 
@@ -810,12 +810,11 @@
                                                    是 ToggleButton(它没有 SelectionBoxItem 属性),
                                                    绑上去永远是 null —— 这就是"选择后上方方框空白"
                                                    的根因(2026-10-03 真机实证)。 -->
-                                            <TextBlock Grid.Column="0" Margin="12,0,4,0"
-                                                       VerticalAlignment="Center"
-                                                       TextTrimming="CharacterEllipsis"
-                                                       Text="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}"
-                                                       Foreground="{DynamicResource TextPrimaryBrush}"
-                                                       FontSize="13" />
+                                            <ContentPresenter Grid.Column="0" Margin="12,0,4,0" VerticalAlignment="Center"
+                                                Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                ContentTemplateSelector="{Binding ItemTemplateSelector, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                TextElement.Foreground="{DynamicResource TextPrimaryBrush}" TextElement.FontSize="13" />
                                             <TextBlock Grid.Column="1" Text="&#xE70D;" FontSize="10"
                                                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                                        Foreground="{DynamicResource TextSecondaryBrush}"
@@ -1624,7 +1623,8 @@
     </Style>
 
     <Style x:Key="SettingsTabStyle" TargetType="RadioButton" BasedOn="{StaticResource PillTabStyle}">
-        <Setter Property="Padding" Value="20,8" />
+        <Setter Property="Padding" Value="18,3" />
+        <Setter Property="MinHeight" Value="30" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">

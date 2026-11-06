@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -45,6 +45,9 @@ public partial class PlayerWindow
     private long _webAnimationStarted;
     private long _webSurfaceSettledAt;
     private int _webScrollGeneration;
+    private VideoFrameTransition? _webFrameTransition;
+    private bool _webFramePending,_webFrameAnimating;
+    private int _webFrameGeneration;
     private FrameworkElement[] _webHeaderParts = Array.Empty<FrameworkElement>();
     private readonly StackPanel _webHeaderStack = new();
     private ScrollViewer? _webHeaderScroll;
@@ -201,7 +204,7 @@ public partial class PlayerWindow
         // 越过阈值就**完成**停靠: 松手后绝不能把画面留在两栏中间。
         var threshold = _webAnimationTo >= 0.5 ? Math.Min(48, height * 0.12) : Math.Min(120, height * 0.3);
         SetWebDockTarget(WebLeftScroll.VerticalOffset > threshold ? 1 : 0);
-        if (!_webRendering) ApplyWebVideoBounds();
+        if (!_webRendering && !_webFramePending && !_webFrameAnimating) ApplyWebVideoBounds();
     }
 
     private double InlineWebVideoHeight(double width) => Math.Min(width * 9 / 16, Math.Max(1, WebLeftPane.ActualHeight));
@@ -217,6 +220,12 @@ public partial class PlayerWindow
     /// ★ 目标与当前位置几乎相同时不重启动画(滚动时每帧都会调到这里, 不能每帧重建动画状态)。
     /// </summary>
     private void SetWebDockTarget(double target)
+    {
+        if(_webFramePending || _webFrameAnimating){_webAnimationTo=target;return;}
+        if(Math.Abs(target-_webDockProgress)>.001 && _mp.IsPlaying){_webAnimationTo=target;_ = TryWebFrameTransitionAsync();return;}
+        StartLegacyWebDockTarget(target);
+    }
+    private void StartLegacyWebDockTarget(double target)
     {
         if (Math.Abs(target - _webAnimationTo) < 0.0001 && _webRendering) return;
         if (Math.Abs(target - _webDockProgress) < 0.0001) { _webAnimationTo = target; ApplyWebVideoBounds(); return; }
@@ -291,18 +300,26 @@ public partial class PlayerWindow
     private void ApplyWebVideoBounds()
     {
         if (!_webLayoutMounted || _closing || WebLeftPane.ActualWidth <= 0 || !WebDockAnchor.IsVisible) return;
+        var bounds=CalculateWebVideoBounds(_webDockProgress);
+        if(bounds.IsEmpty)return;
+        if(!Nearly(VideoSurface.Width,bounds.Width) || !Nearly(VideoSurface.Height,bounds.Height)){VideoSurface.Width=bounds.Width;VideoSurface.Height=bounds.Height;}
+        var margin=new Thickness(bounds.Left,bounds.Top,0,0);if(VideoSurface.Margin!=margin)VideoSurface.Margin=margin;
+        UpdateAlternateVideoControls();
+    }
+    private Rect CalculateWebVideoBounds(double progress)
+    {
         var width = WebLeftScroll.ViewportWidth > 0 ? WebLeftScroll.ViewportWidth : WebLeftPane.ActualWidth;
         var fullHeight = InlineWebVideoHeight(width);
         var logicalDockWidth = WebDockAnchor.ActualWidth;
-        if (logicalDockWidth <= 0) return;
+        if (logicalDockWidth <= 0) return Rect.Empty;
         var logicalDockHeight = logicalDockWidth * 9 / 16;
-        var p = Math.Clamp(_webDockProgress, 0, 1);
+        var p = Math.Clamp(progress, 0, 1);
         // 右栏的占位块与视频位置必须一起收敛: 只改其中一个会让另一栏在下一帧又算一次。
         WebDockAnchor.Margin = new Thickness(20, 12 * p, 20, 0);
         WebDockAnchor.Height = logicalDockHeight * p;
         Rect dock;
         try { dock = WebDockAnchor.TransformToAncestor(PlayerStage).TransformBounds(new Rect(0, 0, logicalDockWidth, logicalDockHeight)); }
-        catch (InvalidOperationException) { return; }
+        catch (InvalidOperationException) { return Rect.Empty; }
         var left = dock.Left * p; var top = dock.Top * p;
         var w = width + (dock.Width - width) * p; var h = fullHeight + (dock.Height - fullHeight) * p;
         // 取整到设备像素: 亚像素尺寸会让 libvlc 的 vout 在两个像素档之间来回抖。
@@ -312,11 +329,7 @@ public partial class PlayerWindow
         h = Math.Max(1, Math.Round(h * dpi) / dpi);
         left = Math.Round(left * dpi) / dpi;
         top = Math.Round(top * dpi) / dpi;
-        if (!Nearly(VideoSurface.Width, w) || !Nearly(VideoSurface.Height, h))
-        { VideoSurface.Width = w; VideoSurface.Height = h; }
-        var margin = new Thickness(left, top, 0, 0);
-        if (VideoSurface.Margin != margin) VideoSurface.Margin = margin;
-        UpdateAlternateVideoControls();
+        return new Rect(left,top,w,h);
     }
 
     /// <summary>
@@ -336,8 +349,28 @@ public partial class PlayerWindow
         return Math.Abs(current - target) <= 0.01;
     }
 
+    private async Task TryWebFrameTransitionAsync()
+    {
+        _webFramePending=true;var generation=++_webFrameGeneration;
+        try{
+            var frame=await VideoFrameTransition.CaptureAsync(_mp);
+            if(generation!=_webFrameGeneration || _closing || !_webLayoutMounted)return;
+            _webFramePending=false;
+            if(frame==null){StartLegacyWebDockTarget(_webAnimationTo);return;}
+            var target=_webAnimationTo;var from=CalculateWebVideoBounds(_webDockProgress);var to=CalculateWebVideoBounds(target);
+            if(from.IsEmpty || to.IsEmpty){StartLegacyWebDockTarget(target);return;}
+            var transition=_webFrameTransition=new VideoFrameTransition();_webFrameAnimating=true;
+            await transition.RunAsync(this,PlayerStage,from,to,frame,
+                ()=>{VideoView.Visibility=Visibility.Hidden;VideoSurface.Background=Brushes.Transparent;},
+                ()=>{if(generation!=_webFrameGeneration || _closing)return;_webDockProgress=target;ApplyWebVideoBounds();VideoView.Visibility=Visibility.Visible;VideoSurface.Background=Brushes.Black;StartVideoBackdropFix();});
+            if(generation==_webFrameGeneration && !_closing){_webFrameAnimating=false;_webFrameTransition=null;if(Math.Abs(_webAnimationTo-_webDockProgress)>.001)Dispatcher.BeginInvoke(new Action(()=>{if(!_closing && _webLayoutMounted)SetWebDockTarget(_webAnimationTo);}));}
+        }catch{if(!_closing && generation==_webFrameGeneration)StartLegacyWebDockTarget(_webAnimationTo);}
+        finally{if(generation==_webFrameGeneration){_webFramePending=false;_webFrameAnimating=false;if(!_closing){VideoView.Visibility=Visibility.Visible;VideoSurface.Background=Brushes.Black;}}}
+    }
     private void StopWebVideoAnimation()
     {
+        ++_webFrameGeneration;_webFramePending=false;_webFrameAnimating=false;_webFrameTransition?.Dispose();_webFrameTransition=null;
+        if(!_closing){VideoView.Visibility=Visibility.Visible;VideoSurface.Background=Brushes.Black;}
         if (_webRendering) { CompositionTarget.Rendering -= OnWebVideoFrame; _webRendering = false; }
         if (DockTransitionCover != null) DockTransitionCover.Visibility = Visibility.Collapsed;
         // 收尾必须让原生窗口落在最终几何上: 过渡期间它一直没动, 只有这里会动。

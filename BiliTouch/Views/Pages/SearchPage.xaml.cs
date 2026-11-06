@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -258,6 +258,9 @@ public partial class SearchPage : UserControl
         if (ActualWidth <= 0) return;
 
         _open = true;
+        SearchKindTabs.IsHitTestVisible=false;
+        SearchKindTabs.Opacity=0;
+        SearchContentBox.Visibility=Visibility.Visible;
         // 高度在变, 这段别让 Auto 闪出滚动条(动画结束再切回 Auto)
         SearchCardScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
 
@@ -347,6 +350,9 @@ public partial class SearchPage : UserControl
         SearchCard.Width = SearchBoxW;
         SearchCard.Height = SearchBoxH;
         SearchContentBox.Opacity = 0;
+        SearchContentBox.Visibility=Visibility.Collapsed;
+        SearchKindTabs.Opacity=1;
+        SearchKindTabs.IsHitTestVisible=true;
         SearchCardScroll.Opacity = 0;
         SearchInputRing.Opacity = 0;
         SearchCardScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;

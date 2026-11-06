@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
@@ -130,6 +130,16 @@ internal static class LiveRoomTests
             volumePopup.IsOpen = false;
             check(pauseGlyph != null && pauseGlyph.Data != null, "live play/pause uses the same vector glyph as the player");
             var nativeReady = player.IsPlaying; check(nativeReady, "independent live player actually decodes the local silent video fixture");
+            var overlayWindow=Field<Window>(window,"_liveOverlayWindow");
+            check(overlayWindow!=null && !ReferenceEquals(overlayWindow,window),"live native-video overlay forwards keyboard events to the room controls");
+            var overlayRoot=(FrameworkElement)window.FindName("VideoOverlay");overlayRoot.Focus();
+            check(!((TextBox)window.FindName("ChatInput")).IsKeyboardFocusWithin,"video surface takes focus out of the live composer");
+            var key=new KeyEventArgs(Keyboard.PrimaryDevice,PresentationSource.FromVisual(overlayWindow)!,Environment.TickCount,Key.F){RoutedEvent=Keyboard.PreviewKeyDownEvent};
+            overlayWindow.RaiseEvent(key);Pump(100);
+            check(Field<bool>(window,"_full") && key.Handled,"F received by the separate video-overlay window enters fullscreen");
+            key=new KeyEventArgs(Keyboard.PrimaryDevice,PresentationSource.FromVisual(overlayWindow)!,Environment.TickCount,Key.Escape){RoutedEvent=Keyboard.PreviewKeyDownEvent};
+            overlayWindow.RaiseEvent(key);Pump(100);
+            check(!Field<bool>(window,"_full") && !window.IsClosing,"Escape from the video overlay exits fullscreen without closing the room");
             var model = window.Model;
             settings.UpdateDanmakuSettings(true, 50, true, "屏蔽词", true, opacityPercent: 60, fontScalePercent: 150, speedLevel: 3);
             check(((Slider)window.FindName("FontSetting")).Value == 150 && ((Slider)window.FindName("OpacitySetting")).Value == 60, "live settings follow global danmaku preferences");
@@ -187,7 +197,7 @@ internal static class LiveRoomTests
             settings.UpdateDanmakuSettings(oldDm.DanmakuEnabled, oldDm.DanmakuAreaPercent, oldDm.DanmakuSmartFilter, oldDm.DanmakuBlockKeywords, oldDm.DanmakuColorful, opacityPercent: oldDm.DanmakuOpacityPercent, fontScalePercent: oldDm.DanmakuFontScalePercent, speedLevel: oldDm.DanmakuSpeedLevel);
         }
     }
-    public static void Network(string artifacts, string? sessionPath = null)
+    public static void Network(string artifacts, string? sessionPath = null, bool interactive = false)
     {
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
         // Read-only. An explicit session path enables a separate authenticated receive probe.
@@ -211,6 +221,7 @@ internal static class LiveRoomTests
             Console.WriteLine(json); File.WriteAllText(Path.Combine(artifacts, sessionPath == null ? "live-room-network.json" : "live-room-network-auth.json"), json);
             Save(window, Path.Combine(artifacts, "live-room-network.png"));
             Save((FrameworkElement)window.FindName("VideoOverlay"), Path.Combine(artifacts, "live-room-network-overlay.png"));
+            if(interactive) { var reviewEnd=Environment.TickCount64+120000;while(!closed && Environment.TickCount64<reviewEnd)Pump(100); }
         }
         finally { window.Close(); var end = Environment.TickCount64; while (!closed && Environment.TickCount64 - end < 10000) Pump(50); }
     }

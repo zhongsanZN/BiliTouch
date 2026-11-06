@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -525,6 +525,15 @@ public class SettingsViewModel : ObservableObject
     // ★ 0 = 自动(按窗口宽度算, 沿用原有行为); 2~8 = 固定列数。
     // ★ 作用于**所有**卡片页: 首页/历史/收藏/搜索/分区/稍后再看/关注/个人空间 共用同一套卡片墙。
 
+    public bool ExperimentalVideoEnhancement{get=>Svc.Settings.ExperimentalVideoEnhancement;set{Svc.Settings.UpdateVideoEnhancement(experimental:value);OnPropertyChanged();}}
+    public bool VideoEnhancementActive{get=>Svc.Settings.VideoEnhancementActive;set{Svc.Settings.UpdateVideoEnhancement(active:value);OnPropertyChanged();}}
+    public string[] EnhancementModes{get;}={"自动厂商增强","视频处理器缩放"};
+    public string VideoEnhancementMode{get=>Svc.Settings.VideoEnhancementMode;set{Svc.Settings.UpdateVideoEnhancement(mode:value);OnPropertyChanged();}}
+    public bool VideoEnhancementHdr{get=>Svc.Settings.VideoEnhancementHdr;set{Svc.Settings.UpdateVideoEnhancement(hdr:value);OnPropertyChanged();}}
+    public IReadOnlyList<GraphicsAdapter> EnhancementAdapters=>GraphicsAdapters.Choices;
+    public string EnhancementAdapterId{get=>Svc.Settings.EnhancementAdapterId;set{if(value==EnhancementAdapterId)return;Svc.Settings.UpdateVideoEnhancement(adapter:value);EnhancementAdapterHint=GraphicsAdapters.ApplyApplicationPreference(value);OnPropertyChanged();}}
+    private string _enhancementAdapterHint="自动识别显卡并选择厂商方案；手动显卡偏好重启应用后生效。多块同类显卡由 Windows 最终分配，以播放日志确认。";
+    public string EnhancementAdapterHint{get=>_enhancementAdapterHint;private set{_enhancementAdapterHint=value;OnPropertyChanged();}}
     public IReadOnlyList<FontChoice> FontChoices=>AppTypography.Choices;
     public string FontId {get=>Svc.Settings.FontId;set{Svc.Settings.SetFont(value);OnPropertyChanged();}}
 
@@ -533,7 +542,7 @@ public class SettingsViewModel : ObservableObject
         get=>Svc.Settings.TouchpadFeedSensitivity;
         set{if(value==Svc.Settings.TouchpadFeedSensitivity)return;Svc.Settings.SetTouchpadFeedSensitivity(value);OnPropertyChanged();OnPropertyChanged(nameof(TouchpadSensitivityHint));}
     }
-    public string TouchpadSensitivityHint=>$"当前 {TouchpadFeedSensitivity}%；降低后信息流滚动更慢，普通鼠标滚轮步长不变。";
+    public string TouchpadSensitivityHint=>$"当前 {TouchpadFeedSensitivity}%；100% 相当于旧版 50%；同时影响信息流触控板和滚轮。";
 
     public bool IsWebPlayerLayout
     {
@@ -1260,8 +1269,15 @@ public class SettingsViewModel : ObservableObject
         Svc.Settings.DanmakuFilterScroll && Svc.Settings.DanmakuFilterFixed
         && Svc.Settings.DanmakuFilterColorful && Svc.Settings.DanmakuFilterAdvanced
             ? "当前显示全部类型; 关掉某一类即可把它从画面里去掉"
-            : "只显示已选中的类型";
+            : !Svc.Settings.HasVisibleDanmakuTypes ? "全部类型已关闭，当前不会显示任何弹幕。可点下方恢复全部。" : "亮起表示显示该类型，灰色表示隐藏";
 
+    public ICommand RestoreDanmakuTypesCommand { get; }
+    private void RestoreDanmakuTypes()
+    {
+        Svc.Settings.RestoreDanmakuTypes();
+        foreach (var name in new[] { nameof(DanmakuEnabled), nameof(DanmakuFilterScroll), nameof(DanmakuFilterFixed), nameof(DanmakuFilterColorful), nameof(DanmakuFilterAdvanced), nameof(DanmakuTypeFilterHint) })
+            OnPropertyChanged(name);
+    }
     public ICommand ThemeSystemCommand { get; }
     public ICommand ThemeLightCommand { get; }
     public ICommand ThemeDarkCommand { get; }
@@ -1304,6 +1320,7 @@ public class SettingsViewModel : ObservableObject
 
     public SettingsViewModel()
     {
+        RestoreDanmakuTypesCommand = new RelayCommand(RestoreDanmakuTypes);
         ClearFilterCommand = new RelayCommand(() => FilterService.Instance.Clear());
         RemoveFilterRuleCommand = new RelayCommand(value => { if(value is FilterRule rule)FilterService.Instance.RemoveRule(rule); });
         OpenBiliTouchAuthorCommand = new RelayCommand(() => OpenAuthor(BiliTouchAuthorMid));

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Text.Json;
@@ -64,7 +64,7 @@ internal static class TrackpadScrollTests
     for(var i=0;i<60;i++)Wheel(innerContent,-5);
     check(inner.VerticalOffset<0.5 && Counter("OffsetWrites")==before,"input packets wait for a render frame at "+sensitivity+" percent");
     Pump(500);distances.Add(inner.VerticalOffset);
-    check(Math.Abs(inner.VerticalOffset-300*0.6*sensitivity/100.0)<2,"all high-frequency packet distance is retained at "+sensitivity+" percent");
+    check(Math.Abs(inner.VerticalOffset-300*0.3*sensitivity/100.0)<2,"all high-frequency packet distance is retained at "+sensitivity+" percent");
     check(Counter("InputPackets")-input==60 && Counter("OffsetWrites")-before<60,"sixty packets are coalesced into fewer viewport writes at "+sensitivity+" percent");
    }
    check(Math.Abs(distances[2]/distances[0]-7)<0.1,"low and high sensitivity change distance proportionally");
@@ -86,9 +86,9 @@ internal static class TrackpadScrollTests
     Wheel(innerContent,-120);Pump(1000);
     notchDistances.Add(inner.VerticalOffset);
    }
-   check(Math.Abs(notchDistances[1]-90*0.75)<3 && Math.Abs(notchDistances[0]-90*0.25)<3
-         && Math.Abs(notchDistances[2]-90*1.75)<3,
-     "whole-notch wheel distance follows feed sensitivity (90px per notch at 100 percent)");
+   check(Math.Abs(notchDistances[1]-45*0.75)<3 && Math.Abs(notchDistances[0]-45*0.25)<3
+         && Math.Abs(notchDistances[2]-45*1.75)<3,
+     "whole-notch wheel distance follows feed sensitivity (45px per notch at 100 percent)");
    check(notchDistances[2]>notchDistances[1]*2,"low and high sensitivity scale whole notches proportionally");
    // 一格必须"滑过去"而不是"跳过去":
    //   ① 滚轮事件当场**不动** offset(不是瞬移, 只是记了个目标);
@@ -102,7 +102,7 @@ internal static class TrackpadScrollTests
    check(inner.VerticalOffset<0.5,"a whole notch does not teleport the viewport inside the event handler");
    Pump(900);
    var notchWrites=Counter("OffsetWrites")-writesBeforeNotch;
-   check(Math.Abs(inner.VerticalOffset-67.5)<3,"the whole notch lands exactly one notch step after easing");
+   check(Math.Abs(inner.VerticalOffset-33.75)<3,"the whole notch lands exactly one notch step after easing");
    // ★ 上界给到 150 而不是几十: tau=0.12 的指数逼近要 ~40 帧才把剩余量压到 0.5px 以下,
    //   而 Pump 的帧率依机器而定; 这条断言要证的是"分了帧"(>2), 不是"恰好几帧"。
    check(notchWrites>2 && notchWrites<150,"the whole notch is committed across several frames, not one jump");
@@ -112,7 +112,7 @@ internal static class TrackpadScrollTests
    for(var i=0;i<3;i++){Wheel(innerContent,-120);Pump(40);if(inner.VerticalOffset<lastOffset-0.01)monotonic=false;lastOffset=inner.VerticalOffset;}
    Pump(1000);
    check(monotonic,"rapid whole notches continue from the live offset and never jump back");
-   check(Math.Abs(inner.VerticalOffset-3*67.5)<5,"three whole notches accumulate to three notch steps at 75 percent");
+   check(Math.Abs(inner.VerticalOffset-3*33.75)<5,"three whole notches accumulate to three notch steps at 75 percent");
    // 按下立刻取消: 整格滚动中途按下鼠标, 不能再自己往前飘。
    SmoothScroll.Stop(inner);inner.ScrollToVerticalOffset(0);Pump(80);
    Wheel(innerContent,-120);Pump(16);
@@ -139,7 +139,7 @@ internal static class TrackpadScrollTests
    for(var frame=0;frame<20;frame++){for(var packet=0;packet<12;packet++)Wheel(scroller,-5);Pump(16);}
    Pump(300);
    var realized=Enumerable.Range(0,list.Items.Count).Count(i=>list.ItemContainerGenerator.ContainerFromIndex(i)!=null);
-   check(scroller.VerticalOffset>1000 && realized<100,"high-sensitivity long feed keeps item recycling while advancing through content");
+   check(scroller.VerticalOffset>500 && realized<100,"high-sensitivity long feed keeps item recycling while advancing through content");
    Console.WriteLine($"TRACKPAD sample packets={Counter("InputPackets")-packets} writes={Counter("OffsetWrites")-writes} realized={realized} elapsed={watch.ElapsedMilliseconds}ms");
    check(Counter("OffsetWrites")-writes<Counter("InputPackets")-packets,"streamed high-sensitivity input avoids a layout write for every wheel packet");
    window.Close();Pump(50);check(!(bool)typeof(TrackpadScroll).GetField("_rendering",BindingFlags.Static|BindingFlags.NonPublic)!.GetValue(null)!,"unloaded and completed feeds release their frame callback");

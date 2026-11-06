@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
@@ -248,7 +248,7 @@ public class FollowViewModel : ObservableObject
         }
     }
 
-    private FollowSortMode _followSortMode = Svc.Settings.FollowSortMode;
+    private FollowSortMode _followSortMode = FollowSortMode.RecentUpdate;
 
     /// <summary>
     /// chip 的选中态: 只有被选中的那枚 Tag="on"(见 FollowPage 的 FeedLayoutChipStyle DataTrigger)。
@@ -440,6 +440,7 @@ public class FollowViewModel : ObservableObject
     /// </summary>
     private void OnUsersChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
+        if(e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Move) return;
         if (e.OldItems != null)
             foreach (var item in e.OldItems)
                 if (item is FollowUser old) old.PropertyChanged -= OnUserPropertyChanged;
@@ -447,6 +448,7 @@ public class FollowViewModel : ObservableObject
             foreach (var item in e.NewItems)
                 if (item is FollowUser fresh) fresh.PropertyChanged += OnUserPropertyChanged;
 
+        if (_batchUsers) return;
         OnPropertyChanged(nameof(Count));
         OnPropertyChanged(nameof(HasFollowUsers));
         RaiseUnreadSummary();
@@ -455,8 +457,8 @@ public class FollowViewModel : ObservableObject
     private void OnUserPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName != nameof(FollowUser.NewCount) && e.PropertyName != nameof(FollowUser.HasNew)) return;
+        if (_suppressSort || _batchUsers) return;
         RaiseUnreadSummary();
-        if (_suppressSort) return;
         // 未读优先模式下, 红点一变就要重排 —— 否则"点开一个 UP"之后它还赖在最前面。
         if (_followSortMode == FollowSortMode.UnreadFirst) SortUsers();
     }
@@ -480,6 +482,7 @@ public class FollowViewModel : ObservableObject
         _suppressSort = true;
         try { body(); }
         finally { _suppressSort = prev; }
+        RaiseUnreadSummary();
         SortUsers();
     }
 
@@ -664,6 +667,7 @@ public class FollowViewModel : ObservableObject
     ///
     /// ★ 失败静默: 这是锦上添花, 不该弹错误。
     /// </summary>
+    private long _lastUnreadScanTs;
     private bool _checkingNew;
     public async Task CheckNewDynamicsAsync()
     {
@@ -673,16 +677,31 @@ public class FollowViewModel : ObservableObject
         var forUp = SelectedUp;
         try
         {
-            var result = forUp == null
-                ? await Svc.Api.GetDynamicFeedFullAsync()
-                : await Svc.Api.GetSpaceDynamicsAsync(forUp.Mid);
+            // Always scan the global feed, even while an individual UP is selected.
+            var result = await Svc.Api.GetDynamicFeedFullAsync();
             if (generation != _selectionGeneration || !result.ok || result.items == null) return;
-            // ★ 2026-11-05: 定时轮询/切页回来拉到的这一页也要刷红点(以前只在「全部动态」的
-            //   首屏加载里算, 于是"两分钟前刚投稿"的 UP 要等到下次整页刷新才亮红点)。
-            //   单 UP 视图里这一页只有 TA 自己, UpdateUnreadBadges 会按 skipMid 跳过 TA,
-            //   对别的 UP 是 no-op —— 但仍然会记时间轴并重排, 这是我们要的。
-            UpdateUnreadBadges(result.items);
-            var fresh = result.items.TakeWhile(d => !_seenDynamicIds.Contains(d.Id))
+            var all = new List<DynamicItem>(result.items);
+            var ids = new HashSet<string>(all.Select(d => d.Id));
+            var cursor = result.nextOffset;
+            var cursors = new HashSet<string>();
+            while (cursors.Count < 4 && result.hasMore && !string.IsNullOrEmpty(cursor) && cursors.Add(cursor))
+            {
+                // Scan until reaching a previously seen page; first visit covers the last week.
+                if ((_lastUnreadScanTs > 0 && all.Any(d => d.PubTs < _lastUnreadScanTs)) ||
+                    all.Any(d => d.PubTs > 0 && d.PubTs < DateTimeOffset.UtcNow.AddDays(-7).ToUnixTimeSeconds())) break;
+                var next = await Svc.Api.GetDynamicFeedFullAsync(cursor);
+                if (generation != _selectionGeneration || !next.ok) break;
+                foreach (var item in next.items ?? new List<DynamicItem>()) if (ids.Add(item.Id)) all.Add(item);
+                result = next; cursor = next.nextOffset;
+            }
+            UpdateUnreadBadges(all);
+            _lastUnreadScanTs = all.Count > 0 ? all.Max(d => d.PubTs) : _lastUnreadScanTs;
+            var portal = await Svc.Api.GetDynamicUnreadAuthorsAsync();
+            if (generation != _selectionGeneration) return;
+            foreach (var user in Users)
+                if (user.Mid != SelectedUp?.Mid && portal.Contains(user.Mid) && !DynamicSeenStore.TryGet(user.Mid, out _)) user.NewCount = Math.Max(1, user.NewCount);
+            RaiseUnreadSummary();
+            var fresh = all.TakeWhile(d => !_seenDynamicIds.Contains(d.Id))
                 .Where(d => d.Id.Length > 0).ToList();
             _pendingNewDynamics = fresh;
             NewDynamicsText = $"{fresh.Count} 条新动态";
@@ -747,20 +766,25 @@ public class FollowViewModel : ObservableObject
             }
             _selfMid = me.Mid;
 
-            var (ok, err, list) = await Svc.Api.GetFollowingsAsync(_selfMid, 1, 30);
+            var (ok, err, list) = await Svc.Api.GetFollowingsAsync(_selfMid, 1, 50);
+            var followingPage = 1;
+            if (!ok) { Error = err ?? "关注列表获取失败"; return; }
             if (refreshGeneration != _refreshGeneration) return;
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 if (list != null)
                 {
+                    _batchUsers = true;
                     Users.Clear();
                     foreach (var u in list)
                     {
                         u.IsSelected = u.Mid == SelectedUp?.Mid;
                         Users.Add(u);
                     }
-                    _hasMoreUsers = list.Count >= 30;
-                    _followingPage = 1;
+                    _batchUsers = false;
+                    RaiseUnreadSummary();
+                    _hasMoreUsers = false;
+                    _followingPage = followingPage;
                     // ★ 关注序号: 第一次见到的 UP 才分配, 已有的保持原值 ——
                     //   这是"关注顺序"模式在多次刷新后仍然稳定、不抖动的依据。
                     EnsureFollowOrder(Users);
@@ -774,6 +798,8 @@ public class FollowViewModel : ObservableObject
                 Loading = false;
             });
             await LoadSelectionAsync(reset: true);
+            _ = CompleteFollowingsAsync(refreshGeneration, list?.Count == 50);
+            _ = CheckNewDynamicsAsync();
             // ★ 拉完第一页动态后按当前排序模式重排左栏 —— 这一步必须在 UpdateUnreadBadges
             //   之后(它在 LoadSelectionAsync 里已经跑过), 否则排的是没有时间轴的空序。
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(SortUsers);
@@ -785,6 +811,38 @@ public class FollowViewModel : ObservableObject
             Loading = false;
             Error = ex.Message;
         }
+        finally { if (refreshGeneration == _refreshGeneration) Loading = false; }
+    }
+
+    private bool _batchUsers;
+    private async Task CompleteFollowingsAsync(int generation, bool more)
+    {
+        if (!more) return;
+        LoadingUsers = true;
+        try {
+            var mids = new HashSet<long>(Users.Select(u => u.Mid));
+            var page = 2;
+            while (more && generation == _refreshGeneration) {
+                var tasks = Enumerable.Range(page,4).Select(p => Svc.Api.GetFollowingsAsync(_selfMid,p,50)).ToArray();
+                var results = await Task.WhenAll(tasks);
+                if (generation != _refreshGeneration) return;
+                _batchUsers = true;
+                try {
+                    foreach (var result in results) {
+                        if (!result.ok || result.list == null) { Error = result.err ?? "关注列表加载中断，请刷新重试"; more=false; break; }
+                        var added=0;
+                        foreach(var user in result.list) if(mids.Add(user.Mid)) { Users.Add(user); added++; }
+                        _followingPage++;
+                        if(result.list.Count < 50 || added==0) { more=false; break; }
+                    }
+                } finally { _batchUsers=false; }
+                OnPropertyChanged(nameof(Count)); OnPropertyChanged(nameof(HasFollowUsers));
+                EnsureFollowOrder(Users); UpdateUnreadBadges(); RaiseUnreadSummary();
+                page += 4;
+                await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+            }
+        } catch(Exception ex) { if(generation==_refreshGeneration) Error=ex.Message; }
+        finally { if(generation==_refreshGeneration) LoadingUsers=false; }
     }
 
     /// <summary>左栏翻页: 关注列表一页 30 个。只补列表, 不动右栏。</summary>

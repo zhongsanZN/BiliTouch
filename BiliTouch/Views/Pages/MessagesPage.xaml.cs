@@ -1,4 +1,4 @@
-using System.Collections.Specialized;
+﻿using System.Collections.Specialized;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -27,6 +27,8 @@ public partial class MessagesPage : UserControl
  private void OnMessageCardOpen(object sender,RoutedEventArgs e){if(sender is FrameworkElement {DataContext:MsgItem m})OpenCard(m);}
  private void OpenCard(MsgItem m){if(m.Bvid.Length>0)Svc.Navigate?.OpenVideoPlayer(m.Bvid);else if(m.Aid>0)OpenLink("https://www.bilibili.com/video/av"+m.Aid);else OpenLink(m.TargetUrl);}
  private void OnMessageAction(object sender,RoutedEventArgs e){if(sender is Button {Tag:string url})OpenLink(url);}
+ private void OnNotificationUser(object sender,MouseButtonEventArgs e){if(sender is FrameworkElement{DataContext:MessageNotification n} && n.UserId>0)Svc.Navigate?.OpenUserSpace(n.UserId.ToString());}
+ private void OnNotificationOpen(object sender,RoutedEventArgs e){if(sender is FrameworkElement{DataContext:MessageNotification n}){if(n.Url.Length>0)OpenLink(n.Url);else if(n.UserId>0)Svc.Navigate?.OpenUserSpace(n.UserId.ToString());}}
  private static void OpenLink(string url)
  {
   if(!Uri.TryCreate(url,UriKind.Absolute,out var uri))return;

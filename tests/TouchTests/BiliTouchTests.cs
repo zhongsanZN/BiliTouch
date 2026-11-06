@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -19,7 +19,7 @@ internal static class BiliTouchTests
 {
     public static void Run(Action<bool, string> check, string artifacts)
     {
-        check(!UpdateChecker.IsConfigured, "upstream packages are never offered as BiliTouch updates");
+        check(UpdateChecker.IsConfigured && UpdateChecker.RepoOwner=="zhongsanZN" && UpdateChecker.RepoName=="BiliTouch", "upstream packages are never offered as BiliTouch updates");
         try { UpdateChecker.CheckAsync().GetAwaiter().GetResult(); check(false, "unconfigured updater rejects checks"); }
         catch (InvalidOperationException) { check(true, "unconfigured updater rejects checks without network"); }
 

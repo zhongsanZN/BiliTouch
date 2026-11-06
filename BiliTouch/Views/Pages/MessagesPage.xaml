@@ -1,16 +1,23 @@
-<UserControl x:Class="BiliTouch.Views.Pages.MessagesPage"
+﻿<UserControl x:Class="BiliTouch.Views.Pages.MessagesPage"
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:controls="clr-namespace:BiliTouch.Views.Controls" xmlns:helpers="clr-namespace:BiliTouch.Helpers"
  Background="{DynamicResource AppBackgroundBrush}">
  <UserControl.Resources><helpers:MessageCardWidthConverter x:Key="MessageCardWidth"/></UserControl.Resources>
  <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-  <Grid Margin="24,20,24,8" MinHeight="62">
-   <TextBlock Text="私信" Style="{StaticResource PageTitleStyle}" VerticalAlignment="Top"/>
-   <Button HorizontalAlignment="Right" VerticalAlignment="Bottom" Style="{StaticResource IconButtonStyle}" Command="{Binding RefreshCommand}" ToolTip="刷新"><TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15"/></Button>
+  <Grid MinHeight="112">
+   <helpers:SkinSurface Kind="Home"/>
+   <TextBlock Text="消息" Style="{StaticResource PageTitleStyle}" Margin="24,20,24,8" VerticalAlignment="Top"/>
+   <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="24,0,80,8">
+    <RadioButton Content="私信" GroupName="MessageChannel" Style="{StaticResource SettingsTabStyle}" IsChecked="{Binding PrivateTab,Mode=TwoWay}"/>
+    <RadioButton Content="回复与@" GroupName="MessageChannel" Style="{StaticResource SettingsTabStyle}" IsChecked="{Binding ReplyTab,Mode=TwoWay}"/>
+    <RadioButton Content="收到的喜欢" GroupName="MessageChannel" Style="{StaticResource SettingsTabStyle}" IsChecked="{Binding LikeTab,Mode=TwoWay}"/>
+    <RadioButton Content="新增粉丝" GroupName="MessageChannel" Style="{StaticResource SettingsTabStyle}" IsChecked="{Binding FansTab,Mode=TwoWay}"/>
+   </StackPanel>
+   <Button HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,24,8" Style="{StaticResource IconButtonStyle}" Command="{Binding RefreshCommand}" ToolTip="刷新"><TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15"/></Button>
   </Grid>
   <Grid Grid.Row="1">
-   <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="460" Visibility="{Binding Error,Converter={StaticResource StrToVis}}"><TextBlock Text="{Binding Error}" TextWrapping="Wrap"/><Button Content="重试" Style="{StaticResource SubtleButtonStyle}" Command="{Binding RefreshCommand}" Margin="0,16,0,0"/></StackPanel>
-   <Grid Visibility="{Binding Error,Converter={StaticResource InvStrToVis}}"><Grid.ColumnDefinitions><ColumnDefinition Width="252"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+   <StackPanel Panel.ZIndex="2" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="20,8" MaxWidth="620" Visibility="{Binding Error,Converter={StaticResource StrToVis}}"><TextBlock Text="{Binding Error}" TextWrapping="Wrap"/><Button Content="重试" Style="{StaticResource SubtleButtonStyle}" Command="{Binding RefreshCommand}" Margin="0,16,0,0"/></StackPanel>
+   <Grid Visibility="{Binding IsPrivateChannel,Converter={StaticResource BoolToVis}}"><Grid.ColumnDefinitions><ColumnDefinition Width="252"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
     <ScrollViewer x:Name="SessionScroll" Grid.Column="0" Margin="12,4,0,20" VerticalScrollBarVisibility="Auto">
      <StackPanel Margin="8,0,8,0"><controls:LoadingRing HorizontalAlignment="Center" Margin="0,12" Visibility="{Binding Loading,Converter={StaticResource BoolToVis}}"/>
       <ItemsControl x:Name="SessionList" ItemsSource="{Binding Sessions}"><ItemsControl.ItemTemplate><DataTemplate><controls:ContactListRow Title="{Binding DisplayName}" Subtitle="{Binding Preview}" Avatar="{Binding Face}" IsSelected="{Binding IsSelected}" HasUnread="{Binding HasUnread}" MouseLeftButtonUp="OnSessionClick"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
@@ -24,7 +31,7 @@
         <ItemsControl ItemsSource="{Binding Messages}"><ItemsControl.ItemTemplate><DataTemplate>
          <StackPanel Margin="0,0,0,16">
           <TextBlock Text="{Binding TimeText}" HorizontalAlignment="Center" FontSize="10" Margin="0,0,0,8" Foreground="{DynamicResource TextTertiaryBrush}"/>
-          <Border CornerRadius="10" Padding="12" MaxWidth="480">
+          <Border CornerRadius="10" Padding="12" MaxWidth="900">
            <Border.Style><Style TargetType="Border"><Setter Property="Background" Value="{DynamicResource CardBackgroundBrush}"/><Setter Property="HorizontalAlignment" Value="Left"/><Style.Triggers><DataTrigger Binding="{Binding IsMine}" Value="True"><Setter Property="HorizontalAlignment" Value="Right"/><Setter Property="Background" Value="{DynamicResource AccentSoftFillBrush}"/></DataTrigger></Style.Triggers></Style></Border.Style>
            <StackPanel>
             <Image MaxWidth="320" MaxHeight="300" Stretch="Uniform" helpers:Cover.ImageSource="{Binding ImageUrl}" Visibility="{Binding IsImage,Converter={StaticResource BoolToVis}}" MouseLeftButtonUp="OnMessageImageClick" Cursor="Hand"/>
@@ -51,6 +58,29 @@
       <Button Grid.Column="1" Content="发送" Command="{Binding SendCommand}" IsEnabled="{Binding CanSend}" MinHeight="44" Margin="10,0,0,0" Style="{StaticResource AccentButtonStyle}" Padding="20,8"/>
      </Grid>
     </Grid>
+   </Grid>
+   <Grid Visibility="{Binding IsNotificationChannel,Converter={StaticResource BoolToVis}}" Margin="24,8,24,20">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" helpers:TrackpadScroll.IsFeed="True">
+     <StackPanel>
+      <ItemsControl ItemsSource="{Binding Notifications}"><ItemsControl.ItemTemplate><DataTemplate>
+       <Border Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="18" Margin="0,0,0,12">
+        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="56"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+         <Border Width="40" Height="40" VerticalAlignment="Top" CornerRadius="20" helpers:Cover.Source="{Binding Face}" MouseLeftButtonUp="OnNotificationUser" Cursor="Hand"/>
+         <StackPanel Grid.Column="1" Margin="0,0,18,0">
+          <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap"/>
+          <TextBlock Text="{Binding TimeText}" FontSize="11" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,5,0,8"/>
+          <TextBlock Text="{Binding Text}" TextWrapping="Wrap"/>
+          <TextBlock Text="{Binding TargetTitle}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,8,0,0"/>
+         </StackPanel>
+         <Button Grid.Column="2" Content="查看" Click="OnNotificationOpen" Style="{StaticResource SubtleButtonStyle}" VerticalAlignment="Center" Visibility="{Binding CanOpen,Converter={StaticResource BoolToVis}}"/>
+        </Grid>
+       </Border>
+      </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+      <TextBlock Text="暂时没有这类消息" HorizontalAlignment="Center" Margin="0,50" Visibility="{Binding NotificationsEmpty,Converter={StaticResource BoolToVis}}"/>
+      <Button Content="加载更多" Command="{Binding LoadMoreNotificationsCommand}" Style="{StaticResource SubtleButtonStyle}" HorizontalAlignment="Center" Visibility="{Binding NotificationMore,Converter={StaticResource BoolToVis}}"/>
+     </StackPanel>
+    </ScrollViewer>
+    <controls:LoadingRing HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding NotificationLoading,Converter={StaticResource BoolToVis}}"/>
    </Grid>
   </Grid>
  </Grid>

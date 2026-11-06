@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -58,7 +58,7 @@ public static class TrackpadScroll
     internal static long InputPackets {get;private set;}
     internal static long OffsetWrites {get;private set;}
     /// <summary>精密输入的像素/每单位 delta: 信息流按灵敏度缩放, 其它容器固定 0.6。</summary>
-    internal static double PixelsPerDelta(ScrollViewer viewer)=>GetIsFeed(viewer)?0.6*Svc.Settings.TouchpadFeedSensitivity/100.0:0.6;
+    internal static double PixelsPerDelta(ScrollViewer viewer)=>GetIsFeed(viewer)?0.3*Svc.Settings.TouchpadFeedSensitivity/100.0:0.6;
 
     /// <summary>
     /// 整格滚轮一格的像素数。
@@ -71,7 +71,7 @@ public static class TrackpadScroll
     internal static double NotchPixels(ScrollViewer viewer)
     {
         if(!GetIsFeed(viewer)) return SmoothScroll.GetStep(viewer)>0?SmoothScroll.GetStep(viewer)*.5:NotchBasePixels;
-        return NotchBasePixels*Svc.Settings.TouchpadFeedSensitivity/100.0;
+        return .5*NotchBasePixels*Svc.Settings.TouchpadFeedSensitivity/100.0;
     }
 
     internal static bool OwnsWheel(ScrollViewer viewer,MouseWheelEventArgs e)=>ReferenceEquals(ScrollTarget(e.OriginalSource as DependencyObject),viewer);

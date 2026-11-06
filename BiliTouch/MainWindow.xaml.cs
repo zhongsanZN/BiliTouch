@@ -254,7 +254,7 @@ public partial class MainWindow : FluentWindow
     /// </summary>
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
-        if (!App.IsExiting && Svc.Settings.CloseToTray)
+        if (!App.IsExiting && Svc.Settings.CloseToTray && TrayService.Instance.IsAvailable)
         {
             e.Cancel = true;
             Hide();

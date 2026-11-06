@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Windows;
@@ -17,7 +17,7 @@ public partial class App : Application
     /// 同步点(漏一个就会出现"关于页写 1.2.3、安装包文件名还是 1.2.2"这种不一致):
     ///   BiliTouch.csproj 的 &lt;Version&gt;、Publish\installer.iss 的 MyAppVersion、发布.ps1 的默认 $Version。
     /// </summary>
-    public const string AppVersion = "0.1.6";
+    public const string AppVersion = "0.2.0";
 
     public static MainViewModel MainVm { get; } = new();
 
@@ -39,6 +39,14 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        // Isolated publishing verification runs before the single-instance/user-profile path.
+        if (e.Args.Contains("--verify-publish"))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            _ = PublishVerification.RunAsync(this,e.Args);
+            return;
+        }
+
 
         // ★ `--mute`: 启动即静音(2026-11-04, 用户要求"测试的时候不要有声音")。
         //   放在最前面: 任何窗口/播放器创建之前就把音量落成 0, 免得起播瞬间漏一声。

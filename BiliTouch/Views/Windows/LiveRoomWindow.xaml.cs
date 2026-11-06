@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Windows;
@@ -33,7 +33,8 @@ public partial class LiveRoomWindow : FluentWindow
     public LiveRoomViewModel Model { get; } = new();
     public bool IsClosing { get; private set; }
     protected override FrameworkElement? ScaleRoot => ChatPanel;
-    private readonly MediaPlayer _player;
+    private MediaPlayer _player;
+    private LibVLC _liveCore;
     private readonly LiveDanmakuService _chat;
     private readonly LiveOverlayRenderer _overlay;
     private readonly SemaphoreSlim _mediaGate = new(1, 1);
@@ -61,7 +62,8 @@ public partial class LiveRoomWindow : FluentWindow
     public LiveRoomWindow()
     {
         InitializeComponent(); DataContext = Model;
-        _player = new MediaPlayer(VlcCore.Get()) { EnableHardwareDecoding = true };
+        _liveCore = VlcCore.Get();
+        _player = new MediaPlayer(_liveCore) { EnableHardwareDecoding = true };
         VlcCore.RegisterPlayer(); LiveVideo.MediaPlayer = _player;
         _player.EnableKeyInput = false; _player.EnableMouseInput = false;
         _chat = new LiveDanmakuService(Svc.Api, Dispatcher);
@@ -90,6 +92,11 @@ public partial class LiveRoomWindow : FluentWindow
             LiveSettingsButton.MinWidth = RoomLayout.ActualWidth < 760 ? 40 : 56;
             if (VolumePopup.IsOpen) EnsureVolumePopupAnchor();
         };
+        InitializeLiveTouch();
+        InitializeLiveEnhancement();
+        Loaded += (_, _) => { StartLiveBackdropGuard(); VideoOverlay.Focus(); };
+        SizeChanged += (_, _) => StartLiveBackdropGuard();
+        VolumePopup.Child.MouseLeave += VolumeHoverLeave;
         QualityPopup.PlacementTarget = QualityButton;
         QualityPopup.Opened += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(RightAlignQualityPopup));
     }
@@ -180,7 +187,7 @@ public partial class LiveRoomWindow : FluentWindow
                 if (!Current(roomRequest) || stream != _streamRequest) return;
                 await Task.Run(() => _player.Stop());
                 if (!Current(roomRequest) || stream != _streamRequest) return;
-                using var media = new Media(VlcCore.Get(), result.url, FromType.FromLocation);
+                using var media = new Media(_liveCore, result.url, FromType.FromLocation);
                 media.AddOption(":http-referrer=https://live.bilibili.com/");
                 media.AddOption(":http-user-agent=Mozilla/5.0");
                 media.AddOption(":network-caching=1000");
@@ -197,9 +204,47 @@ public partial class LiveRoomWindow : FluentWindow
         }
         finally { if (stream == _streamRequest) _changingStream = false; }
     }
+    private Window? _liveOverlayWindow;
+    private DispatcherTimer? _liveBackdropGuard;
+    private int _liveBackdropTicks;
+    private void HookLiveOverlayInput()
+    {
+        var overlay = LiveVideo.GetType().GetProperty("ForegroundWindow", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(LiveVideo) as Window;
+        if (overlay == null || ReferenceEquals(overlay, _liveOverlayWindow)) return;
+        if (_liveOverlayWindow != null) { UnhookLiveTrackpad(); _liveOverlayWindow.PreviewKeyDown -= OnKeyDown; }
+        _liveOverlayWindow = overlay;
+        overlay.ShowInTaskbar = false;
+        overlay.PreviewKeyDown += OnKeyDown;
+        HookLiveTrackpad(overlay);
+        VideoOverlay.Focus();
+    }
+    private void StartLiveBackdropGuard()
+    {
+        if (IsClosing) return;
+        RefreshLiveBackdrop();
+        _liveBackdropTicks = 25;
+        if (_liveBackdropGuard == null) {
+            _liveBackdropGuard = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
+            _liveBackdropGuard.Tick += (_, _) => {
+                if (IsClosing || --_liveBackdropTicks <= 0) { _liveBackdropGuard.Stop(); return; }
+                RefreshLiveBackdrop();
+            };
+        }
+        _liveBackdropGuard.Start();
+    }
+    private void RefreshLiveBackdrop()
+    {
+        try {
+            HookLiveOverlayInput();
+            var host = LiveVideo.GetType().GetField("_videoHwndHost", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(LiveVideo) as System.Windows.Interop.HwndHost;
+            if (host != null && host.Handle != IntPtr.Zero) VideoBackdropInterop.EnsureBlackVideoHost(host.Handle);
+        } catch { }
+    }
+
     private void OnPlaying(object? sender, EventArgs args) => Dispatcher.BeginInvoke(() =>
     {
         if (IsClosing) return;
+        StartLiveBackdropGuard();
         PlaybackState.Visibility = Visibility.Collapsed; _retryCount = 0; _nextRetry = DateTimeOffset.MaxValue;
         StartControlsCountdown();
     });
@@ -227,7 +272,7 @@ public partial class LiveRoomWindow : FluentWindow
         catch { }
         finally { _refreshingMetadata = false; }
     }
-    private void ShowPlaybackState(string text) { PlaybackStateText.Text = text; PlaybackState.Visibility = Visibility.Visible; }
+    private void ShowPlaybackState(string text) { PlaybackStateText.Text = text; PlaybackState.Visibility = Visibility.Visible; StartLiveBackdropGuard(); }
 
     private void OnRoomEvent(string command, JsonElement data)
     {
@@ -402,18 +447,17 @@ public partial class LiveRoomWindow : FluentWindow
         EnsureVolumePopupAnchor();
         VolumePopup.IsOpen = true;
     }
-    private void VolumeHoverLeave(object sender, MouseEventArgs e)
+    private async void VolumeHoverLeave(object sender, MouseEventArgs e)
     {
         _volumeHover = false;
-        // 悬停离开且没被"点开"锁住时才收起。Popup 自己也收不到 MouseLeave, 这里靠按钮判定;
-        // 用延迟一拍的方式避免"从按钮挪到面板上"这一段被误收。
-        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
-        {
-            if (IsClosing) return;
-            if (_volumeHover || _volumePinned || VolumePopup.IsMouseOver || MuteButton.IsMouseOver) return;
+        if (IsClosing || _volumePinned || _volumeHover) return;
+        await Task.Delay(350);
+        await Dispatcher.InvokeAsync(() => {
+            if (IsClosing || _volumeHover || _volumePinned || VolumePopup.IsMouseOver || MuteButton.IsMouseOver) return;
             VolumePopup.IsOpen = false;
-        }));
+        });
     }
+
     private void EnsureVolumePopupAnchor()
     {
         // 面板必须锚在喇叭上: 窗口尺寸变化/全屏切换后 PlacementTarget 会失效, 重设一次。
@@ -561,6 +605,7 @@ public partial class LiveRoomWindow : FluentWindow
     }
     private void VideoMouseDown(object sender, MouseButtonEventArgs e)
     {
+        if (e.OriginalSource is DependencyObject hit && !IsInsideControls(hit)) VideoOverlay.Focus();
         if (e.ClickCount == 2 && e.OriginalSource is DependencyObject source && !IsInsideControls(source))
         { ToggleFullscreen(); e.Handled = true; return; }
         // 单击(非双击)画面 = 控制栏显隐, 与播放器一致。
@@ -604,12 +649,16 @@ public partial class LiveRoomWindow : FluentWindow
 
     protected override void OnClosing(CancelEventArgs e)
     {
+        if(_liveEnhancementSwitching){e.Cancel=true;_closeAfterLiveEnhancement=true;return;}
         if (!_closeReady)
         {
             e.Cancel = true;
             if (!IsClosing)
             {
                 IsClosing = true; ++_request; ++_streamRequest; _health.Stop(); _controlsTimer.Stop();
+                _liveBackdropGuard?.Stop();
+                UnhookLiveTrackpad();
+                if (_liveOverlayWindow != null) { UnhookLiveTrackpad(); _liveOverlayWindow.PreviewKeyDown -= OnKeyDown; }
                 LiveSettingsPopup.IsOpen = false; QualityPopup.IsOpen = false; VolumePopup.IsOpen = false;
                 Svc.Settings.DanmakuSettingsChanged -= ApplyOverlaySettings; Model.Dispose(); _chat.Dispose(); _overlay.Dispose();
                 _player.Playing -= OnPlaying; _player.Volume = 0; Hide(); _ = TeardownAsync();

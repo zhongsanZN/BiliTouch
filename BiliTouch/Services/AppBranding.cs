@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -23,6 +23,14 @@ public static class AppBranding
 
     public static System.Drawing.Icon CreateTrayIcon()
     {
+        // Publishing also copies a versioned ICO for the installer. Prefer that file:
+        // MSBuild Link metadata can change the WPF resource key in published builds.
+        var path = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", $"BiliTouch-{App.AppVersion}.ico");
+        if (System.IO.File.Exists(path))
+        {
+            using var fileIcon = new System.Drawing.Icon(path);
+            return (System.Drawing.Icon)fileIcon.Clone();
+        }
         var resource = Application.GetResourceStream(new Uri("/BiliTouch;component/Assets/app.ico", UriKind.Relative))
             ?? throw new InvalidOperationException("应用图标资源缺失");
         using var stream = resource.Stream;

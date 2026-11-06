@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace BiliTouch.Models;
@@ -239,8 +239,7 @@ public static class FollowSorting
             var seen = readSeen(u.Mid);
             if (string.IsNullOrEmpty(seen))
             {
-                writeSeen(u.Mid, top.Id);
-                u.NewCount = 0;
+                u.NewCount = items.Count(it => it.AuthorMid == u.Mid && !string.IsNullOrEmpty(it.Id));
                 continue;
             }
             if (seen == top.Id)

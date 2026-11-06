@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using System.Windows.Input;
@@ -12,7 +12,7 @@ namespace BiliTouch.ViewModels;
 /// B 站消息页: 左侧会话列表 + 右侧私信内容。
 /// 接口都是 vc.bilibili.com 那一套(见 ApiClient 里的私信段落), 全部需要登录。
 /// </summary>
-public class MessagesViewModel : ObservableObject
+public partial class MessagesViewModel : ObservableObject
 {
     public ObservableCollection<MsgSession> Sessions { get; } = new();
     public ObservableCollection<MsgItem> Messages { get; } = new();
@@ -77,6 +77,7 @@ public class MessagesViewModel : ObservableObject
     /// <summary>加载会话列表</summary>
     public async Task LoadAsync()
     {
+        if(!IsPrivateChannel){await LoadNotificationsAsync();return;}
         if (Loading) return;
         if (!Svc.Session.HasLogin)
         {
