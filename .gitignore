@@ -1,4 +1,4 @@
-﻿# .NET / Visual Studio
+# .NET / Visual Studio
 bin/
 obj/
 .vs/
@@ -11,6 +11,8 @@ obj/
 Publish/*
 !Publish/installer.iss
 !Publish/ChineseSimplified.isl
+!Publish/github_release.py
+!Publish/RELEASE_POLICY.md
 
 # 内部开发笔记(项目约定: 不进仓库)
 memory/
