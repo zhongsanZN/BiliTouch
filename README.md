@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <img src="BiliTouch/Assets/app.png" width="104" alt="BiliTouch 图标">
 
@@ -8,7 +8,7 @@
 
 面向 Windows 平板、二合一电脑和触控板用户的哔哩哔哩第三方客户端。用横滑切页、手势调节进度与音量、长按加速和捏合全屏，把浏览与播放串起来；也保留鼠标、键盘的完整操作方式。
 
-作者：**中三** · 当前版本：**0.2.1**
+作者：**中三** · 当前版本：**0.2.2**
 
 [下载安装](https://github.com/zhongsanZN/BiliTouch/releases/latest) · [触控与手势](#触控与手势) · [功能改进](#功能改进) · [版本记录](docs/RELEASES.md) · [上游鸣谢](docs/ACKNOWLEDGEMENTS.md)
 

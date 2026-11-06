@@ -59,6 +59,7 @@ public partial class SearchPage : UserControl
     public SearchPage()
     {
         InitializeComponent();
+        SearchCard.SizeChanged+=(_,_) => (Window.GetWindow(this) as BiliTouch.MainWindow)?.RepaintHeader();
 
         // 历史增删(自己搜一次 / 点掉一条 / 清空)都会改变展开高度, 也可能让历史变空。
         // 服务是单例, 页面实例在导航缓存里长住, 所以这里不需要退订。

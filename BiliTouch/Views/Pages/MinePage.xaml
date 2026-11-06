@@ -6,18 +6,13 @@
 <helpers:SkinSurface Kind="Home" Grid.RowSpan="2"/>
 
   <TextBlock x:Name="ShellPageTitle" Text="我的" Style="{StaticResource PageTitleStyle}" Margin="{x:Static helpers:PageHeaderMetrics.TitleMargin}" VerticalAlignment="Top" />
-  <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="{x:Static helpers:PageHeaderMetrics.TabsMargin}">
-   <StackPanel.Resources>
-    <Style TargetType="RadioButton"><Setter Property="Margin" Value="6,0,14,0"/><Setter Property="Padding" Value="5,8"/><Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
-     <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton"><Border BorderThickness="0,0,0,3" x:Name="Line" BorderBrush="Transparent" Padding="{TemplateBinding Padding}"><ContentPresenter/></Border><ControlTemplate.Triggers><Trigger Property="IsChecked" Value="True"><Setter TargetName="Line" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/><Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
-    </Style>
-   </StackPanel.Resources>
+  <helpers:NavigationTabs Grid.Row="1" HorizontalAlignment="Left" Margin="{x:Static helpers:PageHeaderMetrics.TabsMargin}"><StackPanel Orientation="Horizontal">
    <RadioButton x:Name="OverviewTab" Content="个人主页" Tag="0" GroupName="MineSections" Checked="OnTabChecked"/>
    <RadioButton x:Name="HistoryTab" Content="历史" Tag="1" GroupName="MineSections" Checked="OnTabChecked"/>
    <RadioButton x:Name="FavoritesTab" Content="收藏" Tag="2" GroupName="MineSections" Checked="OnTabChecked"/>
    <RadioButton x:Name="LaterTab" Content="稍后再看" Tag="3" GroupName="MineSections" Checked="OnTabChecked"/>
    <RadioButton x:Name="CacheTab" Content="缓存" Tag="4" GroupName="MineSections" Checked="OnTabChecked"/>
-  </StackPanel>
+  </StackPanel></helpers:NavigationTabs>
   <Grid x:Name="SectionHost" Grid.Row="2" ClipToBounds="True" Background="Transparent"/>
  </Grid>
 </UserControl>

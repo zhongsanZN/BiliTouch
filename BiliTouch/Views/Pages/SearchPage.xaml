@@ -170,7 +170,7 @@
 
              结构上和首页一致 —— 外面这层 Border 只负责动画/布局(自己不画底色), 里面是两个分开的方框:
                ① 搜索框(自带圆角底 + 聚焦粉色光晕); ② 内容框(白底细描边, 与搜索框隔开 10px)。 -->
-        <Border x:Name="SearchCard" Panel.ZIndex="31"
+        <Border TextOptions.TextRenderingMode="Grayscale" x:Name="SearchCard" Panel.ZIndex="31"
                 HorizontalAlignment="Center" VerticalAlignment="Top"
                 Margin="0,12,0,0" Width="440" Height="48" ClipToBounds="True"
                 GotKeyboardFocus="OnCardGotKeyboardFocus"

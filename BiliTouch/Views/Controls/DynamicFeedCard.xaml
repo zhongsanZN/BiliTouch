@@ -460,6 +460,31 @@
                                       LinkForeground="{DynamicResource AccentTextBrush}"
                                       Visibility="{Binding HasText, Converter={StaticResource BoolToVis}}" />
 
+            <ItemsControl ItemsSource="{Binding LinkedVideos}" x:Name="LinkedVideoCards">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="0,9,0,0" CornerRadius="6" Padding="8"
+                                Background="{DynamicResource ControlFillHoverBrush}"
+                                MouseLeftButtonUp="OnLinkedVideoClick" Cursor="Hand">
+                            <StackPanel>
+                                <Border Background="{DynamicResource PlaceholderBrush}" CornerRadius="6" ClipToBounds="True">
+                                    <Border.Style><Style TargetType="Border"><Style.Triggers><DataTrigger Binding="{Binding Cover}" Value=""><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></Border.Style>
+                                    <controls:AspectPanel Aspect="1.777777778">
+                                        <Border helpers:Cover.Source="{Binding Cover}" Background="Transparent" />
+                                        <TextBlock Text="{Binding Duration}" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                                   Margin="8" Padding="5,2" Foreground="White" Background="#B0000000" />
+                                    </controls:AspectPanel>
+                                </Border>
+                                <TextBlock Text="{Binding Title}" Margin="2,8,2,0" FontSize="13.5" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                                <TextBlock Text="{Binding Author}" Margin="2,4,2,0" FontSize="12"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
             <!-- ===== 内容区: 按类型切换 ===== -->
             <!-- ★★★ 2026-11-04 修"卡片上直接印着 BiliTouch.Models.DynamicItem":
                  模板选择器对纯文字/未知类型返回 null, 而 ContentControl 在选中 null 模板时

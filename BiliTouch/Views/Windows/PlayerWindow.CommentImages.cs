@@ -72,7 +72,7 @@ public partial class PlayerWindow
     {
         if(!_pictureSplitActive || IsWebVideoLayout || _closing)return;
         var width=VideoColumn.ActualWidth;
-        var height=Math.Min(width*9/16,Math.Max(1,PlayerStage.ActualHeight*0.6));
+        var height=Math.Min(width*9/16,Math.Max(1,PlayerStage.ActualHeight*0.34));
         PictureVideoSpacer.Height=height;
         VideoSurface.Width=width;VideoSurface.Height=height;VideoSurface.Margin=new Thickness(0);
         VideoSurface.HorizontalAlignment=HorizontalAlignment.Left;VideoSurface.VerticalAlignment=VerticalAlignment.Top;

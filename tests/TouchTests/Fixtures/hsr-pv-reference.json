@@ -1,0 +1,51 @@
+{
+  "id_str": "1266699324362850339",
+  "type": "DYNAMIC_TYPE_DRAW",
+  "basic": {
+    "comment_type": 11,
+    "comment_id_str": "414357881"
+  },
+  "modules": {
+    "module_author": {
+      "mid": 1340190821,
+      "name": "崩坏星穹铁道"
+    },
+    "module_dynamic": {
+      "major": {
+        "type": "MAJOR_TYPE_OPUS",
+        "opus": {
+          "title": "",
+          "summary": {
+            "text": "《崩坏：星穹铁道》即兴巡演PV——「当阿哈来敲门」",
+            "rich_text_nodes": [
+              {
+                "text": "《崩坏：星穹铁道》即兴巡演PV——「当阿哈来敲门」",
+                "orig_text": "https://www.bilibili.com/video/BV1XJ4g6WEyL/",
+                "type": "RICH_TEXT_NODE_TYPE_BV",
+                "jump_url": "https://www.bilibili.com/video/BV1XJ4g6WEyL/",
+                "icon_url": "",
+                "icon_name": "",
+                "rid": "BV1XJ4g6WEyL",
+                "emoji": null,
+                "goods": null,
+                "style": {
+                  "color": "",
+                  "background": "",
+                  "font_size": 17,
+                  "font_level": "regular",
+                  "bold": false,
+                  "italic": false,
+                  "underline": false,
+                  "strikethrough": false
+                },
+                "pics": [],
+                "video": null
+              }
+            ]
+          },
+          "pics": []
+        }
+      }
+    }
+  }
+}

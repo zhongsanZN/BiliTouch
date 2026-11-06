@@ -9,28 +9,22 @@
             <Grid.RowDefinitions><RowDefinition Height="{x:Static helpers:PageHeaderMetrics.TitleRow}"/><RowDefinition Height="{x:Static helpers:PageHeaderMetrics.TabsRow}"/></Grid.RowDefinitions>
             <helpers:SkinSurface Grid.RowSpan="2" Kind="Home"/>
             <TextBlock x:Name="ShellPageTitle" Text="应用设置" Style="{StaticResource PageTitleStyle}" Margin="{x:Static helpers:PageHeaderMetrics.TitleMargin}" VerticalAlignment="Top"/>
-                <Border Grid.Row="1" Background="{DynamicResource CardBackgroundBrush}"
-                        BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
-                        CornerRadius="22" Padding="3" VerticalAlignment="Center"
-                        HorizontalAlignment="Left" Margin="24,0,0,4">
-                    <Border.Effect>
-                        <DropShadowEffect BlurRadius="14" ShadowDepth="1" Opacity="0.08" />
-                    </Border.Effect>
+                <helpers:NavigationTabs Grid.Row="1" HorizontalAlignment="Left" Margin="{x:Static helpers:PageHeaderMetrics.TabsMargin}">
                     <StackPanel Orientation="Horizontal">
-                        <RadioButton GroupName="SettingsTab" Style="{StaticResource SettingsTabStyle}"
+                        <RadioButton GroupName="SettingsTab" Style="{StaticResource UnderlineTabStyle}"
                                      Content="通用"
                                      IsChecked="{Binding IsGeneralTab, Mode=TwoWay}" />
-                        <RadioButton GroupName="SettingsTab" Style="{StaticResource SettingsTabStyle}"
+                        <RadioButton GroupName="SettingsTab" Style="{StaticResource UnderlineTabStyle}"
                                      Content="播放" Margin="2,0,0,0"
                                      IsChecked="{Binding IsPlaybackTab, Mode=TwoWay}" />
-                        <RadioButton GroupName="SettingsTab" Style="{StaticResource SettingsTabStyle}"
+                        <RadioButton GroupName="SettingsTab" Style="{StaticResource UnderlineTabStyle}"
                                      Content="数据管理" Margin="2,0,0,0"
                                      IsChecked="{Binding IsDataTab, Mode=TwoWay}" />
-                        <RadioButton GroupName="SettingsTab" Style="{StaticResource SettingsTabStyle}"
+                        <RadioButton GroupName="SettingsTab" Style="{StaticResource UnderlineTabStyle}"
                                      Content="关于" Margin="2,0,0,0"
                                      IsChecked="{Binding IsAboutTab, Mode=TwoWay}" />
                     </StackPanel>
-                </Border>
+                </helpers:NavigationTabs>
         </Grid>
         <ScrollViewer FocusVisualStyle="{x:Null}" Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,8,0">
         <StackPanel Margin="36,12,36,32">

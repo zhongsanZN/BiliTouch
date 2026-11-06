@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using BiliTouch.Models;
@@ -15,9 +15,9 @@ public partial class DynamicFeedCard : UserControl
     public DynamicFeedCard()
     {
         InitializeComponent();
-        Loaded+=(_,_)=>{ _ = LoadVisiblePreviewAsync(); _ = LoadVoteIfNeededAsync(); };
-        DataContextChanged+=(_,_)=> {if(IsLoaded){ _ = LoadVisiblePreviewAsync(); _ = LoadVoteIfNeededAsync(); }};
-        Unloaded+=(_,_)=>_previewCancellation?.Cancel();
+        Loaded+=(_,_)=>{ _ = LoadVisiblePreviewAsync(); _ = LoadVoteIfNeededAsync(); _ = LoadLinkedVideosAsync(); };
+        DataContextChanged+=(_,_)=> {if(IsLoaded){ _ = LoadVisiblePreviewAsync(); _ = LoadVoteIfNeededAsync(); _ = LoadLinkedVideosAsync(); }};
+        Unloaded+=(_,_)=>{_previewCancellation?.Cancel();_linkedPreviewCancellation?.Cancel();};
         PreviewMouseLeftButtonDown+=(_,e)=>_pressPoint=e.GetPosition(this);
         PreviewKeyDown+=(_,e)=>
         {
@@ -96,19 +96,24 @@ public partial class DynamicFeedCard : UserControl
         e.Handled = true;
     }
 
-    /// <summary>
-    /// 点正文里的话题 / @提及(2026-11-04)。
-    ///
-    /// 话题与 @ 都走**客户端内**的落地页, 不弹网页:
-    ///   · @某人 → Rid 就是被 @ 的 mid, 直接开原生个人主页(与点头像同一条路);
-    ///   · #话题# → 走原生搜索页(话题在客户端里没有独立详情页, 搜索是最接近官方的行为)。
-    /// 表情/普通文字/链接不响应 —— 链接若也走"复制地址"会和附加卡按钮重复, 留给右键菜单。
-    /// </summary>
+    /// <summary>Open topics, mentions and video references in their native destinations.</summary>
     private void OnRichNodeActivated(object? sender, DynamicRichNode node)
     {
         if (node.IsMention && long.TryParse(node.Rid, out var mid) && mid > 0)
         {
             Svc.Navigate?.OpenUserSpace(mid.ToString());
+            return;
+        }
+        if (node.IsLink)
+        {
+            if (node.ReferencedBvid.Length > 0) Svc.Player.PlayVideo(node.ReferencedBvid, node.Text);
+            else
+            {
+                var url = node.JumpUrl.Length > 0 ? node.JumpUrl : node.OrigText;
+                if (url.StartsWith("//")) url = "https:" + url;
+                if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+                    Svc.Navigate?.OpenWebViewWindow(uri.AbsoluteUri, node.Text);
+            }
             return;
         }
         if (node.IsTopic)
@@ -117,6 +122,45 @@ public partial class DynamicFeedCard : UserControl
             var keyword = node.OrigText.Length > 0 ? node.OrigText : node.Text.Trim('#', ' ');
             if (keyword.Length > 0) Svc.Navigate?.OpenSearch(keyword);
         }
+    }
+
+    private static readonly SemaphoreSlim LinkedVideoGate = new(2);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, VideoItem> LinkedVideoCache = new();
+    private CancellationTokenSource? _linkedPreviewCancellation;
+    private async Task LoadLinkedVideosAsync()
+    {
+        _linkedPreviewCancellation?.Cancel();
+        var cancellation = _linkedPreviewCancellation = new();
+        if (DataContext is not DynamicItem post) return;
+        foreach (var node in post.RichNodes.Where(n => n.ReferencedBvid.Length > 0 && n.ReferencedBvid != post.Video?.Bvid).DistinctBy(n => n.ReferencedBvid))
+        {
+            var entered = false;
+            try
+            {
+                await LinkedVideoGate.WaitAsync(cancellation.Token); entered = true;
+                if (!LinkedVideoCache.TryGetValue(node.ReferencedBvid, out var video))
+                {
+                    var result = await Svc.Api.GetVideoAsync(node.ReferencedBvid);
+                    if (result is not { ok: true, data: { } detail }) continue;
+                    video = new VideoItem { Bvid = detail.Bvid, Aid = detail.Aid, Title = detail.Title, Cover = detail.Pic,
+                        Author = detail.Owner, OwnerMid = detail.OwnerMid, AuthorFace = detail.OwnerFace,
+                        Duration = detail.Duration, ViewCount = detail.ViewCount, DanmakuCount = detail.DanmakuCount, Pubdate = detail.Pubdate };
+                    LinkedVideoCache[node.ReferencedBvid] = video;
+                }
+                if (cancellation.IsCancellationRequested) return;
+                node.VideoPreview = video;
+                post.NotifyContentChanged();
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception) { /* The titled reference remains clickable when metadata is unavailable. */ }
+            finally { if (entered) LinkedVideoGate.Release(); }
+        }
+    }
+    private void OnLinkedVideoClick(object sender, MouseButtonEventArgs e)
+    {
+        if (!IsClick(e) || sender is not FrameworkElement { DataContext: VideoItem video }) return;
+        e.Handled = true;
+        Svc.Player.PlayVideo(video.Bvid, video.Title);
     }
 
     private void OnContentClick(object sender, MouseButtonEventArgs e)

@@ -572,7 +572,7 @@
                收起态从右上角(Right 对齐 + 152 右边距)改为**水平居中**(Center 对齐)。
                居中对齐下宽度变化是"两边对称地长", 中心天然不动 —— 旧代码那套 X 平移补偿
                (PanXFor / SearchCardTrans)全部不再需要, 置 0 即可(见 HomePage.xaml.cs)。 -->
-        <Border x:Name="SearchCard" Grid.RowSpan="3" Panel.ZIndex="31"
+        <Border TextOptions.TextRenderingMode="Grayscale" ClipToBounds="True" x:Name="SearchCard" Grid.RowSpan="3" Panel.ZIndex="31"
                 HorizontalAlignment="Center" VerticalAlignment="Top"
                 Margin="0,16,0,0" Width="440" Height="48"
                 PreviewMouseLeftButtonDown="OnSearchCardPreviewMouseDown"
@@ -624,7 +624,9 @@
                                  Text="{Binding SearchKeyword, UpdateSourceTrigger=PropertyChanged}"
                                  KeyDown="OnSearchKeywordKeyDown"
                                  GotKeyboardFocus="OnSearchKeywordGotFocus"
-                                 LostKeyboardFocus="OnSearchKeywordLostFocus" />
+                                 LostKeyboardFocus="OnSearchKeywordLostFocus">
+                            <TextBox.Template><ControlTemplate TargetType="TextBox"><ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center" FocusVisualStyle="{x:Null}"/></ControlTemplate></TextBox.Template>
+                        </TextBox>
 
                         <!-- 放大镜: 点它就是"用当前词搜一次"。用无底版本 —— 参考图里它就是一枚
                              裸图标, 旁边那圈浅灰方块反而像多长了个按钮。 -->
@@ -640,7 +642,7 @@
                 <!-- ===== ② 内容框(与搜索框分开的另一个方框, 隔开 10px) ===== -->
                 <!-- 默认 Hidden 而不是 Auto: 展开动画期间高度在变, Auto 会中途闪一下滚动条。
                      动画结束由代码切回 Auto(那时内容已按最终高度排好, 需要才出现)。 -->
-                <Border x:Name="SearchContentBox" Grid.Row="1" Margin="0,10,0,0" Opacity="0"
+                <Border Visibility="Collapsed" x:Name="SearchContentBox" Grid.Row="1" Margin="0,10,0,0" Opacity="0"
                         CornerRadius="10"
                         Background="{DynamicResource FlyoutBackgroundBrush}"
                         BorderBrush="{DynamicResource FlyoutBorderBrush}" BorderThickness="1">

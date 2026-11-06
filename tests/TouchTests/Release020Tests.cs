@@ -37,7 +37,7 @@ internal static class Release020Tests
    var vm=new SettingsViewModel();var page=new SettingsPage{DataContext=vm};window.Content=page;window.Show();Pump(200);
    var fonts=Desc<ComboBox>(page).Single(c=>c.DisplayMemberPath=="Name" && ReferenceEquals(c.ItemsSource,AppTypography.Choices));
    foreach(var font in AppTypography.Choices){fonts.SelectedValue=font.Id;Pump(70);check(Desc<TextBlock>(fonts).Any(t=>t.Text==font.Name),"font picker displays the font name after selecting "+font.Id);}
-   var tabs=Desc<RadioButton>(page).Where(b=>b.GroupName=="SettingsTab").ToArray();check(tabs.Length==4 && tabs.All(t=>t.ActualHeight>=30 && t.ActualHeight<=36),"four settings pills fit inside the header without vertical clipping");
+   var tabs=Desc<RadioButton>(page).Where(b=>b.GroupName=="SettingsTab").ToArray();check(tabs.Length==4 && tabs.All(t=>t.ActualHeight>=36 && t.ActualHeight<=44),"four settings underline tabs fit inside the header without vertical clipping");
    Save(page,Path.Combine(output,"release020-settings.png"));
    vm.IsPlaybackTab=true;Pump(100);vm.ExperimentalVideoEnhancement=true;vm.VideoEnhancementActive=false;
    Pump(150);Desc<ScrollViewer>(page).First(v=>v.Content is StackPanel).ScrollToEnd();Pump(200);

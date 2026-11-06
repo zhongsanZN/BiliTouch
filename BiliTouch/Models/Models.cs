@@ -2021,6 +2021,21 @@ public class DynamicRichNode
     public bool IsMention => Type.EndsWith("_AT", StringComparison.Ordinal);
     public bool IsEmoji => Type.EndsWith("_EMOJI", StringComparison.Ordinal) && Emoji.Length > 0;
     public bool IsLink => Type.EndsWith("_WEB", StringComparison.Ordinal) || Type.EndsWith("_BV", StringComparison.Ordinal);
+    public string ReferencedBvid
+    {
+        get
+        {
+            if (!IsLink) return "";
+            foreach (var value in new[] { Rid, JumpUrl, OrigText })
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(value, @"(?<![A-Za-z0-9])BV[A-Za-z0-9]{10}(?![A-Za-z0-9])");
+                if (match.Success) return match.Value;
+            }
+            return "";
+        }
+    }
+    public VideoItem? VideoPreview { get; set; }
+
 }
 
 /// <summary>
@@ -2281,6 +2296,11 @@ public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
     /// </summary>
     public List<DynamicRichNode> RichNodes { get; set; } = new();
     public bool HasRichNodes => RichNodes.Count > 0;
+    // Reference cards belong to the post; its comment/like target remains unchanged.
+    public IEnumerable<VideoItem> LinkedVideos => RichNodes.Where(n => n.ReferencedBvid.Length > 0 && n.ReferencedBvid != Video?.Bvid)
+        .DistinctBy(n => n.ReferencedBvid)
+        .Select(n => n.VideoPreview ??= new VideoItem { Bvid = n.ReferencedBvid, Title = n.Text });
+
 
     /// <summary>
     /// 话题(2026-11-04)。来自 <c>module_dynamic.topic{ id, name, jump_url }</c>。

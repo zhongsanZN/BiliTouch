@@ -1275,6 +1275,8 @@
               (和 IconButtonStyle 里那段补丁同一个成因, 只是那边挡的是字体)。
            3. 触发器顺序: 悬停写在选中**前面**, 否则"选中的项被悬停"时会掉回主文字色。 -->
     <Style x:Key="UnderlineTabStyle" TargetType="RadioButton">
+        <Setter Property="TextOptions.TextRenderingMode" Value="Grayscale"/>
+        <Setter Property="SnapsToDevicePixels" Value="True"/>
         <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
         <Setter Property="FontSize" Value="14" />
         <!-- 下边留 14: 给那根短横线腾位置 -->

@@ -59,12 +59,17 @@ public partial class MainWindow : FluentWindow
         PartitionCol2.ItemsSource = PartitionCatalog.Columns[2];
 
         Loaded += OnLoaded;
+        PreviewMouseMove+=(_,e)=>{var p=e.GetPosition(SharedHeaderSurface);bool inside=p.Y>=0 && p.Y<=SharedHeaderSurface.ActualHeight && p.X>=0 && p.X<=SharedHeaderSurface.ActualWidth;if(inside || _headerPointerInside)RepaintHeader();_headerPointerInside=inside;};
     }
 
+    private bool _headerPointerInside,_headerRepaintQueued;
+    internal void RepaintHeader(){if(_headerRepaintQueued || !SharedHeaderSurface.IsVisible)return;_headerRepaintQueued=true;Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(()=>{_headerRepaintQueued=false;SharedHeaderSurface.InvalidateVisual();}));}
     private Point? _sidebarThemeOrigin;
     private void OnSidebarThemeDown(object sender,MouseButtonEventArgs e)=>_sidebarThemeOrigin=e.GetPosition(Content as IInputElement ?? this);
     private void OnSidebarTheme(object sender,RoutedEventArgs e)
     { ThemeTransition.ToggleLightDark(this,_sidebarThemeOrigin);_sidebarThemeOrigin=null; }
+    private void OnStarPartyWebsite(object sender,RoutedEventArgs e)
+    { e.Handled=true; Svc.Navigate?.OpenWebViewWindow("https://xteamparty.com/","星创组 · 吉星派对同人站"); }
     private void OnSidebarMessages(object sender,RoutedEventArgs e)=>_vm.Navigate(PageKey.Messages);
     private void RefreshSidebarTheme()
     {

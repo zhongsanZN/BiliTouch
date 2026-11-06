@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -312,7 +312,6 @@ public class FavoritesViewModel : VideoListSelectionViewModel
         Items.Remove(item);
         UpdateCount();
         ShrinkFolderCount(1);
-        Svc.Toast.Show("已移出收藏");
     }
 
     /// <summary>拿到条目对应的 avid; 列表没带 aid 就按 bvid 补查一次详情</summary>

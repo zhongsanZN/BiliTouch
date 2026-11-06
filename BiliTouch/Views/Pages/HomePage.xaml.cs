@@ -32,6 +32,7 @@ public partial class HomePage : UserControl
     public HomePage()
     {
         InitializeComponent();
+        SearchCard.SizeChanged+=(_,_) => (Window.GetWindow(this) as BiliTouch.MainWindow)?.RepaintHeader();
         PopularTab.Checked += OnPopularChecked;
         RecommendTab.Checked += OnRecommendChecked;
         RankingTab.Checked += OnRankingChecked;
@@ -785,6 +786,7 @@ public partial class HomePage : UserControl
         if (ActualWidth <= 0 || ActualHeight <= 0) return;
 
         _searchOpen = true;
+        SearchContentBox.Visibility=Visibility.Visible;
         // 遮罩先出来: 展开这一段里点页面任何地方都算"点外面"
         SearchScrim.Visibility = Visibility.Visible;
         // 展开即视为"选中了搜索框": 占位提示渐隐
@@ -890,6 +892,7 @@ public partial class HomePage : UserControl
         SearchCard.Height = SearchBoxH;
         SearchCardTrans.X = 0;   // 居中对齐后恒为 0(保留元素本身, 动画代码仍会碰它)
         SearchContentBox.Opacity = 0;
+        SearchContentBox.Visibility=Visibility.Collapsed;
         SearchCardScroll.Opacity = 0;
         SearchCardBgHover.Opacity = 0;
         SearchInputRing.Opacity = 0;

@@ -7015,7 +7015,7 @@ public partial class PlayerWindow : FluentWindow
             PlayThemedAction(ThemeReaction.Like, BtnLike, LikeIconBox, target);
             // 取消点赞后锁住 hover 预览: 否则鼠标还停在按钮上, 它会当场又变红
             if (!_isLiked) LockActionHoverPreview();
-            if (!_isLiked) Svc.Toast.Show("已取消点赞");
+
         }
         else
         {
@@ -7607,7 +7607,7 @@ public partial class PlayerWindow : FluentWindow
             SetInWatchLater(target);
             PlayActionPop(LaterTopIcon);
             if (!target) LockActionHoverPreview();   // 移出后锁 hover 预览(同点赞的坑)
-            Svc.Toast.Show(target ? "已加入稍后再看" : "已从稍后再看移出");
+
         }
         finally
         {
@@ -7655,7 +7655,7 @@ public partial class PlayerWindow : FluentWindow
             if (!result.ok) { Svc.Toast.Show(result.err ?? "收藏失败"); return; }
             SetFavorited(!remove);
             PlayThemedAction(ThemeReaction.Favorite, BtnFavorite, FavIconBox, !remove);
-            if (remove) Svc.Toast.Show("已取消收藏");
+
         }
         finally { if (aid == _aid && generation == _loadGen) _favBusy = false; }
     }
@@ -7704,7 +7704,7 @@ public partial class PlayerWindow : FluentWindow
             PlayThemedAction(ThemeReaction.Favorite, BtnFavorite, FavIconBox, addIds.Count > 0);
             // 取消收藏后同样要锁 hover 预览(与取消点赞同一个坑)
             if (final.Count == 0) LockActionHoverPreview();
-            if (final.Count == 0) Svc.Toast.Show("已取消收藏");
+
         }
         finally
         {
@@ -7737,7 +7737,7 @@ public partial class PlayerWindow : FluentWindow
         {
             _isFollowed = !_isFollowed;
             UpdateFollowButton();
-            Svc.Toast.Show(_isFollowed ? "已关注" : "已取消关注");
+
         }
         else
         {

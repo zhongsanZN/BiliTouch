@@ -108,7 +108,7 @@ public class DynamicRichText : TextBlock
             {
                 var link = new Hyperlink(new Run(node.Text)) { Cursor = Cursors.Hand };
                 if (LinkForeground is { } brush) link.Foreground = brush;
-                link.Click += (_, _) => NodeActivated?.Invoke(this, node);
+                link.Click += (_, e) => { e.Handled = true; NodeActivated?.Invoke(this, node); };
                 Inlines.Add(link);
                 continue;
             }

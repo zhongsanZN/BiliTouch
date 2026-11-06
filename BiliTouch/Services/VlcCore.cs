@@ -86,7 +86,7 @@ public static class VlcCore
             //   ⇒ seek 的问题改为在播放器层处理(见 PlayerWindow.RecoverFromFailedSeek)。
             var caching = BufferPolicy.Resolve(BufferMediaKind.VodSingle, null, shortVideo: false,
                 SettingsStore.Instance.NetworkCachingMs, SettingsStore.Instance.AutoBufferPolicy);
-            var options = new List<string>{"--intf=dummy","--no-osd","--network-caching="+caching};
+            var options = new List<string>{"--intf=dummy","--no-osd","--no-snapshot-preview","--network-caching="+caching};
             if(profile.Enabled) options.AddRange(profile.Options);
             var instance = new LibVLC(options.ToArray());
             VideoEnhancement.Observe(instance,profile);

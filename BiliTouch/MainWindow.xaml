@@ -168,13 +168,26 @@
                      CaptionHeight 只有 20, 图标基本不在拖动区里, 但它本来也不是可点的东西。
                      ★ 用 app.png 当 ImageBrush(而不是再画一个图标): 这是"以前"的样子,
                        用户要求一切保持一致, 包括这个图。 -->
-                <Border x:Name="BrandLogo" Grid.Row="0" Width="42" Height="42" CornerRadius="12"
+                <StackPanel Grid.Row="0" HorizontalAlignment="Center">
+                <Border x:Name="BrandLogo" Width="42" Height="42" CornerRadius="12"
                         HorizontalAlignment="Center" Margin="0,18,0,20"
                         ToolTip="BiliTouch">
                     <Border.Background>
                         <ImageBrush ImageSource="/BiliTouch;component/Assets/app.png" Stretch="UniformToFill" />
                     </Border.Background>
                 </Border>
+                <Button x:Name="StarPartyWebsite" Width="56" Height="56" Margin="0,0,0,12"
+                        Cursor="Hand" ToolTip="星创组 · 吉星派对同人站" AutomationProperties.Name="打开星创组网站"
+                        Visibility="{Binding IsEnabled,Source={x:Static helpers:SkinService.Instance},Converter={StaticResource BoolToVis}}"
+                        Click="OnStarPartyWebsite">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="Transparent"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" /></Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                    <Image Width="52" Height="52" Stretch="Uniform" Source="/BiliTouch;component/Assets/Skins/StarParty/LandShop_00.png" />
+                </Button>
+                </StackPanel>
 
                 <!-- 导航项: 图标在上、文字在下(NavRadioStyle)。
                      间距 4 而不是贴着排: 58px 高的块连成一串会显得很闷。
