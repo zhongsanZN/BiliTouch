@@ -39,9 +39,9 @@ internal static class Release020Tests
    foreach(var font in AppTypography.Choices){fonts.SelectedValue=font.Id;Pump(70);check(Desc<TextBlock>(fonts).Any(t=>t.Text==font.Name),"font picker displays the font name after selecting "+font.Id);}
    var tabs=Desc<RadioButton>(page).Where(b=>b.GroupName=="SettingsTab").ToArray();check(tabs.Length==4 && tabs.All(t=>t.ActualHeight>=30 && t.ActualHeight<=36),"four settings pills fit inside the header without vertical clipping");
    Save(page,Path.Combine(output,"release020-settings.png"));
-   vm.ExperimentalVideoEnhancement=true;vm.VideoEnhancementActive=false;
+   vm.IsPlaybackTab=true;Pump(100);vm.ExperimentalVideoEnhancement=true;vm.VideoEnhancementActive=false;
    Pump(150);Desc<ScrollViewer>(page).First(v=>v.Content is StackPanel).ScrollToEnd();Pump(200);
-   check(Desc<CheckBox>(page).Any(c=>System.Windows.Data.BindingOperations.GetBinding(c,ToggleButton.IsCheckedProperty)?.Path.Path=="ExperimentalVideoEnhancement"),"experimental enhancement controls are in the general settings tree even without filter rules");Save(page,Path.Combine(output,"release020-experimental.png"));
+   check(Desc<CheckBox>(page).Any(c=>System.Windows.Data.BindingOperations.GetBinding(c,ToggleButton.IsCheckedProperty)?.Path.Path=="ExperimentalVideoEnhancement"),"experimental enhancement controls are in the playback settings tree even without filter rules");Save(page,Path.Combine(output,"release020-experimental.png"));
    SearchLayout(check,window,output);
    var icons=new StackPanel{Orientation=Orientation.Horizontal,Margin=new Thickness(40)};foreach(var kind in new[]{"Like","Coin","Favorite","Puzzle"})icons.Children.Add(new SkinActionIcon{Kind=kind,Count=2,Width=64,Height=64,Margin=new Thickness(12)});window.Content=icons;Pump(80);Save(icons,Path.Combine(output,"release020-action-icons.png"));
    check(new[]{"action_like","action_coin","action_coins","action_favorite","action_puzzle"}.All(n=>SkinService.Instance.Image(n).PixelWidth>0),"all five requested original theme assets are packaged and readable");

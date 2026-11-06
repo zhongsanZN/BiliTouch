@@ -16,10 +16,7 @@ public static class TrackpadScroll
     public static void SetIsFeed(DependencyObject d,bool value)=>d.SetValue(IsFeedProperty,value);
     public static bool GetIsFeed(DependencyObject d)=>(bool)d.GetValue(IsFeedProperty);
 
-    /// <summary>
-    /// 整格滚轮(传统 ±120)一格在 **100% 灵敏度**下的基准像素。
-    /// 信息流再乘灵敏度百分比(默认 75% ⇒ 67.5px/格); 其它容器不加这层缩放, 保持旧口径。
-    /// </summary>
+    // Mouse-wheel distance is retained independently of the touchpad slider.
     internal const double NotchBasePixels=90;
 
     /// <summary>
@@ -58,20 +55,13 @@ public static class TrackpadScroll
     internal static long InputPackets {get;private set;}
     internal static long OffsetWrites {get;private set;}
     /// <summary>精密输入的像素/每单位 delta: 信息流按灵敏度缩放, 其它容器固定 0.6。</summary>
-    internal static double PixelsPerDelta(ScrollViewer viewer)=>GetIsFeed(viewer)?0.3*Svc.Settings.TouchpadFeedSensitivity/100.0:0.6;
+    internal static double PixelsPerDelta(ScrollViewer viewer)=>GetIsFeed(viewer)?0.15*Svc.Settings.TouchpadFeedSensitivity/100.0:0.6;
 
-    /// <summary>
-    /// 整格滚轮一格的像素数。
-    ///
-    /// 信息流: 90 × 灵敏度百分比。★ 与 <see cref="PixelsPerDelta"/> 同一把尺子很重要 ——
-    ///   若只有精密输入吃灵敏度、整格写死 90, 用户把灵敏度调到 25% 之后, 触控板一格 18px、
-    ///   鼠标一格还是 90px, 两者手感立刻割裂(这正是这次要修的核心)。
-    /// 其它容器(播放器网页布局): 保持旧口径 —— SmoothScroll.Step 单页覆盖优先, 否则 90px。
-    /// </summary>
+    // Precision packets use the touchpad preference; whole wheel notches keep their saved scale.
     internal static double NotchPixels(ScrollViewer viewer)
     {
         if(!GetIsFeed(viewer)) return SmoothScroll.GetStep(viewer)>0?SmoothScroll.GetStep(viewer)*.5:NotchBasePixels;
-        return .5*NotchBasePixels*Svc.Settings.TouchpadFeedSensitivity/100.0;
+        return .5*NotchBasePixels*Svc.Settings.FeedWheelScalePercent/100.0;
     }
 
     internal static bool OwnsWheel(ScrollViewer viewer,MouseWheelEventArgs e)=>ReferenceEquals(ScrollTarget(e.OriginalSource as DependencyObject),viewer);

@@ -203,6 +203,7 @@ public partial class MainWindow : FluentWindow
             _ => new WatchLaterPage { DataContext = new WatchLaterViewModel() }
         };
 
+        if(IsSharedHeaderPage(key) && page is Control control)control.Background=Brushes.Transparent;
         _pages[key] = page;
         return page;
     }
@@ -412,6 +413,8 @@ public partial class MainWindow : FluentWindow
     /// 切页过渡(三段式淡出→换页→淡入)。
     /// 逻辑与理由见 <see cref="PageTransition"/>。
     /// </summary>
+    internal bool UsesSharedHeader {get;private set;}=true;
+    private static bool IsSharedHeaderPage(PageKey key)=>key is PageKey.Home or PageKey.Follow or PageKey.Mine or PageKey.Settings or PageKey.Search or PageKey.Messages;
     private PageTransition? _navTransition;
 
     private PageTransition NavTransition => _navTransition ??= new PageTransition(PageHost);
@@ -454,6 +457,9 @@ public partial class MainWindow : FluentWindow
 
     private void ShowPage(PageKey key, bool animate)
     {
+        UsesSharedHeader=IsSharedHeaderPage(key);
+        SharedHeaderSurface.Visibility=UsesSharedHeader?Visibility.Visible:Visibility.Collapsed;
+
         if(key is PageKey.History or PageKey.Favorites or PageKey.WatchLater or PageKey.Cache)
         {
             ((MinePage)PageOf(PageKey.Mine)).SelectSection(key);
@@ -546,10 +552,18 @@ public partial class MainWindow : FluentWindow
     ///
     /// RenderTransformOrigin=0,0 意味着缩放锚点是面板左上角, 动画看起来就是"从左上角长出"。
     /// </summary>
-    public void OpenPartition()
+    public void OpenPartition(FrameworkElement? anchor=null)
     {
         if (_partitionOpen) return;
         _partitionOpen = true;
+        if(anchor!=null){
+            PartitionPanel.Width=Math.Min(470,Math.Max(280,ActualWidth-32));
+            PartitionPanel.MaxHeight=Math.Max(180,ActualHeight-128);
+            var point=anchor.TranslatePoint(new Point(anchor.ActualWidth,anchor.ActualHeight),this);
+            var left=Math.Clamp(point.X-PartitionPanel.Width,8,Math.Max(8,ActualWidth-PartitionPanel.Width-8));
+            PartitionPanel.Margin=new Thickness(left,Math.Min(point.Y+8,Math.Max(8,ActualHeight-200)),0,0);
+            PartitionPanel.RenderTransformOrigin=new Point(1,0);
+        }
 
         PartitionScrim.Visibility = Visibility.Visible;
         PartitionPanel.Visibility = Visibility.Visible;

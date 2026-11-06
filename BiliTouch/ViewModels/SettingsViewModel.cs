@@ -542,7 +542,7 @@ public class SettingsViewModel : ObservableObject
         get=>Svc.Settings.TouchpadFeedSensitivity;
         set{if(value==Svc.Settings.TouchpadFeedSensitivity)return;Svc.Settings.SetTouchpadFeedSensitivity(value);OnPropertyChanged();OnPropertyChanged(nameof(TouchpadSensitivityHint));}
     }
-    public string TouchpadSensitivityHint=>$"当前 {TouchpadFeedSensitivity}%；100% 相当于旧版 50%；同时影响信息流触控板和滚轮。";
+    public string TouchpadSensitivityHint=>$"当前 {TouchpadFeedSensitivity}%；调整信息流双指滚动的移动速度。";
 
     public bool IsWebPlayerLayout
     {

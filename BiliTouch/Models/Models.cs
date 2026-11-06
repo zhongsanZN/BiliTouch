@@ -1437,7 +1437,8 @@ public class AppSettings
     public string EnhancementAdapterId {get;set;}="auto";
     public string FontId {get;set;}="System";
     public bool UseWebPlayerLayout { get; set; }
-    public int TouchpadFeedSensitivity { get; set; } = 75;
+    public int TouchpadFeedSensitivity { get; set; } = 100;
+    public int FeedWheelScalePercent {get;set;}
 
     public AppTheme ThemeMode { get; set; } = AppTheme.System;
     public string SkinId { get; set; } = "";

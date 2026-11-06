@@ -286,6 +286,7 @@
              ★ 2026-10-13 左上角 logo 已恢复, "内容区上移到最上沿"的结论不变:
                它当初是为了与 logo 对齐, 现在仍然与 logo 对齐。 -->
         <Grid Grid.Column="1" ClipToBounds="True">
+            <helpers:SkinSurface x:Name="SharedHeaderSurface" Kind="Shared" Height="112" VerticalAlignment="Top"/>
             <ContentControl x:Name="PageHost" Focusable="False" />
 
             <!--

@@ -519,8 +519,8 @@
               尺寸与变换原点。
         -->
         <Style x:Key="ActionIconBox" TargetType="Grid">
-            <Setter Property="Width" Value="20" />
-            <Setter Property="Height" Value="20" />
+            <Setter Property="Width" Value="44" />
+            <Setter Property="Height" Value="44" />
             <!-- 变换原点是普通 double, 冻结不了, 放在样式里安全 -->
             <Setter Property="RenderTransformOrigin" Value="0.5,0.5" />
         </Style>
@@ -1575,12 +1575,12 @@
                                     </Grid.ColumnDefinitions>
                                     <!-- 点赞: 点过 = 图标和数字一起变红 -->
                                     <Button x:Name="BtnLike" Style="{StaticResource PlayerActionBtn}"  Grid.Column="0"
-                                            Click="OnLikeClick" ToolTip="点赞 (L)">
+                                            Click="OnLikeClick" ToolTip="点赞 / 取消点赞">
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                             <Grid x:Name="LikeIconBox" Style="{StaticResource ActionIconBox}">
                                                 <helpers:SkinActionIcon Kind="Like" Data="{StaticResource LikeIconGeometry}"
                                                       Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                                      Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" />
+                                                      Width="36" Height="36" Stretch="Uniform" VerticalAlignment="Center" />
                                             </Grid>
                                             <TextBlock x:Name="LikeLabel" Text="--"
                                                        Style="{StaticResource ActionCountText}" />
@@ -1593,7 +1593,7 @@
                                             <Grid x:Name="CoinIconBox" Style="{StaticResource ActionIconBox}">
                                                 <helpers:SkinActionIcon Kind="Coin" x:Name="ThemedCoinIcon" Data="{StaticResource CoinIconGeometry}"
                                                       Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                                      Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" />
+                                                      Width="36" Height="36" Stretch="Uniform" VerticalAlignment="Center" />
                                             </Grid>
                                             <TextBlock x:Name="CoinLabel" Text="--"
                                                        Style="{StaticResource ActionCountText}" />
@@ -1606,7 +1606,7 @@
                                             <Grid x:Name="FavIconBox" Style="{StaticResource ActionIconBox}">
                                                 <helpers:SkinActionIcon Kind="Favorite" Data="{StaticResource FavoriteIconGeometry}"
                                                       Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                                      Width="20" Height="20" Stretch="Uniform" VerticalAlignment="Center" />
+                                                      Width="36" Height="36" Stretch="Uniform" VerticalAlignment="Center" />
                                             </Grid>
                                             <TextBlock x:Name="FavLabel" Text="--"
                                                        Style="{StaticResource ActionCountText}" />

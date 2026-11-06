@@ -431,7 +431,7 @@ public partial class HomePage : UserControl
     }
 
     /// <summary>工具栏刷新键 + 错误条里的「重试」都走这一条</summary>
-    private void OnPartitionClick(object sender, RoutedEventArgs e) => (Window.GetWindow(this) as MainWindow)?.OpenPartition();
+    private void OnPartitionClick(object sender, RoutedEventArgs e) => (Window.GetWindow(this) as MainWindow)?.OpenPartition(HomePartitionButton);
 
     private void OnRefreshClick(object sender, RoutedEventArgs e) => _ = RefreshCurrentTabAsync();
 
@@ -446,7 +446,7 @@ public partial class HomePage : UserControl
     ///   SvcWindow 是 App 启动时登记的全局引用, 哪儿都能拿到。
     /// ★ 主窗口不可用时(启动早期/探针环境)静默跳过: 分区面板是导航增强, 缺了不该抛。
     /// </summary>
-    public void OpenPartitionFromNav() => SvcWindow.Main?.OpenPartition();
+    public void OpenPartitionFromNav() => SvcWindow.Main?.OpenPartition(HomePartitionButton);
 
     /// <summary>通用: 滚动到底部 / 内容不够一屏时, 自动加载更多</summary>
     private async Task TriggerAutoLoad(ScrollViewer sv, HomeViewModel vm)

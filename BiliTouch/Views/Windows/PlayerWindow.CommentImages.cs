@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -14,6 +14,7 @@ public partial class PlayerWindow
     private FrameworkElement? _commentThumbnail;
     private ItemsControl? _commentImageGroup;
     private bool _pictureSplitActive;
+    private bool _commentPicturePortrait;
 
     private void OpenCommentPicture(FrameworkElement source,CommentPicture picture)
     {
@@ -24,26 +25,27 @@ public partial class PlayerWindow
             if(parent is ItemsControl items){pictures=items;break;}
         }
         if(slot==null)return;
-        CloseCommentPicture();_commentImageSlot=slot;_commentThumbnail=source;_commentImageGroup=pictures;
+        CloseCommentPicture();_commentPicturePortrait=picture.Height>picture.Width && picture.Width>0;_commentImageSlot=slot;_commentThumbnail=source;_commentImageGroup=pictures;
         if(pictures!=null)pictures.SizeChanged+=OnInlinePictureSizeChanged;
         var urls=pictures?.Items.OfType<CommentPicture>().Select(p=>p.Url).ToList() ?? new List<string>{picture.Url};
-        _commentGallery=new InlineImageGallery();_commentGallery.CloseRequested+=CloseCommentPicture;_commentGallery.ImageReady+=UpdateInlinePictureSize;
+        _commentGallery=new InlineImageGallery();_commentGallery.CloseRequested+=CloseCommentPicture;_commentGallery.ImageReady+=UpdateCommentPicturePlacement;
         UpdateCommentPicturePlacement();
         _=_commentGallery.OpenAsync(urls,Math.Max(0,urls.IndexOf(picture.Url)));
     }
+    private bool InlineCommentPicture=>IsWebVideoLayout || (_commentGallery is {NaturalHeight:>0,NaturalWidth:>0} g ? g.NaturalHeight>g.NaturalWidth : _commentPicturePortrait);
     private void UpdateCommentPicturePlacement()
     {
         if(_commentGallery==null || _closing)return;
         var hidden=_isFullscreen || _isFillWindow || _isLive || _isListenMode;
         if(hidden){RestorePictureSplit();return;}
-        if(IsWebVideoLayout && _commentImageSlot!=null)
+        if(InlineCommentPicture && _commentImageSlot!=null)
         {
             RestorePictureSplit();DetachWebElement(_commentGallery);
             _commentGallery.SetInline(true);
             if(_commentThumbnail!=null)_commentThumbnail.Visibility=Visibility.Collapsed;
             _commentImageSlot.Content=_commentGallery;_commentImageSlot.Visibility=Visibility.Visible;
             UpdateInlinePictureSize();
-            Dispatcher.BeginInvoke(DispatcherPriority.Loaded,new Action(()=>{if(_commentGallery?.IsLoaded==true && IsWebVideoLayout)_commentGallery.BringIntoView();}));
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded,new Action(()=>{if(_commentGallery?.IsLoaded==true && InlineCommentPicture)_commentGallery.BringIntoView();}));
         }
         else
         {
@@ -59,7 +61,8 @@ public partial class PlayerWindow
     private void OnInlinePictureSizeChanged(object sender,SizeChangedEventArgs e)=>UpdateInlinePictureSize();
     private void UpdateInlinePictureSize()
     {
-        if(!IsWebVideoLayout || _commentGallery==null || _commentImageSlot==null)return;
+        if(_commentGallery!=null && InlineCommentPicture && _pictureSplitActive){UpdateCommentPicturePlacement();return;}
+        if(!InlineCommentPicture || _commentGallery==null || _commentImageSlot==null)return;
         var width=Math.Max(120,(_commentImageGroup?.ActualWidth??0)-6);
         _commentImageSlot.Width=width;
         var height=_commentGallery.NaturalWidth>0?_commentGallery.NaturalHeight*Math.Min(1,width/_commentGallery.NaturalWidth):260;
@@ -84,7 +87,7 @@ public partial class PlayerWindow
     }
     private void CloseCommentPicture()
     {
-        if(_commentGallery!=null){_commentGallery.CloseRequested-=CloseCommentPicture;_commentGallery.ImageReady-=UpdateInlinePictureSize;_commentGallery.Cancel();DetachWebElement(_commentGallery);_commentGallery=null;}
+        if(_commentGallery!=null){_commentGallery.CloseRequested-=CloseCommentPicture;_commentGallery.ImageReady-=UpdateCommentPicturePlacement;_commentGallery.Cancel();DetachWebElement(_commentGallery);_commentGallery=null;}
         if(_commentThumbnail!=null){_commentThumbnail.Visibility=Visibility.Visible;_commentThumbnail=null;}
         if(_commentImageGroup!=null){_commentImageGroup.SizeChanged-=OnInlinePictureSizeChanged;_commentImageGroup=null;}
         if(_commentImageSlot!=null){_commentImageSlot.Content=null;_commentImageSlot.Visibility=Visibility.Collapsed;_commentImageSlot=null;}

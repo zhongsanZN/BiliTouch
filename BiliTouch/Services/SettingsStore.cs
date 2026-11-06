@@ -29,7 +29,8 @@ public class SettingsStore
     public string FontId {get;set;}="System";
     public void SetFont(string id)
     {id=AppTypography.Normalize(id);if(FontId==id)return;FontId=id;AppTypography.Apply(id);Save();}
-    public int TouchpadFeedSensitivity { get; set; } = 75;
+    public int TouchpadFeedSensitivity { get; set; } = 100;
+    public int FeedWheelScalePercent {get;private set;}=100;
     public const int TouchpadSensitivityMin=25, TouchpadSensitivityMax=175;
     public void SetTouchpadFeedSensitivity(int value)
     {value=Math.Clamp(value,TouchpadSensitivityMin,TouchpadSensitivityMax);if(TouchpadFeedSensitivity==value)return;TouchpadFeedSensitivity=value;Save();}
@@ -516,7 +517,8 @@ public class SettingsStore
         ExperimentalVideoEnhancement=s.ExperimentalVideoEnhancement;VideoEnhancementActive=s.VideoEnhancementActive;
         VideoEnhancementMode=s.VideoEnhancementMode=="视频处理器缩放"?s.VideoEnhancementMode:"自动厂商增强";
         VideoEnhancementHdr=s.VideoEnhancementHdr;EnhancementAdapterId=s.EnhancementAdapterId??"auto";
-        TouchpadFeedSensitivity = Math.Clamp(s.TouchpadFeedSensitivity<=0?75:s.TouchpadFeedSensitivity,TouchpadSensitivityMin,TouchpadSensitivityMax);
+        FeedWheelScalePercent=Math.Clamp(s.FeedWheelScalePercent>0?s.FeedWheelScalePercent:(s.TouchpadFeedSensitivity>0?s.TouchpadFeedSensitivity:100),25,175);
+        TouchpadFeedSensitivity = Math.Clamp(s.TouchpadFeedSensitivity<=0?100:s.TouchpadFeedSensitivity,TouchpadSensitivityMin,TouchpadSensitivityMax);
         CardColumns = s.CardColumns <= 0
             ? 0
             : Math.Clamp(s.CardColumns, Helpers.CardWall.FixedColumnsMin, Helpers.CardWall.FixedColumnsMax);
@@ -765,6 +767,7 @@ public class SettingsStore
         ExperimentalVideoEnhancement=ExperimentalVideoEnhancement,VideoEnhancementActive=VideoEnhancementActive,
         VideoEnhancementMode=VideoEnhancementMode,VideoEnhancementHdr=VideoEnhancementHdr,EnhancementAdapterId=EnhancementAdapterId,
         TouchpadFeedSensitivity = TouchpadFeedSensitivity,
+        FeedWheelScalePercent=FeedWheelScalePercent,
         AcrylicMaterial = AcrylicMaterial,
         AcrylicBackground = AcrylicBackground,
         AcrylicOpacityLight = AcrylicOpacityLight,

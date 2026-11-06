@@ -19,6 +19,7 @@ public sealed class SkinSurface : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         if (!SkinService.Instance.IsEnabled || ActualWidth <= 0 || ActualHeight <= 0) return;
+        if(Kind!="Rail" && Kind!="Shared" && Window.GetWindow(this) is BiliTouch.MainWindow {UsesSharedHeader:true})return;
         var dark = Svc.Theme.IsDark;
         var bounds = new Rect(RenderSize);
         dc.PushClip(new RectangleGeometry(bounds));

@@ -45,7 +45,8 @@ internal static class Program
         var exit = 0;
         try
         {
-            if(args.Contains("--release020")) Release020Tests.Run(Check,Artifacts);
+            if(args.Contains("--release021")) Release021Tests.Run(Check,Artifacts);
+            else if(args.Contains("--release020")) Release020Tests.Run(Check,Artifacts);
             else if(args.Contains("--notifications-live")) Release020Tests.LiveNotifications(args.First(a=>a.StartsWith("--session="))[10..]);
             else if(args.Contains("--danmaku-recovery")) DanmakuRecoveryTests.Run(Check);
             else if(args.Contains("--header-recovery")) HeaderRecoveryTests.Run(Check,Artifacts);

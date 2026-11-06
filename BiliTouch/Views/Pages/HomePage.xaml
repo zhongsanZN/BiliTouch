@@ -130,8 +130,8 @@
         <!-- 刷新使用独立覆盖层，不参与标题行测量；位置与动态页保持一致。 -->
         <Canvas Grid.Row="0" Grid.RowSpan="3" Panel.ZIndex="10">
             <Button x:Name="HomePartitionButton" Width="44" Height="44" Canvas.Right="76" Canvas.Top="44"
-                    Style="{StaticResource IconButtonStyle}" Click="OnPartitionClick" ToolTip="分区" AutomationProperties.Name="分区">
-                <helpers:SkinActionIcon Kind="Puzzle" Width="22" Height="22" Fill="{DynamicResource TextPrimaryBrush}" />
+                    Style="{StaticResource BareIconButtonStyle}" Click="OnPartitionClick" ToolTip="分区" AutomationProperties.Name="分区">
+                <helpers:SkinActionIcon Kind="Puzzle" Width="42" Height="42" Fill="{DynamicResource TextPrimaryBrush}" />
             </Button>
             <Button x:Name="HomeRefreshButton" Width="44" Height="44" Canvas.Right="24" Canvas.Top="44"
                     Style="{StaticResource IconButtonStyle}" Click="OnRefreshClick" ToolTip="刷新">

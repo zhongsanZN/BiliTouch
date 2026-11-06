@@ -430,10 +430,17 @@
                         </Grid>
                 </StackPanel>
             </Border>
-<ContentControl Content="实验性" ContentTemplate="{StaticResource SectionHeaderTemplate}" Margin="0,24,0,8"/>
+
+        </StackPanel>
+    </DataTemplate>
+
+    <!-- ==================== 播放 ==================== -->
+    <DataTemplate x:Key="PlaybackTabTemplate">
+        <StackPanel>
+<ContentControl Content="视频画质增强" ContentTemplate="{StaticResource SectionHeaderTemplate}" Margin="0,24,0,8"/>
             <Border Style="{StaticResource SettingsCardStyle}"><StackPanel>
                 <Grid Style="{StaticResource SettingsRowStyle}"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <StackPanel><TextBlock Text="视频画质增强" FontWeight="SemiBold"/><TextBlock Text="启用厂商超分、视频处理器缩放与可选 HDR 增强，并显示播放控制栏开关。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/></StackPanel>
+                    <StackPanel><StackPanel Orientation="Horizontal"><TextBlock Text="视频画质增强" FontWeight="SemiBold" VerticalAlignment="Center"/><Border Margin="8,0,0,0" Padding="7,2" CornerRadius="7" Background="{DynamicResource AccentBrush}"><TextBlock Text="实验性" FontSize="10.5" Foreground="{DynamicResource AccentForegroundBrush}"/></Border></StackPanel><TextBlock Text="启用厂商超分、视频处理器缩放与可选 HDR 增强，并显示播放控制栏开关。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/></StackPanel>
                     <CheckBox Grid.Column="1" IsChecked="{Binding ExperimentalVideoEnhancement,Mode=TwoWay}" Style="{StaticResource SettingsToggleStyle}"/>
                 </Grid>
                 <StackPanel Visibility="{Binding ExperimentalVideoEnhancement,Converter={StaticResource BoolToVis}}">
@@ -453,12 +460,6 @@
                     </Grid>
                 </StackPanel>
             </StackPanel></Border>
-        </StackPanel>
-    </DataTemplate>
-
-    <!-- ==================== 播放 ==================== -->
-    <DataTemplate x:Key="PlaybackTabTemplate">
-        <StackPanel>
 
             <!-- 推荐算法这一块整体删除了(2026-10-03): 原本有「B 站官方 App / 浏览器网页版」
                  二选一, 但实测 App 端接口对第三方客户端不提供个性化(返回全站通用热门池,
