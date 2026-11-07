@@ -45,8 +45,8 @@ internal static class Release027Tests
             check(items.Any(c => c.DataContext is VideoItem item && int.Parse(item.Bvid[2..]) > 200),
                 "actual home realizes middle rows through the page viewport");
             check(items.All(c => c.ActualWidth > 150 && c.ActualWidth < 600), "actual home card widths remain usable");
-            check(typeof(App).Assembly.GetName().Version!.ToString(3) == App.AppVersion && App.AppVersion == "0.2.7",
-                "application and assembly report 0.2.7");
+            check(typeof(App).Assembly.GetName().Version!.ToString(3) == App.AppVersion && App.AppVersion == "0.2.8",
+                "application and assembly report 0.2.8");
         }
         finally { window.Close(); }
     }

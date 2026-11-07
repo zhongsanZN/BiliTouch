@@ -45,7 +45,9 @@ internal static class Program
         var exit = 0;
         try
         {
-            if(args.Contains("--scroll-boundaries")) ScrollBoundaryTests.Run(Check);
+            if(args.Contains("--web-dock-flicker")) WebDockFlickerTests.Run(Check, Artifacts);
+            else if(args.Contains("--home-cover-reuse")) HomeCoverReuseTests.Run(Check);
+            else if(args.Contains("--scroll-boundaries")) ScrollBoundaryTests.Run(Check);
             else if(args.Contains("--release027")) Release027Tests.Run(Check);
             else if(args.Contains("--scroll-ab-window")) ScrollAbTests.RealWindow(Artifacts, Check);
             else if(args.Contains("--scroll-ab-surfaces")) ScrollAbTests.Surfaces(Artifacts, Check);

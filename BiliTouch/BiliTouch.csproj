@@ -15,7 +15,7 @@
     <AssemblyTitle>BiliTouch</AssemblyTitle>
     <Product>BiliTouch</Product>
     <Authors>中三</Authors>
-    <Version>0.2.7</Version>
+    <Version>0.2.8</Version>
     <PlatformTarget>x64</PlatformTarget>
     <!--
       RollForward=Major: 框架依赖版(安装器)在机器上没有 .NET 10 桌面运行时、

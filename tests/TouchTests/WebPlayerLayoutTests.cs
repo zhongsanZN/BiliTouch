@@ -83,8 +83,35 @@ internal static class WebPlayerLayoutTests
    {
     player.PlayLocalFile(sample);mp.Mute=true;Pump(1200);
     Element<ItemsControl>(player,"CommentList").ItemsSource=rows;Pump(100);
-    var time=mp.Time;scroll.ScrollToVerticalOffset(placeholder.ActualHeight+80);Pump(650);
+    // Start inline so this exercises the snapshot transition, not an already parked video.
+    scroll.ScrollToTop();Pump(1000);
+    var danmaku=Element<Canvas>(player,"DanmakuCanvas");
+    var time=mp.Time;Rect snapshotTarget=Rect.Empty;bool sawMotion=false,hiddenDuringMotion=true;
+    EventHandler observe=(_,_)=>
+    {
+     if(Field<bool>(player,"_webFramePending") || Field<bool>(player,"_webFrameAnimating"))
+      hiddenDuringMotion &= danmaku.Visibility==Visibility.Hidden;
+     if(Field<bool>(player,"_webFrameAnimating"))
+     {
+      sawMotion=true;
+      var transition=Field<object>(player,"_webFrameTransition");
+      var overlay=transition?.GetType().GetField("_window",Hidden)?.GetValue(transition) as Window;
+      if(Field<double>(player,"_webDockProgress")>=.99 && overlay?.Content is Canvas canvas && canvas.Children[0] is Border picture)
+       snapshotTarget=picture.TransformToAncestor(canvas).TransformBounds(new Rect(0,0,picture.Width,picture.Height));
+     }
+    };
+    CompositionTarget.Rendering+=observe;
+    try {scroll.ScrollToVerticalOffset(placeholder.ActualHeight+80);Pump(1200);}
+    finally {CompositionTarget.Rendering-=observe;}
     check(mp.IsPlaying && mp.Time>time && ReferenceEquals(video.MediaPlayer,mp),"native muted playback continues while the video moves into the right rail");
+    check(sawMotion && hiddenDuringMotion && danmaku.Visibility==Visibility.Visible,"playing snapshot transition hides danmaku from capture through settling and then restores it");
+    var landed=Bounds(surface,stage);Pump(250);var settled=Bounds(surface,stage);
+    check(!snapshotTarget.IsEmpty && Math.Abs(landed.Top-snapshotTarget.Top)<1 && Math.Abs(settled.Top-landed.Top)<1,
+     "snapshot destination matches the native landing position with no later downward jump");
+    scroll.ScrollToTop();Settle(player);
+    check(danmaku.Visibility==Visibility.Visible && !Field<bool>(player,"_webFrameAnimating") && Math.Abs(Bounds(surface,stage).Top-initial.Top)<1,
+     "playing small-to-large transition restores the inline position and danmaku");
+    scroll.ScrollToVerticalOffset(placeholder.ActualHeight+80);Settle(player);
    }
    var savedOffset=scroll.VerticalOffset;
    Call(player,"ToggleFullscreen");Pump(500);
@@ -118,5 +145,14 @@ internal static class WebPlayerLayoutTests
   }
  }
  static void Pump(int ms){var frame=new DispatcherFrame();var timer=new DispatcherTimer {Interval=TimeSpan.FromMilliseconds(ms)};timer.Tick+=(_,_)=>{timer.Stop();frame.Continue=false;};timer.Start();Dispatcher.PushFrame(frame);}
+ static void Settle(PlayerWindow player)
+ {
+  var deadline=Environment.TickCount64+8000;
+  do {
+   Pump(50);
+   if(!Field<bool>(player,"_webFramePending") && !Field<bool>(player,"_webFrameAnimating") && !Field<bool>(player,"_webRendering"))return;
+  } while(Environment.TickCount64<deadline);
+  throw new TimeoutException("Video transition did not settle");
+ }
  static void Save(FrameworkElement root,string path){root.UpdateLayout();var bmp=new RenderTargetBitmap((int)root.ActualWidth,(int)root.ActualHeight,96,96,PixelFormats.Pbgra32);bmp.Render(root);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(bmp));using var file=File.Create(path);encoder.Save(file);}
 }

@@ -87,16 +87,15 @@ public static class CoverLoader
         if (url.Length == 0) return Task.FromResult<BitmapImage?>(null);
 
         var w = Quantize(decodeWidth);
-        var cacheKey = w > 0 ? $"{url}|w{w}" : url;
-
         lock (Lock)
         {
-            if (MemCache.TryGetValue(cacheKey, out var hit))
+            if (TryGetCachedLocked(url, w, out var hit))
             {
                 hit.LastUse = ++_clock;
                 return Task.FromResult<BitmapImage?>(hit.Image);
             }
             // 并发去重: 同一个键已经有请求在跑, 直接复用它的 Task
+            var cacheKey = w > 0 ? $"{url}|w{w}" : url;
             if (InFlight.TryGetValue(cacheKey, out var running)) return running;
             // Reserve the in-flight entry before the worker can complete. Cold cache
             // directory and file probes must run off the input/layout thread.
@@ -120,11 +119,9 @@ public static class CoverLoader
         if (url.Length == 0) { img = null; return false; }
 
         var w = Quantize(decodeWidth);
-        var cacheKey = w > 0 ? $"{url}|w{w}" : url;
-
         lock (Lock)
         {
-            if (MemCache.TryGetValue(cacheKey, out var hit))
+            if (TryGetCachedLocked(url, w, out var hit))
             {
                 hit.LastUse = ++_clock;
                 img = hit.Image;
@@ -132,6 +129,19 @@ public static class CoverLoader
             }
         }
         img = null;
+        return false;
+    }
+
+    // A larger decoded thumbnail is already sharp enough. Reuse it when a recycled
+    // card measures slightly narrower instead of decoding another copy of the URL.
+    private static bool TryGetCachedLocked(string url, int width, out Entry hit)
+    {
+        if (MemCache.TryGetValue(width > 0 ? $"{url}|w{width}" : url, out hit!)) return true;
+        if (width > 0 && width <= MaxCoverDecodeWidth)
+            foreach (var step in WidthSteps)
+                if (step > width && step <= MaxCoverDecodeWidth &&
+                    MemCache.TryGetValue($"{url}|w{step}", out hit!)) return true;
+        hit = null!;
         return false;
     }
 
@@ -461,6 +471,10 @@ public static class Cover
         //   命中内存缓存走快路径时**根本不碰 Opacity**, 封面稳稳地直接换上。
         border.SetValue(DecodedPixelWidthProperty, 0);
         var url = e.NewValue as string;
+        // Recycled containers must not display the previous video's cover while waiting.
+        border.Background = null;
+        border.BeginAnimation(UIElement.OpacityProperty, null);
+        border.Opacity = 1;
 
         // 尺寸变化监听: 变宽超过已解码宽度的一定比例就重解码。先 - 再 + 防同元素换源时重复订阅;
         // 处理器挂在静态类上、目标随卡片销毁, 无泄漏面。
@@ -558,8 +572,6 @@ public static class Cover
             ? CoverLoader.DecodeWidthFor(border.ActualWidth, dpi)
             : 480;
 
-        if (!await ViewportImageQueue.WaitAsync(border) || GetSource(border) != url) return;
-
         // ★★ 快路径(2026-10-02, 用户报"切 tab 每次都重新加载封面"): 位图已经在内存缓存里,
         //   直接同步贴上、**不闪不淡入**。原来这里无条件走完整异步路径 + 240ms 淡入 ——
         //   即便 CoverLoader.LoadAsync 命中缓存是零等待, ApplyDecoded 里那句
@@ -567,6 +579,15 @@ public static class Cover
         //   0→1 淡入, 于是每次切 tab 几百张封面一起闪一遍, 观感就是"封面重新加载了"。
         //   命中缓存说明这格之前见过、不是真正的首次加载, 不该再淡入。
         if (CoverLoader.TryGetCached(url, w, out var cached) && cached != null)
+        {
+            ApplyDecoded(border, url, cached, w, fade: false);
+            return;
+        }
+
+        // Only cold images need the viewport's bounded scheduling. Warm images must
+        // be restored before returning to layout, including while scrolling backwards.
+        if (!await ViewportImageQueue.WaitAsync(border) || GetSource(border) != url) return;
+        if (CoverLoader.TryGetCached(url, w, out cached) && cached != null)
         {
             ApplyDecoded(border, url, cached, w, fade: false);
             return;
@@ -595,6 +616,15 @@ public static class Cover
             // 已应用的那份更大; 若显示需求此时又超过它, SizeChanged 会再触发一轮。
             var prev = (int)border.GetValue(DecodedPixelWidthProperty);
             if (prev > 0 && img.PixelWidth < prev) return;
+
+            // Item lifetime, rather than container lifetime: eviction can require a
+            // disk decode, but returning to a previously viewed card is not an entrance.
+            if (border.DataContext is VideoItem item)
+            {
+                var visit = SeenCovers.GetValue(item, _ => new CoverVisit());
+                if (visit.Url == url) fade = false;
+                visit.Url = url;
+            }
 
             var brush = new ImageBrush(img)
             {
@@ -658,6 +688,9 @@ public static class Cover
 
     /// <summary>纯函数(探针可断言): 这一次上屏要不要播淡入 —— 只有"这一格还没有图"时才播。</summary>
     public static bool ShouldPlayFadeIn(int previouslyDecodedWidth) => previouslyDecodedWidth <= 0;
+
+    private sealed class CoverVisit { public string? Url; }
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<VideoItem, CoverVisit> SeenCovers = new();
 
     // ★★★ 这里原来有一套"状态过渡期间封面只记账不上屏"的闸门
     //   (SuspendVisualUpdates / ResumeVisualUpdates / _suspendDepth / DeferredApplies /

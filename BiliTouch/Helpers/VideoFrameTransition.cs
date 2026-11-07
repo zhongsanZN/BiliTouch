@@ -5,6 +5,8 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
+using System.Windows.Interop;
+using System.Runtime.InteropServices;
 using LibVLCSharp.Shared;
 using MediaPlayer = LibVLCSharp.Shared.MediaPlayer;
 namespace BiliTouch.Helpers;
@@ -12,6 +14,25 @@ namespace BiliTouch.Helpers;
 internal sealed class VideoFrameTransition : IDisposable
 {
  private Window? _window;private bool _disposed;
+ private readonly CancellationTokenSource _lifetime = new();
+ [DllImport("dwmapi.dll")] private static extern int DwmFlush();
+ [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+ // Rendering fires before WPF submits that frame. Crossing two distinct rendering
+ // timestamps, then flushing DWM, keeps the old surface until its replacement exists.
+ internal static async Task WaitForPresentationAsync(CancellationToken cancellation = default)
+ {
+  var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+  TimeSpan? first = null;
+  EventHandler render = (_, e) => {
+   var stamp = ((RenderingEventArgs)e).RenderingTime;
+   if (first == null) first = stamp;
+   else if (stamp != first) done.TrySetResult();
+  };
+  CompositionTarget.Rendering += render;
+  try { await done.Task.WaitAsync(TimeSpan.FromSeconds(1), cancellation); DwmFlush(); }
+  finally { CompositionTarget.Rendering -= render; }
+ }
  internal static double Spring(double t)=>t>=1?1:1-Math.Exp(-7*t)*(Math.Cos(11*t)+.42*Math.Sin(11*t));
  internal static async Task<BitmapSource?> CaptureAsync(MediaPlayer player)
  {
@@ -33,7 +54,11 @@ internal sealed class VideoFrameTransition : IDisposable
   var backing=new Border{Width=from.Width,Height=from.Height,Background=Brushes.Black,Child=picture,RenderTransform=move};picture.RenderTransform=Transform.Identity;
   canvas.Children.Add(backing);
   _window=new Window{Owner=owner,ShowActivated=false,ShowInTaskbar=false,WindowStyle=WindowStyle.None,ResizeMode=ResizeMode.NoResize,AllowsTransparency=true,Background=Brushes.Transparent,Left=screen.X/dpi.DpiScaleX,Top=screen.Y/dpi.DpiScaleY,Width=Math.Max(1,stage.ActualWidth),Height=Math.Max(1,stage.ActualHeight),Content=canvas,Focusable=false,IsHitTestVisible=false};
-  move.Matrix=new Matrix(1,0,0,1,from.X,from.Y);_window.Show();hideNative();
+  move.Matrix=new Matrix(1,0,0,1,from.X,from.Y);_window.Show();
+  try { await WaitForPresentationAsync(_lifetime.Token); }
+  catch { Dispose(); return; } // No presented cover: leave the native video visible.
+  if(_disposed)return;
+  hideNative();
   var done=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);long start=Stopwatch.GetTimestamp();
   EventHandler? render=null;render=(_,_)=>{
    if(_disposed){CompositionTarget.Rendering-=render;done.TrySetResult();return;}
@@ -44,12 +69,16 @@ internal sealed class VideoFrameTransition : IDisposable
   };
   CompositionTarget.Rendering+=render;
   try{
-   await done.Task;if(_disposed)return;commitNative();
-   await Task.Delay(180);if(_disposed || _window==null)return;
-   var fade=new DoubleAnimation(1,0,TimeSpan.FromMilliseconds(100)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseOut}};
-   var faded=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);fade.Completed+=(_,_)=>faded.TrySetResult();_window.BeginAnimation(UIElement.OpacityProperty,fade);
-   await Task.WhenAny(faded.Task,Task.Delay(160));
+   await done.Task.WaitAsync(_lifetime.Token);if(_disposed)return;commitNative();
+   // Showing VideoView can raise its separate overlay HWND. Keep the opaque frame
+   // above it while the resized native surface resumes presentation.
+   if(_window!=null)SetWindowPos(new WindowInteropHelper(_window).Handle,IntPtr.Zero,0,0,0,0,0x0013);
+   await Task.Delay(180,_lifetime.Token);
+   await WaitForPresentationAsync(_lifetime.Token);
+   // Reveal atomically. Fading the whole layered window exposes intermediate
+   // native clears and blends a stale screenshot with a different live frame.
+  }catch(OperationCanceledException) when(_disposed){
   }finally{CompositionTarget.Rendering-=render;Dispose();}
  }
- public void Dispose(){if(_disposed)return;_disposed=true;try{_window?.Close();}catch{} _window=null;}
+ public void Dispose(){if(_disposed)return;_disposed=true;_lifetime.Cancel();try{_window?.Close();}catch{} _window=null;}
 }

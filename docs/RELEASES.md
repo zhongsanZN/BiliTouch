@@ -1,12 +1,13 @@
 # 版本归档索引
 
-当前推荐版本：[0.2.7 安装包](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.2.7/BiliTouch-0.2.7-setup.exe)。[全部 Release](https://github.com/zhongsanZN/BiliTouch/releases)。
+当前推荐版本：[0.2.8 安装包](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.2.8/BiliTouch-0.2.8-setup.exe)。[全部 Release](https://github.com/zhongsanZN/BiliTouch/releases)。
 
 下载附件只保留 setup.exe；源码见各版本 Git 标签和 GitHub 自动提供的源码下载。便携包与构建验证文件留在本机归档。
 
 | 版本 | 归档状态 |
 | --- | --- |
-| 0.2.7 | 当前版本：累计修订、触控板边界修复、动态模式与主题修正；安装器及对应完整源码标签 |
+| 0.2.8 | 当前版本：首页封面复用、网页播放器大小窗交接与弹幕时序修复；安装器及对应完整源码标签 |
+| 0.2.7 | 累计修订、触控板边界修复、动态模式与主题修正；安装器及对应完整源码标签 |
 | 0.2.6 | 历史构建：评论图片展开、统一滚动、移除开屏；保留原安装器，标签仅含归档记录 |
 | 0.2.5 | 历史构建：互动光效/音效、关注排序与主题修订；保留原安装器，标签仅含归档记录 |
 | 0.2.4 | 历史构建：未读确认、控制栏与音轨修订；保留原安装器，标签仅含归档记录 |

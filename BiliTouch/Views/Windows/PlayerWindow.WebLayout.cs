@@ -48,6 +48,7 @@ public partial class PlayerWindow
     private bool _webRestoreScrolling;
     private VideoFrameTransition? _webFrameTransition;
     private bool _webFramePending,_webFrameAnimating;
+    private bool _webApplyingBounds;
     private int _webFrameGeneration;
     private FrameworkElement[] _webHeaderParts = Array.Empty<FrameworkElement>();
     private readonly StackPanel _webHeaderStack = new();
@@ -308,12 +309,30 @@ public partial class PlayerWindow
     /// </summary>
     private void ApplyWebVideoBounds()
     {
-        if (!_webLayoutMounted || _closing || WebLeftPane.ActualWidth <= 0 || !WebDockAnchor.IsVisible) return;
-        var bounds=CalculateWebVideoBounds(_webDockProgress);
-        if(bounds.IsEmpty)return;
-        if(!Nearly(VideoSurface.Width,bounds.Width) || !Nearly(VideoSurface.Height,bounds.Height)){VideoSurface.Width=bounds.Width;VideoSurface.Height=bounds.Height;}
-        var margin=new Thickness(bounds.Left,bounds.Top,0,0);if(VideoSurface.Margin!=margin)VideoSurface.Margin=margin;
-        UpdateAlternateVideoControls();
+        if (_webApplyingBounds || !_webLayoutMounted || _closing || WebLeftPane.ActualWidth <= 0 || !WebDockAnchor.IsVisible) return;
+        _webApplyingBounds = true;
+        try
+        {
+            PrepareWebDockAnchor(_webDockProgress);
+            var bounds=CalculateWebVideoBounds(_webDockProgress);
+            if(bounds.IsEmpty)return;
+            if(!Nearly(VideoSurface.Width,bounds.Width) || !Nearly(VideoSurface.Height,bounds.Height)){VideoSurface.Width=bounds.Width;VideoSurface.Height=bounds.Height;}
+            var margin=new Thickness(bounds.Left,bounds.Top,0,0);if(VideoSurface.Margin!=margin)VideoSurface.Margin=margin;
+            UpdateAlternateVideoControls();
+        }
+        finally { _webApplyingBounds = false; }
+    }
+
+    private void PrepareWebDockAnchor(double progress)
+    {
+        var p = Math.Clamp(progress, 0, 1);
+        var margin = new Thickness(20, 12 * p, 20, 0);
+        if (WebDockAnchor.Margin != margin) WebDockAnchor.Margin = margin;
+        var height = WebDockAnchor.ActualWidth * 9 / 16 * p;
+        if (!Nearly(WebDockAnchor.Height, height)) WebDockAnchor.Height = height;
+        // TransformToAncestor reads arranged geometry. Settle the placeholder first,
+        // otherwise the snapshot lands at the old top and the native video drops 12 DIP.
+        PlayerStage.UpdateLayout();
     }
     private Rect CalculateWebVideoBounds(double progress)
     {
@@ -323,9 +342,7 @@ public partial class PlayerWindow
         if (logicalDockWidth <= 0) return Rect.Empty;
         var logicalDockHeight = logicalDockWidth * 9 / 16;
         var p = Math.Clamp(progress, 0, 1);
-        // 右栏的占位块与视频位置必须一起收敛: 只改其中一个会让另一栏在下一帧又算一次。
-        WebDockAnchor.Margin = new Thickness(20, 12 * p, 20, 0);
-        WebDockAnchor.Height = logicalDockHeight * p;
+        // Geometry calculation must not invalidate the layout it is about to read.
         Rect dock;
         try { dock = WebDockAnchor.TransformToAncestor(PlayerStage).TransformBounds(new Rect(0, 0, logicalDockWidth, logicalDockHeight)); }
         catch (InvalidOperationException) { return Rect.Empty; }
@@ -365,14 +382,27 @@ public partial class PlayerWindow
         try{
             var frame=await VideoFrameTransition.CaptureAsync(_mp);
             if(generation!=_webFrameGeneration || _closing || !_webLayoutMounted)return;
-            _webFramePending=false;
-            if(frame==null){StartLegacyWebDockTarget(_webAnimationTo);return;}
-            var target=_webAnimationTo;var from=CalculateWebVideoBounds(_webDockProgress);var to=CalculateWebVideoBounds(target);
-            if(from.IsEmpty || to.IsEmpty){StartLegacyWebDockTarget(target);return;}
-            var transition=_webFrameTransition=new VideoFrameTransition();_webFrameAnimating=true;
+            if(frame==null){_webFramePending=false;StartLegacyWebDockTarget(_webAnimationTo);return;}
+            var target=_webAnimationTo;
+            var from=VideoSurface.TransformToAncestor(PlayerStage).TransformBounds(new Rect(VideoSurface.RenderSize));
+            PrepareWebDockAnchor(target);
+            var to=CalculateWebVideoBounds(target);
+            if(from.IsEmpty || to.IsEmpty){_webFramePending=false;StartLegacyWebDockTarget(target);return;}
+            var transition=_webFrameTransition=new VideoFrameTransition();_webFrameAnimating=true;_webFramePending=false;
             await transition.RunAsync(this,PlayerStage,from,to,frame,
                 ()=>{VideoView.Visibility=Visibility.Hidden;VideoSurface.Background=Brushes.Transparent;},
-                ()=>{if(generation!=_webFrameGeneration || _closing)return;_webDockProgress=target;ApplyWebVideoBounds();VideoView.Visibility=Visibility.Visible;VideoSurface.Background=Brushes.Black;StartVideoBackdropFix();});
+                ()=>{
+                    if(generation!=_webFrameGeneration || _closing)return;
+                    _webDockProgress=target;
+                    ApplyWebVideoBounds();
+                    VideoSurface.Background=Brushes.Black;
+                    // Move/resize the hidden HWND before showing it at the new location.
+                    VideoSurface.UpdateLayout();
+                    ApplyHwndHostBlackBackground();
+                    VideoView.Visibility=Visibility.Visible;
+                    VideoSurface.UpdateLayout();
+                    StartVideoBackdropFix();
+                });
             if(generation==_webFrameGeneration && !_closing){_webFrameAnimating=false;_webFrameTransition=null;if(Math.Abs(_webAnimationTo-_webDockProgress)>.001)Dispatcher.BeginInvoke(new Action(()=>{if(!_closing && _webLayoutMounted)SetWebDockTarget(_webAnimationTo);}));}
         }catch{if(!_closing && generation==_webFrameGeneration)StartLegacyWebDockTarget(_webAnimationTo);}
         finally{if(generation==_webFrameGeneration){_webFramePending=false;_webFrameAnimating=false;if(!_closing){VideoView.Visibility=Visibility.Visible;VideoSurface.Background=Brushes.Black;UpdateAlternateVideoControls();}}}
@@ -396,6 +426,9 @@ public partial class PlayerWindow
         // Both bars belong to the stationary native overlay. Hide them before snapshot
         // capture/motion starts, and keep them hidden until the native surface settles.
         var moving = _webLayoutMounted && (_webFramePending || _webFrameAnimating || _webRendering);
+        // The native overlay stays at its original coordinates during snapshot motion.
+        // Hide danmaku before capture starts and restore only after the surface settles.
+        DanmakuCanvas.Visibility = moving ? Visibility.Hidden : Visibility.Visible;
         var compact = _webLayoutMounted && _webDockProgress > 0.1 && VideoSurface.Width < 560;
         ControlBar.Visibility = !moving && !compact ? Visibility.Visible : Visibility.Collapsed;
         WebMiniControls.Visibility = !moving && compact && !_controlsHidden ? Visibility.Visible : Visibility.Collapsed;
