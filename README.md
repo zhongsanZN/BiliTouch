@@ -1,11 +1,7 @@
-# BiliTouch 0.1.3-cursor 历史构建记录
+# BiliTouch 0.2.4 历史构建归档
 
-原始版本名称：BiliTouch-0.1.3-cursor
+此标签仅保存原始安装器的说明、校验信息与验证摘要，不含应用源码。
 
-原始构建文件时间：2026-11-05T18:27:44+08:00（UTC+8，来自归档内应用 EXE）。
+本地未保留可确认与该原始二进制匹配的完整源码快照，不以当前代码重建旧版。完整源码请查看 main 分支及 v0.2.7 标签。
 
-这是历史构建的归档记录，不是该旧二进制的完整源代码快照。未确认匹配源码的旧二进制不在此公开发布，也没有用新版代码重新制作旧安装器。原始文件保留在维护者本机归档中。
-
-原档 SHA-256：ab3d216aed68cdaa0ccdd006479908bfdb9254c4d25844c14deb5265344c16cc
-
-当前维护仓库：https://github.com/zhongsanZN/BiliTouch 。安装请使用 Releases 中的最新 setup.exe。
+[下载原始安装器](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.2.4/BiliTouch-0.2.4-setup.exe)

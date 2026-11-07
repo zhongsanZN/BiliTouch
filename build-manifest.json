@@ -1,0 +1,18 @@
+{
+  "version": "0.2.4",
+  "original_build_date": "2026-11-07",
+  "archived_date": "2026-11-08",
+  "installer": "BiliTouch-0.2.4-setup.exe",
+  "size": 47990567,
+  "sha256": "673cc3d475ab78680a13396ccd05a9e072d9c5ae50e25e1b7123fd862be86eb2",
+  "application_source_snapshot_available": false,
+  "archive_verification": {
+    "portablePayloadHashesMatch": true,
+    "version": "0.2.4",
+    "portableFileCount": 270,
+    "installerPayloadHashesMatch": true,
+    "installerFileCount": 273
+  },
+  "recorded_playback_passed": true,
+  "recorded_playback_version": "0.2.4"
+}
