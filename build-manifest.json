@@ -1,18 +1,20 @@
 {
-  "version": "0.2.5",
+  "version": "0.2.6",
   "original_build_date": "2026-11-07",
   "archived_date": "2026-11-08",
-  "installer": "BiliTouch-0.2.5-setup.exe",
-  "size": 48248177,
-  "sha256": "359f7c03f9c1b352fcd953bbdb74e07a1f4e48bdbcb82693054e4cd290598d49",
+  "installer": "BiliTouch-0.2.6-setup.exe",
+  "size": 43229876,
+  "sha256": "7a264dfb88a07b4f5258d7e05ccb2dfceba2fd85484843c47d92c96857549da3",
   "application_source_snapshot_available": false,
   "archive_verification": {
     "portablePayloadHashesMatch": true,
-    "installerPayloadHashesMatch": true,
-    "version": "0.2.5",
-    "portableFileCount": 270,
-    "installerFileCount": 273
+    "sharedNativePayloadHashesMatch": true,
+    "setupNewerThanPayload": true,
+    "installerFileCount": 273,
+    "sharedNativeFiles": 264,
+    "version": "0.2.6",
+    "portableFileCount": 270
   },
   "recorded_playback_passed": true,
-  "recorded_playback_version": "0.2.5"
+  "recorded_playback_version": "0.2.6"
 }
