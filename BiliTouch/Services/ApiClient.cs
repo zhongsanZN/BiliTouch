@@ -1518,7 +1518,7 @@ public partial class ApiClient
     /// ★ 保留旧接口: 消息页/单 UP 视图只要视频列表, 它们仍走 GetDynamicFeedAsync。
     /// </summary>
     public async Task<(bool ok, string? err, List<DynamicItem>? items, string? nextOffset, bool hasMore)>
-        GetDynamicFeedFullAsync(string? offset = null)
+        GetDynamicFeedFullAsync(string? offset = null, long hostMid = 0)
     {
         var items = new List<DynamicItem>();
         try
@@ -1526,6 +1526,14 @@ public partial class ApiClient
             await EnsureBuvidAsync();
             var ps = new Dictionary<string, string>();
             if (!string.IsNullOrEmpty(offset)) ps["offset"] = offset;
+            // The official dynamic-home UP selector uses feed/all + host_mid, not
+            // feed/space. This path also lets Bilibili update that UP's read state.
+            if (hostMid > 0)
+            {
+                ps["host_mid"] = hostMid.ToString();
+                ps["platform"] = "web";
+                if (string.IsNullOrEmpty(offset)) ps["page"] = "1";
+            }
             // ★★★ 2026-11-04 修"动态正文不显示, 点进详情再出来才显示, 切走再回来又没了":
             //
             //   实测(探针 --dump-feed, 见 artifacts/feed-all*.json):
@@ -2083,6 +2091,9 @@ public partial class ApiClient
                     //   只有连一种高级音质都没有时才落到 AAC —— 绝不因为"要的那档没有"
                     //   就把用户从无损悄悄降到 AAC。
                     pick = dashAudioTracks.FirstOrDefault(t => t.Quality == audioQuality);
+                    if (pick == null && audioQuality == AudioQuality.High)
+                        pick = dashAudioTracks.Where(t => t.Quality is AudioQuality.High or AudioQuality.Standard)
+                            .OrderByDescending(t => t.Bandwidth).FirstOrDefault();
                     if (pick == null && audioQuality is AudioQuality.HiRes or AudioQuality.Dolby)
                     {
                         // 退到另一种高级音质, 仍然不是 AAC
@@ -2373,8 +2384,8 @@ public partial class ApiClient
     /// <summary>清晰度 id 转显示名</summary>
     public static string QnToLabel(int qn) => qn switch
     {
-        127 => "杜比视界",
-        126 => "杜比全景声",
+        127 => "8K",
+        126 => "杜比视界",
         125 => "HDR",
         120 => "4K",
         116 => "1080P60",

@@ -112,6 +112,8 @@ public sealed class ThemeReactionHost : FrameworkElement
 
     public bool Show(ThemeReaction action, FrameworkElement anchor)
     {
+        // Material themes illuminate the existing icon; only character themes spawn sprites.
+        if (SkinService.Instance.IsPhantomBlade) return false;
         if (!SkinService.Instance.EffectsEnabled || !IsLoaded || !anchor.IsVisible ||
             !SystemParameters.ClientAreaAnimation || Environment.TickCount64 - _lastStarted < 900) return false;
         Rect bounds;

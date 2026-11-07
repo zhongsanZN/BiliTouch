@@ -9,6 +9,5 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../BiliTouch/BiliTouch.csproj" />
-    <Compile Include="../../BiliTouch/Helpers/PlayerTouchSession.cs" Link="PlayerTouchSession.cs" />
   </ItemGroup>
 </Project>

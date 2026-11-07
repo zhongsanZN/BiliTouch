@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 <img src="BiliTouch/Assets/app.png" width="104" alt="BiliTouch 图标">
 
@@ -8,9 +8,9 @@
 
 面向 Windows 平板、二合一电脑和触控板用户的哔哩哔哩第三方客户端。用横滑切页、手势调节进度与音量、长按加速和捏合全屏，把浏览与播放串起来；也保留鼠标、键盘的完整操作方式。
 
-作者：**中三** · 当前版本：**0.2.3**
+作者：**中三** · 公开发布版本：**0.2.7**
 
-[下载安装](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.2.3/BiliTouch-0.2.3-setup.exe) · [触控与手势](#触控与手势) · [功能改进](#功能改进) · [版本记录](docs/RELEASES.md) · [上游鸣谢](docs/ACKNOWLEDGEMENTS.md)
+[下载安装](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.2.7/BiliTouch-0.2.7-setup.exe) · [触控与手势](#触控与手势) · [功能改进](#功能改进) · [版本记录](docs/RELEASES.md) · [上游鸣谢](docs/ACKNOWLEDGEMENTS.md)
 
 *WPF · .NET 10 · LibVLC · Windows 10 / 11 x64*
 
@@ -64,6 +64,7 @@ BiliTouch 的改进重点，是触摸屏、触控板和日常浏览的操作体�
 
 - 首页、动态、我的、设置使用统一页头与常驻装扮背景，切页时装扮条保持原位。
 - 星引擎装扮包含原始主题美术、互动反馈及点赞／投币／收藏／分区图标。
+- 影之刃零「影境」装扮使用官网原始水墨、宣纸、石街和剑客素材。
 - 支持字体选择、界面缩放、亮色／暗色／跟随系统、自定义主题色，以及亚克力／云母窗口材质。
 - 安装器、便携版与独立更新渠道统一维护，更新从本仓库获取。
 

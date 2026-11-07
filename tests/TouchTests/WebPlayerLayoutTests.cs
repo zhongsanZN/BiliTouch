@@ -76,6 +76,7 @@ internal static class WebPlayerLayoutTests
    Call(player,"OnWebRestoreVideo",player,new RoutedEventArgs());Pump(80);
    Pump(850);scroll.ScrollChanged-=restored;
    check(restoreOffsets.Any(offset=>offset>1 && offset<placeholder.ActualHeight+59),"return-to-video control animates through intermediate scroll positions");
+   Console.WriteLine($"RESTORE FINAL offset={scroll.VerticalOffset:0.0} surfaceLeft={Bounds(surface,stage).Left:0.0} initialLeft={initial.Left:0.0} progress={Field<double>(player,"_webDockProgress"):0.###} animTo={Field<double>(player,"_webAnimationTo"):0.###} rendering={Field<bool>(player,"_webRendering")} placeholder={placeholder.ActualHeight:0.0}");
    check(scroll.VerticalOffset<1 && Math.Abs(Bounds(surface,stage).Left-initial.Left)<2,"returning to the top restores the inline video smoothly");
    var sample=Path.GetFullPath("artifacts/touch-sample-silent.mp4");
    if(File.Exists(sample))

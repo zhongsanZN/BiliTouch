@@ -141,10 +141,11 @@
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
+
         <!-- ============ 左侧导航栏(通高) ============ -->
         <Border x:Name="NavRail" Grid.Column="0" Width="96"
-                Background="{DynamicResource SideBarBackgroundBrush}"
-                BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,1,0">
+                Background="{DynamicResource SideBarBackgroundBrush}" BorderThickness="0"
+                SnapsToDevicePixels="True" UseLayoutRounding="True">
             <Grid>
                 <!-- ★ 2026-10-13 用户要求"改回左上角 logo 点击后显示分区, 一切与以前保持一致":
                      于是恢复成 2026-10-12 之前的三行结构 ——
@@ -178,7 +179,7 @@
                 </Border>
                 <Button x:Name="StarPartyWebsite" Width="56" Height="56" Margin="0,0,0,12"
                         Cursor="Hand" ToolTip="星创组 · 吉星派对同人站" AutomationProperties.Name="打开星创组网站"
-                        Visibility="{Binding IsEnabled,Source={x:Static helpers:SkinService.Instance},Converter={StaticResource BoolToVis}}"
+                        Visibility="{Binding IsStarParty,Source={x:Static helpers:SkinService.Instance},Converter={StaticResource BoolToVis}}"
                         Click="OnStarPartyWebsite">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
@@ -338,25 +339,21 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <!-- 顶部内边距 44: 内嵌页盖在内容区上、也从窗口最上沿开始,
-                     返回按钮要落到右上角窗口按钮(y=4~36)的下方, 否则和它们叠在一起 -->
-                <Border Grid.Row="0" Padding="36,44,36,14"
-                        Background="{DynamicResource AppBackgroundBrush}"
-                        BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,0,1">
-                    <StackPanel Orientation="Horizontal">
-                        <Button Style="{StaticResource SubtleButtonStyle}" Click="OnEmbeddedBackClick"
-                                Padding="10,6" FontSize="13" VerticalAlignment="Center" ToolTip="返回上一页">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE72B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                           FontSize="13" VerticalAlignment="Center" />
-                                <TextBlock Text="返回" Margin="6,0,0,0" FontSize="13" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-                        <TextBlock x:Name="EmbeddedTitle" Margin="14,0,0,0" FontSize="13"
-                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                                   Foreground="{DynamicResource TextSecondaryBrush}" />
-                    </StackPanel>
-                </Border>
+                <Grid x:Name="EmbeddedHeader" Grid.Row="0" Height="112">
+                    <helpers:SkinSurface x:Name="EmbeddedHeaderSurface" Kind="Shared" />
+                    <TextBlock x:Name="EmbeddedTitle" Style="{StaticResource PageTitleStyle}"
+                               Margin="{x:Static helpers:PageHeaderMetrics.TitleMargin}"
+                               VerticalAlignment="Top" TextTrimming="CharacterEllipsis" />
+                    <Button x:Name="EmbeddedBackButton" Style="{StaticResource SubtleButtonStyle}"
+                            Click="OnEmbeddedBackClick" HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                            Margin="24,0,0,0" Padding="10,6" MinHeight="44" ToolTip="返回上一页">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE72B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                       FontSize="13" VerticalAlignment="Center" />
+                            <TextBlock Text="返回" Margin="6,0,0,0" FontSize="13" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
 
                 <ContentPresenter x:Name="EmbeddedContent" Grid.Row="1" />
             </Grid>

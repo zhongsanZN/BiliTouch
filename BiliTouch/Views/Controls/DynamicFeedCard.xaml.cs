@@ -338,7 +338,7 @@ public partial class DynamicFeedCard : UserControl
         {
             var liked = !d.IsLiked;
             var result = await Svc.Api.LikeDynamicAsync(d.Id, liked);
-            if (result.ok) d.SetLiked(liked);
+            if (result.ok) { d.SetLiked(liked); if (liked && IsLoaded && ReferenceEquals(DataContext,d)) ThemeAudio.PlayLike(); }
             else Svc.Toast.Show(result.err ?? "点赞失败，请重试");
         }
         finally { d.IsLiking = false; }

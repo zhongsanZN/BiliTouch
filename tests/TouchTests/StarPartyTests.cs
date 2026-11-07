@@ -17,7 +17,7 @@ using BiliTouch.Views;
 using BiliTouch.Views.Controls;
 using BiliTouch.Views.Pages;
 
-internal static class StarPartyTests
+internal static partial class StarPartyTests
 {
     const BindingFlags Hidden = BindingFlags.Instance | BindingFlags.NonPublic;
     static void Set(object target, string name, object value) => target.GetType().GetField(name, Hidden)!.SetValue(target, value);

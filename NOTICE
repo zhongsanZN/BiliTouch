@@ -5,4 +5,6 @@ Original copyright notices and GPL-3.0 license are retained. See LICENSE.
 Modified source is distributed under the existing GPL-3.0 terms. See docs/MODIFICATIONS.md.
 Third-party dependencies, fonts, and artwork retain their own licenses/rights.
 See docs/ACKNOWLEDGEMENTS.md, BiliTouch/Assets/Fonts/SOURCES.md and
-BiliTouch/Assets/Skins/StarParty/SOURCES.md for provenance.
+BiliTouch/Assets/Skins/StarParty/SOURCES.md,
+BiliTouch/Assets/Skins/PhantomBladeZero/SOURCES.md and
+BiliTouch/Assets/Audio/PhantomBladeZero/SOURCES.md for provenance.

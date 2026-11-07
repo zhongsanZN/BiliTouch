@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -307,6 +307,31 @@ public class SettingsStore
     /// </summary>
     public bool NoLogin1080P { get; set; } = true;
 
+    // ----------------- GPU 硬件加速(0.2.7) -----------------
+
+    /// <summary>
+    /// GPU 硬件加速(默认 true)。渲染模式是**进程级**的, 在第一个窗口创建前定死,
+    /// 所以这项只在启动时读一次(见 App.OnStartup → RenderPolicy.ApplyProcessRenderMode), 改了要重启生效。
+    ///
+    /// 开：允许 WPF 使用硬件加速；关：WPF 软件渲染。此项不改变图片采样质量。
+    ///
+    /// ★ 与 Models.AppSettings.HardwareAccelerationEnabled 是读写契约, 两处必须一致;
+    ///   那边是可空类型, 缺字段(null)在 ApplySanitized 里被归一成 true。
+    /// </summary>
+    public bool HardwareAccelerationEnabled { get; set; } = true;
+
+    /// <summary>
+    /// 改 GPU 硬件加速并落盘。
+    /// ★ 不广播事件: 渲染模式改不了当前进程, 广播只会让界面假装已经生效。
+    ///   设置页的提示文案负责告诉用户"重启后生效"。
+    /// </summary>
+    public void SetHardwareAcceleration(bool value)
+    {
+        if (HardwareAccelerationEnabled == value) return;
+        HardwareAccelerationEnabled = value;
+        Save();
+    }
+
     // ----------------- CDN(线路)设置 -----------------
     // 详见 Models/CdnOption.cs 与 Services/CdnService.cs
 
@@ -491,7 +516,7 @@ public class SettingsStore
     private void ApplySanitized(AppSettings s)
     {
         ThemeMode = s.ThemeMode;
-        SkinId = s.SkinId == SkinService.StarParty ? SkinService.StarParty : "";
+        SkinId = SkinService.IsKnown(s.SkinId) ? s.SkinId : "";
         SkinEffects = s.SkinEffects;
         SkinUseAccent = s.SkinUseAccent;
 
@@ -533,7 +558,8 @@ public class SettingsStore
         // 左栏排序: 老配置没这个字段 ⇒ 0 = 最近更新(正是默认档), 不需要版本兼容;
         // 但仍要归一 —— 手改配置可能塞进 99 / -1, 不归一的话下游 switch 会默默落到 default,
         // 界面上却三个 chip 全不亮(看起来像"排序坏了")。
-        FollowSortMode = FollowSorting.Normalize(s.FollowSortMode);
+        FollowSortMode = s.FollowSortSelectionVersion < 1 && s.FollowSortMode == 0
+            ? Models.FollowSortMode.UnreadFirst : FollowSorting.Normalize(s.FollowSortMode);
 
         // ★ 下载位置: 老配置没这个字段(默认空串 = 用系统下载文件夹)。
         //   非法/不存在的路径**不写进设置**(回落空串), 免得把脏路径带到 Path.Combine 下游 ——
@@ -596,6 +622,11 @@ public class SettingsStore
         AutoCheckUpdate = s.AutoCheckUpdate;
         SkippedVersion = s.SkippedVersion ?? "";
         NoLogin1080P = s.NoLogin1080P;
+
+        // ★ GPU 硬件加速(0.2.7): 老配置缺这个字段 ⇒ null。
+        //   null 必须按"开"处理 —— bool 默认的 false 会被误读成"用户主动关了",
+        //   升级后全体老用户静默掉进软件渲染, 那是比崩溃更难查的性能回归。
+        HardwareAccelerationEnabled = s.HardwareAccelerationEnabled ?? true;
 
         // ★ CdnManualId 要校验: 老配置里的 Id 可能已从候选表下线,
         //   留着它会让"手动模式"指到一条不存在的线路(见 CdnService.SelectUrlAsync)。
@@ -776,6 +807,7 @@ public class SettingsStore
         UiScalePercent = UiScalePercent,
         FollowCardWall = FollowCardWall,
         FollowSortMode = (int)FollowSortMode,
+        FollowSortSelectionVersion = 1,
         DownloadDir = DownloadDir,
         DanmakuEnabled = DanmakuEnabled,
         DanmakuAreaPercent = DanmakuAreaPercent,
@@ -804,6 +836,7 @@ public class SettingsStore
         AutoCheckUpdate = AutoCheckUpdate,
         SkippedVersion = SkippedVersion,
         NoLogin1080P = NoLogin1080P,
+        HardwareAccelerationEnabled = HardwareAccelerationEnabled,
         CdnMode = CdnMode,
         CdnManualId = CdnManualId,
         BlockPcdn = BlockPcdn,

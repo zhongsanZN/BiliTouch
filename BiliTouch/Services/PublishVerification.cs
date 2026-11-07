@@ -24,6 +24,14 @@ internal static class PublishVerification
             Svc.Settings.Load(); Svc.Settings.SaveNow();
             if (!Svc.Settings.HasVisibleDanmakuTypes) throw new InvalidOperationException("Legacy danmaku settings did not recover");
             results["legacyDanmakuSettingsRecovered"]=true;
+            var settings=new BiliTouch.ViewModels.SettingsViewModel();
+            if(settings.SkinOptions.Length<3 || !settings.SkinOptions.Contains("影之刃零 · 影境")) throw new InvalidOperationException("Published theme selector is incomplete");
+            results["skinOptions"]=settings.SkinOptions;
+            BiliTouch.Helpers.SkinService.Instance.Configure(BiliTouch.Helpers.SkinService.PhantomBlade,true,true);
+            results["themeEffectsDescription"]=settings.SkinEffectsDescription;
+            using(var wave=Application.GetResourceStream(new Uri("pack://application:,,,/BiliTouch;component/Assets/Audio/PhantomBladeZero/like.wav"))!.Stream)
+            using(var sound=new System.Media.SoundPlayer(wave)) { sound.Load(); if(!sound.IsLoadCompleted) throw new InvalidOperationException("Published theme audio failed to load"); }
+            results["themeAudioResourceLoaded"]=true;
             using(var icon=AppBranding.CreateTrayIcon()) {
                 if(icon.Width<=0) throw new InvalidOperationException("Published tray icon did not load");
                 results["trayIconWidth"]=icon.Width;

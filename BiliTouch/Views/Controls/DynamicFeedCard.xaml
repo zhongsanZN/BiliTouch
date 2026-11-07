@@ -133,8 +133,8 @@
                                         Background="{DynamicResource DurationBadgeBackgroundBrush}"
                                         Visibility="{Binding ViewCountText, Converter={StaticResource StrToVis}}">
                                     <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="&#xE768;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                                   FontSize="10" Foreground="#F2FFFFFF" VerticalAlignment="Center" />
+                                        <helpers:SkinActionIcon Kind="Play" Data="{x:Static helpers:PlayerGlyphs.PlayGeometry}"
+                                                   Width="10" Height="10" Stretch="Uniform" Fill="#F2FFFFFF" VerticalAlignment="Center" />
                                         <TextBlock Text="{Binding ViewCountText, Mode=OneWay}" FontSize="11"
                                                    Foreground="#F2FFFFFF" Margin="3,0,0,0" VerticalAlignment="Center" />
                                     </StackPanel>
@@ -583,7 +583,7 @@
                              与播放器操作栏同一个图形 —— 不再用 Segoe 字体图标(E8E1)。
                              字体图标和官方图形是两套线条语言, 放在同一个客户端里一眼能看出不一致。
                              填色走 Fill(几何是纯填充图形, 不是描边), 已赞时整组变强调色。 -->
-                        <helpers:SkinActionIcon Kind="Like" Data="{StaticResource LikeIconGeometry}" Width="20" Height="20"
+                        <helpers:SkinActionIcon Kind="Like" IsActive="{Binding IsLiked}" Data="{StaticResource LikeIconGeometry}" Width="20" Height="20"
                               Stretch="Uniform" VerticalAlignment="Center">
                             <helpers:SkinActionIcon.Style>
                                 <Style TargetType="helpers:SkinActionIcon">

@@ -347,6 +347,12 @@ internal static class DynamicTests
             var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(shot));
             using(var stream=File.Create(Path.Combine(output,$"dynamic-detail-{mode}.png")))png.Save(stream);
         }
+        for(int i=0;i<140;i++)detail.ViewModel.Comments.Add(new CommentItem{Rpid=10000+i,Content="动态评论跟手测试",UserName="读者"});
+        Pump();
+        var detailList=(ListBox)detail.FindName("CommentList");
+        var detailScroll=Descendants<ScrollViewer>(detailList).First();
+        PlayerCommentsScrollTests.Trace(detailScroll,detailList.ItemContainerGenerator.ContainerFromIndex(0) as UIElement ?? detailScroll,"dynamic comments",check);
+        PlayerCommentsScrollTests.ScrollBench(detailScroll,detailList,"dynamic comments");
         var home=new HomeViewModel {IsPopularTab=true,IsRecommendTab=false};
         typeof(HomeViewModel).GetField("_popularPage",BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(home,1);
         handler.FailPopular=true;Wait(home.LoadMoreAsync());
@@ -373,6 +379,14 @@ internal static class DynamicTests
         window.Content=wallScroll;Pump();Pump();
         var wall=Descendants<BiliTouch.Helpers.VirtualizingCardWallPanel>(window).First();
         check(wall.RealizedCount>0 && wall.RealizedCount<60,$"home viewport containers {wall.RealizedCount}/600");
+        var measureCount=wall.GetType().GetProperty("MeasurePasses",BindingFlags.Instance|BindingFlags.NonPublic)!;
+        var baseline=(int)measureCount.GetValue(wall)!;
+        for(int offset=1;offset<=32;offset++) { wallScroll.ScrollToVerticalOffset(offset);window.UpdateLayout(); }
+        var measured=(int)measureCount.GetValue(wall)!-baseline;
+        Console.WriteLine($"HOME continuous 32 pixel offsets: {measured} card wall measures");
+        check(measured <= 2,"sub-row scrolling skips repeated home wall measure and generation");
+        PlayerCommentsScrollTests.Trace(wallScroll,wallList,"home wall",check);
+        PlayerCommentsScrollTests.ScrollBench(wallScroll,wallList,"home wall");
         wallScroll.ScrollToVerticalOffset(wallScroll.ScrollableHeight/2);Pump();Pump();
         var visibleItems=Descendants<VideoCard>(wall).Select(c=>(VideoItem)c.DataContext).ToList();
         check(visibleItems.Count>0 && visibleItems.All(c=>int.Parse(c.Bvid[2..])>200),"home middle scroll realizes correct rows");
@@ -418,6 +432,9 @@ internal static class DynamicTests
         var mount=System.Diagnostics.Stopwatch.StartNew();mixedPage.DataContext=mixedVm;Pump();Pump();
         check(mount.ElapsedMilliseconds<3000,"mixed timeline mounting completes without layout loop");
         var mixedList=(ListBox)mixedPage.FindName("DynamicList");
+        var feedScroll=Descendants<ScrollViewer>(mixedList).First();
+        PlayerCommentsScrollTests.Trace(feedScroll,feedScroll,"dynamic feed",check);
+        PlayerCommentsScrollTests.ScrollBench(feedScroll,mixedList,"dynamic feed");
         for(int i=0;i<100;i+=7){mixedList.ScrollIntoView(mixedVm.Dynamics[i]);Pump();}
         check(Enumerable.Range(0,100).Count(i=>mixedList.ItemContainerGenerator.ContainerFromIndex(i)!=null)<30,"mixed timeline scroll remains virtualized");
         var nav=new NavigationDispatcher(window);Svc.Navigate=nav;

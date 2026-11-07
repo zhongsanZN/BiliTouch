@@ -16,10 +16,21 @@
 #
 # 注意: 这里的默认版本号要跟 App.AppVersion / csproj 的 <Version> / installer.iss 的
 # MyAppVersion 一起改 —— 它只决定 zip 的文件名, 不参与程序内部显示。
-param([string]$Version = "0.2.3")
+param([string]$Version = "0.2.7")
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+# 优先使用本项目配套 SDK，避免 PATH 里只有桌面运行时而无法构建。
+$bundledDotnetRoot = [IO.Path]::GetFullPath((Join-Path $Root '..\.tools\dotnet'))
+if (Test-Path -LiteralPath (Join-Path $bundledDotnetRoot 'sdk')) {
+    $env:DOTNET_ROOT = $bundledDotnetRoot
+    $env:PATH = $bundledDotnetRoot + [IO.Path]::PathSeparator + $env:PATH
+}
+$sdkList = & dotnet --list-sdks
+if ($LASTEXITCODE -ne 0 -or !($sdkList -match '^10\.')) {
+    throw '构建需要 .NET 10 SDK；仅安装桌面运行时无法构建。'
+}
+
 $Out = Join-Path $Root "Publish"
 $PortableDir = Join-Path $Out "BiliTouch-便携版"
 $InstallerDir = Join-Path $Out "BiliTouch-安装器-files"
@@ -123,8 +134,20 @@ $isccCandidates = @((Join-Path $Root '..\.tools\inno612\app\ISCC.exe'), "${env:P
 $iscc = $isccCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (!$iscc) { $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source }
 if (!$iscc) { throw "找不到 Inno Setup 编译器，不能将本次发布标记为完成" }
-& $iscc ("/DMySourceDir=" + $InstallerDir) ("/O" + $Out) (Join-Path $Root 'Publish\installer.iss')
-if ($LASTEXITCODE -ne 0) { throw "setup.exe 编译失败" }
+# Inno 的资源更新会在输出目录重命名临时文件。部分工作区继承了 DENY DeleteChild，
+# 普通文件写入成功也仍会在 EndUpdateResource(110) 失败；在独立构建目录编译后复制。
+$setupStage = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) ('BiliTouch-build\' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $setupStage -Force | Out-Null
+try {
+    & $iscc ("/DMySourceDir=" + $InstallerDir) ("/O" + $setupStage) (Join-Path $Root 'Publish\installer.iss')
+    if ($LASTEXITCODE -ne 0) { throw "setup.exe 编译失败" }
+    Copy-Item -LiteralPath (Join-Path $setupStage "BiliTouch-$Version-setup.exe") -Destination $Out -Force
+} finally {
+    $stagedSetup = Join-Path $setupStage "BiliTouch-$Version-setup.exe"
+    if (Test-Path -LiteralPath $stagedSetup) { Remove-Item -LiteralPath $stagedSetup -Force }
+    # 不递归删除，以免误删编译器留下的额外诊断文件。
+    if (!(Get-ChildItem -LiteralPath $setupStage -Force | Select-Object -First 1)) { Remove-Item -LiteralPath $setupStage }
+}
 Write-Host "完成:"
 Write-Host "  安装器     : $(Join-Path $Out "BiliTouch-$Version-setup.exe")"
 Write-Host "  便携版 zip : $zip"

@@ -45,7 +45,18 @@ internal static class Program
         var exit = 0;
         try
         {
-            if(args.Contains("--release023-live")) Release023Tests.Live(Check,Artifacts);
+            if(args.Contains("--scroll-boundaries")) ScrollBoundaryTests.Run(Check);
+            else if(args.Contains("--release027")) Release027Tests.Run(Check);
+            else if(args.Contains("--scroll-ab-window")) ScrollAbTests.RealWindow(Artifacts, Check);
+            else if(args.Contains("--scroll-ab-surfaces")) ScrollAbTests.Surfaces(Artifacts, Check);
+            else if(args.Contains("--scroll-ab")) ScrollAbTests.Run(Artifacts, Check);
+            else if(args.Contains("--scroll-image-wall")) ScrollRealizationTests.ImageWall(Artifacts, Check);
+            else if(args.Contains("--scroll-realization")) ScrollRealizationTests.Run(Check, args.Contains("--cost-only"));
+            else if(args.Contains("--player-comments-scroll")) PlayerCommentsScrollTests.Run(Check);
+            else if(args.Contains("--scroll-text-host-cost")) PlayerCommentsScrollTests.TextHostCost(Check);
+            else if(args.Contains("--phantom-blade")) StarPartyTests.RunPhantom(Check, Artifacts);
+            else if(args.Contains("--web-controls-unread")) WebControlsUnreadTests.Run(Check);
+            else if(args.Contains("--release023-live")) Release023Tests.Live(Check,Artifacts);
             else if(args.Contains("--release023")) Release023Tests.Run(Check,Artifacts);
             else if(args.Contains("--release022-live")) Release022Tests.Live(Check,Artifacts);
             else if(args.Contains("--release022")) Release022Tests.Run(Check,Artifacts);
@@ -66,6 +77,8 @@ internal static class Program
             else if(args.Contains("--web-player-layout")) WebPlayerLayoutTests.Run(Check, Artifacts);
             else if(args.Contains("--live-mine-messages")) MineMessagesTests.Live();
             else if(args.Contains("--mine-messages")) MineMessagesTests.Run(Check, Artifacts);
+            else if(args.Contains("--detail-theme")) DetailThemeTests.Run(Check, Artifacts);
+            else if(args.Contains("--dynamic-ui")) UiPolishTests.Run(Check, Artifacts, dynamicOnly:true);
             else if(args.Contains("--ui-polish")) UiPolishTests.Run(Check, Artifacts);
             else if(args.Contains("--mine-gestures")) MineExperienceTests.TestGestures(Check, Artifacts);
             else if(args.Contains("--mine")) MineExperienceTests.Run(Check, Artifacts);
@@ -83,6 +96,7 @@ internal static class Program
             else if(args.Contains("--live-hang")) FeedHangProbe.Run(Artifacts);
             else if(args.Contains("--live-feed")) LiveDynamicProbe.Run(Artifacts,true);
             else if(args.Contains("--live-dynamic")) LiveDynamicProbe.Run(Artifacts);
+            else if(args.Contains("--dynamic-modes")) DynamicModeTests.Run(Check, Artifacts);
             else if(args.Contains("--dynamic")) DynamicTests.Run(Check, Artifacts);
             else if(args.Contains("--follow-sort")) FollowSortTests.Run(Check, Artifacts);
             else

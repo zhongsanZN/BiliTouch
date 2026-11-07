@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -21,10 +21,7 @@ namespace BiliTouch.Helpers;
 ///
 /// 几个刻意的取舍:
 ///   - 快照只覆盖窗口的**内容区**(OS 标题栏不属于 WPF 可视树, 拍不到也不该拍);
-///   - 快照按**像素预算**缩放(见 SnapshotBudgetPixels)。这是"切主题先卡一下"的根治:
-///     RenderTargetBitmap 的开销正比于输出像素数, 4K 全窗快照要 200ms 以上, 而这段时间
-///     UI 线程是死的 —— 用户点一下, 界面先僵住, 然后动画突然冒出来。降到 1/4~1/3 的像素量
-///     只要 20~40ms, 代价是过渡期间画面略糊(400ms 的过渡, 无人在意);
+///   - 快照按窗口的实际 DPI 渲染，禁止低分辨率放大；超过预算时直接切换主题，避免阻塞 UI。
 ///   - 任何一步出问题(拿不到可视根 / 快照失败 / 尺寸为 0)都直接降级为"立即换肤" ——
 ///     过渡效果是锦上添花, 绝不能因为它让功能不可用。
 /// </summary>
@@ -33,24 +30,8 @@ public static class ThemeTransition
     /// <summary>扩散时长。太短看不出"波纹", 太长会拖慢操作感。</summary>
     private const int RippleMs = 400;
 
-    /// <summary>
-    /// 快照的像素预算。
-    ///
-    /// RenderTargetBitmap 是把整棵可视树**同步重绘一遍**, 耗时基本正比于输出像素数:
-    /// 实测 1280x800 约 40~60ms, 换成 1080p 就是两倍, 4K 上要 200ms 以上 ——
-    /// 这段时间整个界面是不响应的, 用户感知就是"点一下先卡住, 然后动画突然冒出来"。
-    ///
-    /// 所以这里不按窗口实际分辨率拍, 而是按预算反推一个缩放比。
-    /// 420k 像素约是 1080p 的 0.20 面积(1280x800 的 0.41): 一次 400 毫秒的过渡,
-    /// 快照糊到只剩色块关系也无人在意 —— 卡顿才是实打实被看见的。
-    ///
-    /// 2026-09-24 从 600k 收到 420k: 这一步是**同步阻塞 UI 线程**的, 每降一档都是
-    /// 直接把首帧的等待时间砍掉一截。
-    /// </summary>
-    private const long SnapshotBudgetPixels = 420_000;
-
-    /// <summary>缩放的绝对下限。再低就只剩色块了, 宁可多花点时间也要看得清是"上个界面"。</summary>
-    private const double MinSnapshotScale = 0.28;
+    // 原生像素快照的上限。大于此尺寸直接换色，不以降低清晰度换取动画。
+    private const long SnapshotBudgetPixels = 4_000_000;
 
     /// <summary>
     /// 当前挂在界面上的覆盖层。**任何时刻最多只有一个** —— 这是连点场景的关键。
@@ -117,7 +98,7 @@ public static class ThemeTransition
         overlay.Height = h;
         overlay.HorizontalAlignment = HorizontalAlignment.Left;
         overlay.VerticalAlignment = VerticalAlignment.Top;
-        overlay.Stretch = Stretch.Fill;
+        overlay.Stretch = Stretch.None;
         overlay.IsHitTestVisible = false; // 别把动画期间的点击吃掉
         // 根面板是 Grid, 让覆盖层跨过所有行列(否则只会落在第 0 列)
         Grid.SetRowSpan(overlay, 99);
@@ -237,7 +218,7 @@ public static class ThemeTransition
     }
 
     /// <summary>
-    /// 拍一张整窗内容区的快照(按像素预算缩放, 见 SnapshotBudgetPixels)。
+    /// 拍一张原生 DPI 的整窗内容区快照；超出预算则跳过动画。
     /// 拿不到(尺寸异常 / 位图分配失败)时返回 null, 调用方降级为"立即换肤"。
     /// </summary>
     private static Image? Capture(FrameworkElement root, double w, double h)
@@ -247,22 +228,15 @@ public static class ThemeTransition
         var fullH = (int)Math.Ceiling(h * dpi.DpiScaleY);
         if (fullW <= 0 || fullH <= 0) return null;
 
-        var scale = Math.Min(1.0,
-            Math.Sqrt(SnapshotBudgetPixels / (double)((long)fullW * fullH)));
-        if (scale < MinSnapshotScale) scale = MinSnapshotScale;
-
-        var pxW = Math.Max(1, (int)Math.Ceiling(fullW * scale));
-        var pxH = Math.Max(1, (int)Math.Ceiling(fullH * scale));
+        if ((long)fullW * fullH > SnapshotBudgetPixels) return null;
 
         var bmp = new RenderTargetBitmap(
-            pxW, pxH, 96 * dpi.DpiScaleX * scale, 96 * dpi.DpiScaleY * scale, PixelFormats.Pbgra32);
+            fullW, fullH, 96 * dpi.DpiScaleX, 96 * dpi.DpiScaleY, PixelFormats.Pbgra32);
         bmp.Render(root);
         bmp.Freeze(); // 冻结后可跨线程/被多个 ImageBrush 共享, 也少一层校验开销
 
-        // 缩放模式要设在**显示这张位图的那个元素**上(不是被拍的根元素):
-        // 默认的 Fant 插值在整屏放大时更慢, 而这张图几百毫秒后就被"擦掉"了, 双线性足够。
-        var image = new Image { Source = bmp };
-        RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.Linear);
+        // Stretch.None 保留原生像素映射，避免窗口尺寸取整后再对截图重采样。
+        var image = new Image { Source = bmp, Stretch = Stretch.None };
         return image;
     }
 

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -9,7 +9,7 @@ using BiliTouch.Services;
 namespace BiliTouch.ViewModels;
 
 /// <summary>设置页 ViewModel: 外观 + 账户 + 数据 + 关于</summary>
-public class SettingsViewModel : ObservableObject
+public partial class SettingsViewModel : ObservableObject
 {
     /// <summary>作者 B 站 UID(设置页「关于」Tab 的作者栏)。与导航服务共用。</summary>
     private const long AuthorMid = 697238372;
@@ -329,17 +329,21 @@ public class SettingsViewModel : ObservableObject
     ///   至少能保证"打开页面就是当前值、点选就生效"。
     /// </summary>
     public string[] ThemeOptions { get; } = { "跟随系统", "浅色", "深色" };
-    public string[] SkinOptions { get; } = { "默认", "星引擎party闪亮启航" };
+    public string[] SkinOptions { get; } = { "默认", "星引擎party闪亮启航", "影之刃零 · 影境" };
     public string SkinSelected
     {
-        get => SkinOptions[SkinService.Instance.IsEnabled ? 1 : 0];
+        get => SkinOptions[SkinService.Instance.IsPhantomBlade ? 2 : SkinService.Instance.IsStarParty ? 1 : 0];
         set
         {
             if (!SkinOptions.Contains(value)) return;
-            SkinService.Instance.Configure(value == SkinOptions[1] ? SkinService.StarParty : "", SkinEffects, SkinUseAccent);
+            SkinService.Instance.Configure(value == SkinOptions[2] ? SkinService.PhantomBlade : value == SkinOptions[1] ? SkinService.StarParty : "", SkinEffects, SkinUseAccent);
+            OnPropertyChanged(nameof(SkinEffectsDescription));
             OnPropertyChanged();
         }
     }
+    public string SkinEffectsDescription => SkinService.Instance.IsPhantomBlade
+        ? "点赞、投币、收藏成功后，道具原位亮起；点赞附带低音量武器升级音效"
+        : "点赞、投币、收藏成功后，角色短暂出现";
     public bool SkinEffects
     {
         get => Svc.Settings.SkinEffects;
@@ -542,7 +546,7 @@ public class SettingsViewModel : ObservableObject
         get=>Svc.Settings.TouchpadFeedSensitivity;
         set{if(value==Svc.Settings.TouchpadFeedSensitivity)return;Svc.Settings.SetTouchpadFeedSensitivity(value);OnPropertyChanged();OnPropertyChanged(nameof(TouchpadSensitivityHint));}
     }
-    public string TouchpadSensitivityHint=>$"当前 {TouchpadFeedSensitivity}%；调整信息流双指滚动的移动速度。";
+    public string TouchpadSensitivityHint=>$"当前 {TouchpadFeedSensitivity}%；调整双指滚动的移动速度。";
 
     public bool IsWebPlayerLayout
     {
@@ -684,6 +688,29 @@ public class SettingsViewModel : ObservableObject
     public string NoLogin1080PHint => IsLoggedIn
         ? "已登录, 按账号等级取流, 此开关不参与"
         : "未登录也能看 1080P; 关闭后回到 360P/480P";
+
+    // ----------------- GPU 硬件加速(0.2.7) -----------------
+
+    /// <summary>保存 WPF 渲染模式偏好，下次启动生效。</summary>
+    public bool HardwareAccelerationEnabled
+    {
+        get => Svc.Settings.HardwareAccelerationEnabled;
+        set
+        {
+            if (value == Svc.Settings.HardwareAccelerationEnabled) return;
+            Svc.Settings.SetHardwareAcceleration(value);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HardwareAccelerationHint));
+        }
+    }
+
+    /// <summary>
+    /// 开关副标题: 说清"当前这档在做什么"以及"要重启"。
+    /// ★ 必须写明重启 —— 不写的话用户改完看不到任何变化, 只会认为开关是坏的。
+    /// </summary>
+    public string HardwareAccelerationHint => Svc.Settings.HardwareAccelerationEnabled
+        ? "允许 WPF 使用硬件加速；改完需重启应用生效"
+        : "WPF 使用 CPU 软件渲染；改完需重启应用生效";
 
     // ----------------- 默认画质 -----------------
 

@@ -11,15 +11,27 @@ public sealed class SkinSurface : FrameworkElement
     public string Kind { get; set; } = "Home";
     public SkinSurface()
     {
-        IsHitTestVisible = false; Focusable = false;
+        IsHitTestVisible = false; Focusable = false; SnapsToDevicePixels = true; UseLayoutRounding = true;
         Loaded += (_, _) => { SkinService.Instance.Changed += Refresh; Svc.Theme.ThemeChanged += Refresh; Refresh(); };
         Unloaded += (_, _) => { SkinService.Instance.Changed -= Refresh; Svc.Theme.ThemeChanged -= Refresh; };
     }
-    private void Refresh() => InvalidateVisual();
+    private void Refresh()
+    {
+        if (Kind == "Content" && SkinService.Instance.IsPhantomBlade)
+            CacheMode ??= new BitmapCache();
+        else
+            CacheMode = null;
+        InvalidateVisual();
+    }
     protected override void OnRender(DrawingContext dc)
     {
         if (!SkinService.Instance.IsEnabled || ActualWidth <= 0 || ActualHeight <= 0) return;
+        if(Kind is "Content" or "Card"){
+            if(SkinService.Instance.IsPhantomBlade)PhantomBladeSurface.DrawContent(dc,RenderSize,Kind=="Card");
+            return;
+        }
         if(Kind!="Rail" && Kind!="Shared" && Window.GetWindow(this) is BiliTouch.MainWindow {UsesSharedHeader:true})return;
+        if (SkinService.Instance.IsPhantomBlade) { PhantomBladeSurface.Draw(dc, RenderSize, Kind); return; }
         var dark = Svc.Theme.IsDark;
         var bounds = new Rect(RenderSize);
         dc.PushClip(new RectangleGeometry(bounds));
@@ -108,6 +120,22 @@ public sealed class SkinProfileLayout : Decorator
         if (area.Width <= 0 || area.Height <= 0) return;
         dc.PushClip(new RectangleGeometry(area, 12, 12));
         var image = SkinService.Instance.Image("head_myself_bg");
+        if (SkinService.Instance.IsPhantomBlade)
+        {
+            dc.DrawRectangle(new ImageBrush(image) { Stretch = Stretch.UniformToFill, AlignmentX = AlignmentX.Right }, null, area);
+            if (!_narrow)
+            {
+                var tone = Svc.Theme.IsDark ? Color.FromRgb(22, 24, 25) : Color.FromRgb(242, 240, 235);
+                Color Tint(byte alpha) => Color.FromArgb(alpha, tone.R, tone.G, tone.B);
+                var veil = new LinearGradientBrush { StartPoint = new Point(0, .5), EndPoint = new Point(1, .5) };
+                veil.GradientStops.Add(new GradientStop(Tint(221), 0));
+                veil.GradientStops.Add(new GradientStop(Tint(203), .32));
+                veil.GradientStops.Add(new GradientStop(Tint(119), .51));
+                veil.GradientStops.Add(new GradientStop(Tint(0), .77));
+                dc.DrawRectangle(veil, null, area);
+            }
+            dc.Pop(); return;
+        }
         // Reserve the complete width of the two faces, cropping only the lower body.
         var art = _narrow ? area : new Rect(ActualWidth - _artWidth,0,_artWidth,ActualHeight);
         dc.PushClip(new RectangleGeometry(art));

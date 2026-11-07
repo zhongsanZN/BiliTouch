@@ -12,13 +12,58 @@ public partial class ApiClient
 
     public async Task<HashSet<long>> GetDynamicUnreadAuthorsAsync()
     {
-        var unread = new HashSet<long>();
-        var (code, _, data) = await GetJsonAsync("https://api.bilibili.com/x/polymer/web-dynamic/v1/portal", null, referer: "https://t.bilibili.com/");
-        if (code == 0 && data != null && data.Value.TryGetProperty("up_list", out var list) && list.ValueKind == JsonValueKind.Array)
-            foreach (var up in list.EnumerateArray())
-                if (up.TryGetProperty("has_update", out var update) && (update.ValueKind == JsonValueKind.True || update.ToString() == "1"))
-                    unread.Add(GetLongLoose(up, "mid"));
-        return unread;
+        var state = await GetDynamicUnreadStateAsync();
+        return state.ok ? state.authors.Where(p => p.Value).Select(p => p.Key).ToHashSet() : new();
+    }
+
+    /// <summary>Fetch the official UP list, including its overflow pages. Failure is not an empty read state.</summary>
+    public async Task<(bool ok, string? err, Dictionary<long, bool> authors)> GetDynamicUnreadStateAsync()
+    {
+        var authors = new Dictionary<long, bool>();
+        var (code, message, data) = await GetJsonAsync("https://api.bilibili.com/x/polymer/web-dynamic/v1/portal",
+            new() { ["up_list_more"] = "1" }, referer: "https://t.bilibili.com/");
+        if (code != 0 || data == null) return (false, message ?? "动态未读状态加载失败", authors);
+        var root = data.Value;
+        if (root.ValueKind != JsonValueKind.Object) return (false, "动态未读状态响应不完整", authors);
+        if (!root.TryGetProperty("up_list", out var list))
+            return (false, "动态未读状态响应不完整", authors);
+        JsonElement more = default;
+        if (list.ValueKind == JsonValueKind.Array) ReadUsers(list);
+        else if (list.ValueKind == JsonValueKind.Object && list.TryGetProperty("items", out var initial) && initial.ValueKind == JsonValueKind.Array)
+        {
+            // With up_list_more=1 the official response nests items/has_more/offset
+            // inside up_list itself; older responses return a plain up_list array.
+            ReadUsers(initial);
+            more = list;
+        }
+        else return (false, "动态未读状态响应不完整", authors);
+        var cursors = new HashSet<string>();
+        while (more.ValueKind == JsonValueKind.Object && more.TryGetProperty("has_more", out var hasMore) &&
+               (hasMore.ValueKind == JsonValueKind.True || hasMore.ToString() == "1"))
+        {
+            var cursor = GetStr(more, "offset");
+            if (cursor.Length == 0 || !cursors.Add(cursor) || cursors.Count > 256)
+                return (false, "动态未读列表分页不完整，请稍后刷新", authors);
+            var next = await GetJsonAsync("https://api.bilibili.com/x/polymer/web-dynamic/v1/uplist",
+                new() { ["offset"] = cursor, ["platform"] = "web" }, referer: "https://t.bilibili.com/");
+            if (next.code != 0 || next.data == null) return (false, next.msg ?? "动态未读列表翻页失败", authors);
+            more = next.data.Value;
+            if (!more.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+                return (false, "动态未读列表分页响应不完整", authors);
+            ReadUsers(items);
+        }
+        return (true, null, authors);
+
+        void ReadUsers(JsonElement users)
+        {
+            if (users.ValueKind != JsonValueKind.Array) return;
+            foreach (var user in users.EnumerateArray())
+            {
+                var mid = GetLongLoose(user, "mid");
+                if (mid <= 0 || !user.TryGetProperty("has_update", out var update)) continue;
+                authors[mid] = update.ValueKind == JsonValueKind.True || update.ToString() == "1";
+            }
+        }
     }
 
     public async Task<(bool ok, string? err, DynamicItem? item)> GetDynamicDetailAsync(string id)

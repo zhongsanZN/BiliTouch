@@ -48,9 +48,9 @@ internal static class FollowSortTests
         var recent = FollowSorting.Arrange(users, latestTs, followOrder, FollowSortMode.RecentUpdate);
         check(Ids(recent) == "300,100,200,400,500",
             $"最近更新: 抓到的按 PubTs 降序在前, 没抓到的保持关注顺序排后面 → {Ids(recent)}");
-        check(FollowSorting.DefaultMode == FollowSortMode.RecentUpdate,
-            "默认排序模式是「最近更新」(与 AppSettings.FollowSortMode 的默认值 0 一致)");
-        check(FollowSorting.Normalize(7) == FollowSortMode.RecentUpdate && FollowSorting.Normalize(-3) == FollowSortMode.RecentUpdate,
+        check(FollowSorting.DefaultMode == FollowSortMode.UnreadFirst,
+            "默认排序模式是「未读优先」，红点保持在前面的一整组");
+        check(FollowSorting.Normalize(7) == FollowSortMode.UnreadFirst && FollowSorting.Normalize(-3) == FollowSortMode.UnreadFirst,
             "越界的持久化值归一成默认模式(不抛异常)");
         check(FollowSorting.Label(FollowSortMode.RecentUpdate) == "最近更新"
               && FollowSorting.Label(FollowSortMode.UnreadFirst) == "未读优先"
@@ -233,13 +233,14 @@ internal static class FollowSortTests
         {
             vm.FollowSortMode = FollowSortMode.UnreadFirst;
             foreach (var u in vm.Users.ToList()) u.NewCount = 2;
-            // 再来一次「全部标记已读」链路(内部同样是批量改 NewCount + 重排)
+            // 无登录态时，不能把本地清除伪装成服务端已读成功。
             vm.MarkAllReadCommand.Execute(null);
             Pump(120);
         }
         catch (Exception ex) { crash = ex.GetType().Name + ": " + ex.Message; }
         check(crash.Length == 0, $"「未读优先」下批量改红点不会抛异常 → {(crash.Length == 0 ? "OK" : crash)}");
-        check(vm.Users.All(u => u.NewCount == 0), "批量标记之后红点全清");
+        check(vm.Users.All(u => u.NewCount == 2), "未登录标记不会伪造红点清除");
+        foreach (var u in vm.Users.ToArray()) u.NewCount = 0;
 
         // 点开这个 UP(清红点)之后, 它不该继续赖在最前面
         vm.Users.First(u => u.Mid == 200).NewCount = 0;
@@ -290,9 +291,9 @@ internal static class FollowSortTests
         check(vm.UnreadSummary == "2 个 UP 有更新", $"点之前徽标是 2 个 → {vm.UnreadSummary}");
         markButton!.Command.Execute(null);
         Pump(150);
-        check(vm.Users.All(u => u.NewCount == 0), "「全部标记已读」把所有红点清零");
-        check(vm.MarkAllReadText == "已标记", $"点完按钮文案短暂变「已标记」→ {vm.MarkAllReadText}");
-        check(!vm.HasUnreadSummary, "清零后汇总徽标立刻消失");
+        check(vm.Users.Count(u => u.HasNew) == 2, "未登录时点击标记按钮保留原红点");
+        check(vm.MarkAllReadText != "已标记" && vm.Error.Contains("登录"), "没有服务端确认时不显示已标记成功");
+        check(vm.HasUnreadSummary, "同步未成功时保留未读汇总");
 
         // 界面快照留档(与其它页面一致, 存 artifacts); 失败只提示不判失败 ——
         // 这条测的是功能, 截图是给人工看观感的。

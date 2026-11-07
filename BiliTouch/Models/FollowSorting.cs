@@ -39,8 +39,8 @@ public enum FollowSortMode
 /// </summary>
 public static class FollowSorting
 {
-    /// <summary>默认排序模式(与 AppSettings.FollowSortMode 的默认值 0 一致)</summary>
-    public const FollowSortMode DefaultMode = FollowSortMode.RecentUpdate;
+    /// <summary>默认把所有未读 UP 分为最前的一组。</summary>
+    public const FollowSortMode DefaultMode = FollowSortMode.UnreadFirst;
 
     /// <summary>把落盘读回来的 int 归一到合法模式(越界值一律回落到默认, 不抛异常)</summary>
     public static FollowSortMode Normalize(int raw)

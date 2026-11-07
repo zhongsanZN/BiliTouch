@@ -45,6 +45,7 @@ public partial class PlayerWindow
     private long _webAnimationStarted;
     private long _webSurfaceSettledAt;
     private int _webScrollGeneration;
+    private bool _webRestoreScrolling;
     private VideoFrameTransition? _webFrameTransition;
     private bool _webFramePending,_webFrameAnimating;
     private int _webFrameGeneration;
@@ -72,8 +73,7 @@ public partial class PlayerWindow
         _webHeaderScroll = new ScrollViewer { Content = _webHeaderStack, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         WebHeaderHost.Content = _webHeaderScroll;
         WebMiniTime.SetBinding(TextBlock.TextProperty, new Binding(nameof(TextBlock.Text)) { Source = TimeText });
-        WebMiniPlayGlyph.SetBinding(System.Windows.Shapes.Path.DataProperty, new Binding("Content.Data") { Source = BtnPlay });
-        SmoothScroll.SetEnabled(WebLeftScroll, true);
+        WebMiniPlayGlyph.SetBinding(SkinActionIcon.DataProperty, new Binding("Content.Data") { Source = BtnPlay });
         // 过渡遮罩的变换挂在它的内容上, 而不是它自己: 它自己要被 VideoAreaRoot 的布局约束住,
         // 挂 Transform 上去会把它从布局里"抬起来", 反而失去裁剪边界。
         if (DockTransitionCover.Child is UIElement coverChild && coverChild is FrameworkElement coverElement)
@@ -201,10 +201,15 @@ public partial class PlayerWindow
         WebCommentsScaleRoot.MinHeight = Math.Max(120, WebLeftPane.ActualHeight / scale);
         var dockHeight = Math.Max(0, RightLayoutGrid.ActualWidth - 40) * 9 / 16;
         WebHeaderHost.MaxHeight = Math.Max(80, Math.Min(RightLayoutGrid.ActualHeight * 0.55, RightLayoutGrid.ActualHeight - dockHeight - 44));
-        // 越过阈值就**完成**停靠: 松手后绝不能把画面留在两栏中间。
-        var threshold = _webAnimationTo >= 0.5 ? Math.Min(48, height * 0.12) : Math.Min(120, height * 0.3);
-        SetWebDockTarget(WebLeftScroll.VerticalOffset > threshold ? 1 : 0);
+        UpdateDockForOffset(height);
         if (!_webRendering && !_webFramePending && !_webFrameAnimating) ApplyWebVideoBounds();
+    }
+
+    private void UpdateDockForOffset(double height)
+    {
+        var threshold = _webAnimationTo >= .5 ? Math.Min(48, height * .12) : Math.Min(120, height * .3);
+        var target = WebLeftScroll.VerticalOffset > threshold ? 1 : 0;
+        if (target != _webAnimationTo) SetWebDockTarget(target);
     }
 
     private double InlineWebVideoHeight(double width) => Math.Min(width * 9 / 16, Math.Max(1, WebLeftPane.ActualHeight));
@@ -212,7 +217,10 @@ public partial class PlayerWindow
     private void OnWebLeftScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (!ReferenceEquals(e.OriginalSource, WebLeftScroll) || !_webLayoutMounted) return;
-        if (e.VerticalChange != 0 || e.ViewportWidthChange != 0) UpdateWebMeasurements();
+        if (e.ViewportWidthChange != 0 || e.ViewportHeightChange != 0)
+            UpdateWebMeasurements();
+        else if (e.VerticalChange != 0 && WebVideoPlaceholder.Height > 0)
+            UpdateDockForOffset(WebVideoPlaceholder.Height);
     }
 
     /// <summary>
@@ -233,6 +241,7 @@ public partial class PlayerWindow
         _webSurfaceSettledAt = 0;
         DockTransitionCover.Visibility = Visibility.Visible;
         if (!_webRendering) { _webRendering = true; CompositionTarget.Rendering += OnWebVideoFrame; }
+        UpdateAlternateVideoControls();
     }
 
     /// <summary>
@@ -352,6 +361,7 @@ public partial class PlayerWindow
     private async Task TryWebFrameTransitionAsync()
     {
         _webFramePending=true;var generation=++_webFrameGeneration;
+        UpdateAlternateVideoControls();
         try{
             var frame=await VideoFrameTransition.CaptureAsync(_mp);
             if(generation!=_webFrameGeneration || _closing || !_webLayoutMounted)return;
@@ -365,7 +375,7 @@ public partial class PlayerWindow
                 ()=>{if(generation!=_webFrameGeneration || _closing)return;_webDockProgress=target;ApplyWebVideoBounds();VideoView.Visibility=Visibility.Visible;VideoSurface.Background=Brushes.Black;StartVideoBackdropFix();});
             if(generation==_webFrameGeneration && !_closing){_webFrameAnimating=false;_webFrameTransition=null;if(Math.Abs(_webAnimationTo-_webDockProgress)>.001)Dispatcher.BeginInvoke(new Action(()=>{if(!_closing && _webLayoutMounted)SetWebDockTarget(_webAnimationTo);}));}
         }catch{if(!_closing && generation==_webFrameGeneration)StartLegacyWebDockTarget(_webAnimationTo);}
-        finally{if(generation==_webFrameGeneration){_webFramePending=false;_webFrameAnimating=false;if(!_closing){VideoView.Visibility=Visibility.Visible;VideoSurface.Background=Brushes.Black;}}}
+        finally{if(generation==_webFrameGeneration){_webFramePending=false;_webFrameAnimating=false;if(!_closing){VideoView.Visibility=Visibility.Visible;VideoSurface.Background=Brushes.Black;UpdateAlternateVideoControls();}}}
     }
     private void StopWebVideoAnimation()
     {
@@ -377,14 +387,18 @@ public partial class PlayerWindow
         if (_webLayoutMounted && !_closing) ApplyWebVideoBounds();
         if (BrandMark != null) { BrandMark.Opacity = 1; BrandMark.LayoutTransform = Transform.Identity; }
         if (DockTransitionCover != null) DockTransitionCover.Opacity = 1;
+        UpdateAlternateVideoControls();
     }
 
     private void UpdateAlternateVideoControls()
     {
         if (!_webInitialized || ControlBar == null || WebMiniControls == null) return;
+        // Both bars belong to the stationary native overlay. Hide them before snapshot
+        // capture/motion starts, and keep them hidden until the native surface settles.
+        var moving = _webLayoutMounted && (_webFramePending || _webFrameAnimating || _webRendering);
         var compact = _webLayoutMounted && _webDockProgress > 0.1 && VideoSurface.Width < 560;
-        ControlBar.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
-        WebMiniControls.Visibility = compact && !_controlsHidden ? Visibility.Visible : Visibility.Collapsed;
+        ControlBar.Visibility = !moving && !compact ? Visibility.Visible : Visibility.Collapsed;
+        WebMiniControls.Visibility = !moving && compact && !_controlsHidden ? Visibility.Visible : Visibility.Collapsed;
         if (WebCommentsHeading != null) WebCommentsHeading.Text = IsCommentDetailOpen ? "评论详情" : "评论";
     }
 
@@ -398,6 +412,8 @@ public partial class PlayerWindow
 
     private void StopWebScrollAnimation()
     {
+        if (!_webRestoreScrolling) return;
+        _webRestoreScrolling = false;
         _webScrollGeneration++;
         var offset = WebLeftScroll.VerticalOffset;
         BeginAnimation(WebScrollOffsetProperty, null); SetValue(WebScrollOffsetProperty, offset);
@@ -407,8 +423,9 @@ public partial class PlayerWindow
     private void OnWebRestoreVideo(object sender, RoutedEventArgs e)
     {
         if (!_webLayoutMounted) return;
-        SmoothScroll.Stop(WebLeftScroll); StopWebScrollAnimation();
+        TrackpadScroll.Cancel(WebLeftScroll); StopWebScrollAnimation();
         SetValue(WebScrollOffsetProperty, WebLeftScroll.VerticalOffset);
+        _webRestoreScrolling = true;
         var generation = _webScrollGeneration;
         var animation = new DoubleAnimation(WebLeftScroll.VerticalOffset, 0, TimeSpan.FromMilliseconds(300))
         { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, FillBehavior = FillBehavior.Stop };

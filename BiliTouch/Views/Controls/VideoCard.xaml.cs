@@ -87,7 +87,7 @@ public partial class VideoCard : UserControl
     private void RebuildExtraMenuItems(System.Collections.ObjectModel.ObservableCollection<BiliTouch.Models.CardMenuItem>? items)
     {
         var menu = ContextMenu;
-        if (menu == null) return;
+        if (menu == null || !menu.IsOpen || _extraSeparator == null) return;
 
         if (_extraSource != null)
             _extraSource.CollectionChanged -= OnExtraSourceChanged;
@@ -100,11 +100,11 @@ public partial class VideoCard : UserControl
         if (items == null || items.Count == 0)
         {
             // 没有额外项时藏起分隔线, 否则菜单底部会多出一条悬空的分隔
-            ExtraSeparator.Visibility = Visibility.Collapsed;
+            _extraSeparator.Visibility = Visibility.Collapsed;
             return;
         }
 
-        ExtraSeparator.Visibility = Visibility.Visible;
+        _extraSeparator.Visibility = Visibility.Visible;
         foreach (var def in items)
         {
             var shell = new MenuItem();
@@ -125,6 +125,27 @@ public partial class VideoCard : UserControl
 
         // 定义集合运行时增删也要跟着刷新 —— 增删频率低, 整组重建最简单可靠
         items.CollectionChanged += OnExtraSourceChanged;
+    }
+
+    private Separator? _extraSeparator;
+
+    private void OnMenuOpened(object sender, RoutedEventArgs e)
+    {
+        var menu = (ContextMenu)sender;
+        menu.DataContext = DataContext;
+        if (_extraSeparator == null)
+        {
+            var entries = (FrameworkElement[])Resources["VideoMenuEntries"];
+            foreach (var entry in entries) menu.Items.Add(entry);
+            _extraSeparator = (Separator)entries[^1];
+        }
+        RebuildExtraMenuItems(ExtraMenuItems);
+    }
+
+    private void OnMenuClosed(object sender, RoutedEventArgs e)
+    {
+        if (_extraSource != null) _extraSource.CollectionChanged -= OnExtraSourceChanged;
+        _extraSource = null;
     }
 
     private void OnExtraSourceChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)

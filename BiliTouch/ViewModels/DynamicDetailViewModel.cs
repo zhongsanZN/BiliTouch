@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using BiliTouch.Models;
 
+using BiliTouch.Services;
+
 namespace BiliTouch.ViewModels;
 
 public sealed class DynamicDetailViewModel : ObservableObject
@@ -122,7 +124,7 @@ public sealed class DynamicDetailViewModel : ObservableObject
         {
             var liked=!c.IsLiked;
             var r=await Svc.Api.CommentLikeAsync(oid,c.Rpid,liked,Item.CommentType);
-            if(r.ok) {c.IsLiked=liked;c.LikeCount=Math.Max(0,c.LikeCount+(liked?1:-1));}
+            if(r.ok) {c.IsLiked=liked;c.LikeCount=Math.Max(0,c.LikeCount+(liked?1:-1));if(liked)ThemeAudio.PlayLike();}
             else Error=r.err ?? "点赞失败";
         }
         catch(Exception ex) {Error="点赞失败："+ex.Message;}

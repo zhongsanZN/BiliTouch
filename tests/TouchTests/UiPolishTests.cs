@@ -21,7 +21,7 @@ using BiliTouch.Views.Pages;
 internal static class UiPolishTests
 {
     private static readonly BindingFlags Private=BindingFlags.Instance|BindingFlags.NonPublic;
-    public static void Run(Action<bool,string> check,string artifacts)
+    public static void Run(Action<bool,string> check,string artifacts,bool dynamicOnly=false)
     {
         var httpField=typeof(ApiClient).GetField("_http",Private)!;var oldHttp=httpField.GetValue(Svc.Api);
         var handler=new CommentsHttp();using var http=new HttpClient(handler);httpField.SetValue(Svc.Api,http);
@@ -65,7 +65,7 @@ internal static class UiPolishTests
                 var freshPoint=fresh.TranslatePoint(new Point(),follow);var publishPoint=publish.TranslatePoint(new Point(),follow);
                 check(fresh.IsVisible && freshPoint.X+fresh.ActualWidth<=publishPoint.X && Math.Abs(freshPoint.Y-publishPoint.Y)<2,"new dynamics sit directly left of publish on the same header row");
                 check(fresh.ActualHeight>=44 && publish.ActualHeight>=44,"compact dynamic header keeps touch targets at least 44 DIP high");
-                var board=(Border)follow.FindName("FollowLiveBoard");var contacts=(ScrollViewer)follow.FindName("ContactsScroll");
+                var board=(Border)follow.FindName("FollowLiveBoard");var contacts=(FrameworkElement)follow.FindName("ContactsScroll");
                 check(Math.Abs(board.TranslatePoint(new Point(),follow).Y-contacts.TranslatePoint(new Point(),follow).Y)<2,"live board moves up to align with the contact list without a duplicate title row");
                 var feed=(ListBox)follow.FindName("DynamicList");var feedTop=feed.TranslatePoint(new Point(),follow).Y;
                 Save(main,System.IO.Path.Combine(artifacts,"follow-header-compact.png"));
@@ -102,8 +102,9 @@ internal static class UiPolishTests
             check(!Descendants<Button>(card).Any(b=>b.ToolTip?.ToString()=="复制动态链接"),"dynamic action row removes the copy-link icon");
             var share=(Geometry)Application.Current.FindResource("ShareIconGeometry");var like=(Geometry)Application.Current.FindResource("LikeIconGeometry");
             check(Descendants<System.Windows.Shapes.Path>(card).Any(p=>p.Data?.ToString()==share.ToString()),"dynamic repost uses the shared player share geometry");
-            check(Descendants<System.Windows.Shapes.Path>(card).Any(p=>p.Data?.ToString()==like.ToString() && p.Width==20),"dynamic like uses the player geometry at the same size");
+            check(Descendants<BiliTouch.Helpers.SkinActionIcon>(card).Any(p=>p.Kind=="Like" && p.Data?.ToString()==like.ToString() && p.Width==20),"dynamic like uses the player geometry at the same size");
             host.Close();
+            if(dynamicOnly)return;
 
             var player=new PlayerWindow();player.Show();Pump(250);
             check(player.Icon==AppBranding.WindowIcon,"player taskbar icon uses the same embedded brand image");

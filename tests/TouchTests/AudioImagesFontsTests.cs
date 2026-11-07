@@ -103,6 +103,34 @@ internal static class AudioImagesFontsTests
    Call(player,"ToggleFullscreen");Pump(300);Call(player,"ToggleFullscreen");Pump(450);
    check(Field<bool>(player,"_webLayoutMounted") && gallery.IsVisible,"fullscreen restores the inline comment image after exit");
    Call(player,"CloseCommentPicture");Pump(100);check(Field<InlineImageGallery?>(player,"_commentGallery")==null,"closing a gallery releases the image and its comment slot");
+   foreach (var (w,h) in new[]{(180,96),(180,2160)})
+   {
+    string sourceUrl=$"https://example.invalid/web-expand-{w}-{h}.png";
+    var bitmap=BitmapSource.Create(w,h,96,96,PixelFormats.Gray8,null,new byte[w*h],w);
+    var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(bitmap));
+    using(var cache=File.Create(Path.Combine(AppPaths.CacheDir,Hashing.Md5Hex(sourceUrl)+".jpg")))png.Save(cache);
+    var pic=new CommentPicture{Url=sourceUrl,Width=w,Height=h};
+    var row=new CommentItem{Rpid=h,UserName="图片尺寸测试",Content="多图评论"};row.Pictures.Add(picture);row.Pictures.Add(pic);
+    Part<ItemsControl>(player,"CommentList").ItemsSource=new[]{row};Pump(150);
+    var thumb=Descendants<Border>(Part<StackPanel>(player,"CommentsPanel")).First(b=>ReferenceEquals(b.DataContext,pic));
+    thumb.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice,Environment.TickCount,MouseButton.Left){RoutedEvent=UIElement.MouseLeftButtonUpEvent});
+    Pump(260);
+    var opened=Field<InlineImageGallery>(player,"_commentGallery");
+    var displayed=Descendants<Image>(opened).Single();
+    var col=Part<ScrollViewer>(player,"WebLeftScroll");
+    Console.WriteLine($"WEB image {w}x{h} column={col.ViewportWidth:F0} actual={displayed.ActualWidth:F0}x{displayed.ActualHeight:F0}");
+    var shown=displayed.TransformToAncestor(col).TransformBounds(new Rect(0,0,displayed.ActualWidth,displayed.ActualHeight));
+    Console.WriteLine($"WEB image {w}x{h} offset={col.VerticalOffset:F0} viewport={col.ViewportHeight:F0} boundsTop={shown.Top:F0} boundsBottom={shown.Bottom:F0}");
+    check(shown.Top<col.ViewportHeight && shown.Bottom>0,$"clicked web image {w}x{h} is scrolled into view after expanding");
+    check(opened.CurrentUrl==sourceUrl && displayed.ActualWidth*UiScale.Factor>col.ViewportWidth*.75 && Math.Abs(displayed.ActualHeight/displayed.ActualWidth-(double)h/w)<.05,
+        $"clicked web image {w}x{h} fills the comment column at its original aspect ratio");
+    if (h > 1000) Save(player,Path.Combine(artifacts,"web-comment-tall-image.png"));
+    Call(opened,"Move",-1);Pump(100);
+    check(opened.CurrentUrl==url && ReferenceEquals(opened,Field<InlineImageGallery>(player,"_commentGallery")),"multi-image navigation keeps the mounted viewer");
+    Call(player,"CloseCommentPicture");Pump(60);check(thumb.IsVisible,"closing the web gallery restores its original thumbnail");
+   }
+   Part<ItemsControl>(player,"CommentList").ItemsSource=new[]{comment};Pump(100);
+   thumbnail=Descendants<Border>(Part<StackPanel>(player,"CommentsPanel")).First(b=>ReferenceEquals(b.DataContext,picture));
    settings.IsSplitPlayerLayout=true;Pump(350);Call(player,"OpenCommentPicture",thumbnail,picture);Pump(200);Call(player,"CloseCommentPicture");
    check(double.IsNaN(surface.Height) && surface.VerticalAlignment==VerticalAlignment.Stretch,"closing the original-layout image restores normal video sizing");
    using var media=new Media(VlcCore.Get(),Path.GetFullPath("artifacts/hires-silent.m4a"),FromType.FromPath);
@@ -120,7 +148,7 @@ internal static class AudioImagesFontsTests
    player.GetType().GetField("_currentCid",Hidden)!.SetValue(player,42L);player.GetType().GetField("_currentBvid",Hidden)!.SetValue(player,"BVfixture");
    player.GetType().GetField("_volumeCache",Hidden)!.SetValue(player,0);player.GetType().GetField("_isLocalPlayback",Hidden)!.SetValue(player,false);
    handler.VideoOverride=Path.GetFullPath("artifacts/touch-sample-silent.mp4");handler.AudioOverride=new Uri(Path.GetFullPath("artifacts/hires-silent.m4a")).AbsoluteUri;
-   var switching=(Task)player.GetType().GetMethod("SwitchAudioQualityAsync",Hidden)!.Invoke(player,new object[]{AudioQuality.HiRes})!;Wait(switching);Pump(900);
+   var switching=(Task)player.GetType().GetMethod("SwitchAudioQualityAsync",Hidden)!.Invoke(player,new object[]{AudioQuality.HiRes,true})!;Wait(switching);Pump(900);
    check(Field<string>(player,"_lastAudioUrl")==handler.AudioOverride && Field<string>(player,"_listenAudioUrl")==handler.AudioOverride,"switching audio updates replay and listen-mode sources to the actual FLAC track");
    check(Field<AudioQuality>(player,"_actualAudio")==AudioQuality.HiRes && mp.IsPlaying && mp.AudioTrackCount>0,"the real video player runs its selected FLAC slave track while muted");
   }
@@ -192,7 +220,7 @@ internal static class AudioImagesFontsTests
  static IEnumerable<T> Descendants<T>(DependencyObject root) where T:DependencyObject
  {for(int i=0;i<VisualTreeHelper.GetChildrenCount(root);i++){var child=VisualTreeHelper.GetChild(root,i);if(child is T match)yield return match;foreach(var item in Descendants<T>(child))yield return item;}}
  static void Save(FrameworkElement root,string path){root.UpdateLayout();var bmp=new RenderTargetBitmap((int)root.ActualWidth,(int)root.ActualHeight,96,96,PixelFormats.Pbgra32);bmp.Render(root);var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(bmp));using var file=File.Create(path);png.Save(file);}
- sealed class AudioFixture:HttpMessageHandler
+ internal sealed class AudioFixture:HttpMessageHandler
  {
   public bool Flac=true,Dolby=true,FlacArray,DolbyObject,SnakeCase;public int MuxedRequests;public string? VideoOverride,AudioOverride;
   protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token)

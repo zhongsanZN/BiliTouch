@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Windows.Data;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using BiliTouch.Helpers;
@@ -9,18 +11,7 @@ using BiliTouch.Services;
 
 namespace BiliTouch.ViewModels;
 
-/// <summary>
-/// 「动态」页 ViewModel。
-///
-/// 布局是左右两栏(参考 B 站客户端动态页):
-///   · 左栏 = 「全部动态」入口 + 关注的 UP 主列表(有未读时头像左侧显示红点);
-///   · 右栏 = 当前选中对象的内容, 两档排版由 <see cref="UseCardWall"/> 切:
-///       - 全部动态: 关注的所有 UP 近期的**视频投稿**(动态时间线接口, 游标分页);
-///       - 具体某 UP: 该 UP 的投稿视频(空间投稿接口, 页码分页)。
-/// 动态里非视频的内容(图文/纯文字/投票)没有可播对象, 不进这个列表。
-///
-/// 未读红点的判断在 <see cref="UpdateUnreadBadges"/> —— 本地比对, 不额外请求接口。
-/// </summary>
+/// <summary>动态页：按全部关注或单个 UP 浏览综合时间线与纯视频。</summary>
 public class FollowViewModel : ObservableObject
 {
     private bool _loading;
@@ -38,39 +29,31 @@ public class FollowViewModel : ObservableObject
     /// <summary>右栏内容(视频卡片)。切选择时整体换血。</summary>
     public ObservableCollection<VideoItem> FeedItems { get; } = new();
 
-    /// <summary>
-    /// 「全部动态」的混合流(2026-11-04)。
-    ///
-    /// ★ 为什么与 FeedItems 并存而不是替换它: 单 UP 视图(点左边某个 UP)拿的是
-    ///   "TA 的投稿视频"接口, 那一路只有视频、没有动态混合流的概念。
-    ///   两个集合各管一条路, 页面按 SelectedUp 是否为 null 切显隐。
-    /// ★ 混合流里**视频动态也在里面**(DynamicItem.Video), 不再单独进 FeedItems ——
-    ///   否则同一条会显示两次。
-    /// </summary>
+    /// <summary>综合时间线。两种模式共享数据和分页游标，切换不重新请求。</summary>
     public ObservableCollection<DynamicItem> Dynamics { get; } = new();
 
-    /// <summary>
-    /// 当前右栏显示的是混合流(全部动态)还是单 UP 的视频列表。
-    /// ★★★ 2026-11-04 修"动态页还是一堆视频卡": 原来 FollowPage 里 FeedItems 那两个
-    ///   ItemsControl 的 Visibility 只绑了 UseCardWall —— 也就是说**无论是不是"全部动态"
-    ///   都在显示**。而全部动态模式走的是 Dynamics(混合流), 于是两套列表叠在一起:
-    ///   上面是混合流, 下面还挂着一堆视频卡(FeedItems 可能残留上一次单 UP 的内容)。
-    ///   现在拆成三个互斥的可见性, 见下面两个属性。
-    /// </summary>
-    public bool ShowDynamics => SelectedUp == null;
+    /// <summary>独立视图，避免纯视频筛选影响综合时间线的默认视图。</summary>
+    public ICollectionView VideoFeed { get; }
 
-    /// <summary>
-    /// 混合流列表的可见性(2026-11-04): **两种模式下都显示** ——
-    /// 因为单 UP 视图现在也走 feed/space 动态流(Dynamics), 不再是投稿视频。
-    /// 唯一例外是用户把档位切到"卡片墙"(那时用 FeedItems 的视频墙)。
-    /// </summary>
-    public bool ShowDynamicFeed => !UseCardWall;
-
-    /// <summary>单 UP 视图 + 动态卡档位(FeedItems, 单列)</summary>
-    public bool ShowUpFeed => SelectedUp != null && !UseCardWall;
-
-    /// <summary>单 UP 视图 + 卡片墙档位(FeedItems, 网格)</summary>
-    public bool ShowUpFeedCardWall => SelectedUp != null && UseCardWall;
+    private bool _videoOnly;
+    public bool VideoOnly
+    {
+        get => _videoOnly;
+        private set
+        {
+            if (!SetProperty(ref _videoOnly, value)) return;
+            OnPropertyChanged(nameof(ShowDynamicFeed));
+            OnPropertyChanged(nameof(ShowVideoFeed));
+            OnPropertyChanged(nameof(FeedTagAll));
+            OnPropertyChanged(nameof(FeedTagVideo));
+        }
+    }
+    public bool ShowDynamicFeed => !VideoOnly;
+    public bool ShowVideoFeed => VideoOnly;
+    public string FeedTagAll => VideoOnly ? "off" : "on";
+    public string FeedTagVideo => VideoOnly ? "on" : "off";
+    public ICommand ShowAllFeedCommand { get; }
+    public ICommand ShowVideoFeedCommand { get; }
 
     private FollowUser? _selectedUp;
 
@@ -90,11 +73,7 @@ public class FollowViewModel : ObservableObject
             if (value != null) value.IsSelected = true;
             OnPropertyChanged(nameof(IsAllSelected));
             OnPropertyChanged(nameof(SelectionTitle));
-            // 右栏三套列表按它切显隐(混合流 / 单UP动态卡 / 单UP卡片墙)
-            OnPropertyChanged(nameof(ShowDynamics));
-            OnPropertyChanged(nameof(ShowDynamicFeed));
-            OnPropertyChanged(nameof(ShowUpFeed));
-            OnPropertyChanged(nameof(ShowUpFeedCardWall));
+
         }
     }
 
@@ -248,7 +227,7 @@ public class FollowViewModel : ObservableObject
         }
     }
 
-    private FollowSortMode _followSortMode = FollowSortMode.RecentUpdate;
+    private FollowSortMode _followSortMode = FollowSorting.DefaultMode;
 
     /// <summary>
     /// chip 的选中态: 只有被选中的那枚 Tag="on"(见 FollowPage 的 FeedLayoutChipStyle DataTrigger)。
@@ -328,10 +307,11 @@ public class FollowViewModel : ObservableObject
     /// <summary>刷新命令之前的部分(构造函数里挂 Command 用)</summary>
     private void InitSortCommands()
     {
+        _followSortMode = Svc.Settings.FollowSortMode;
         SortRecentCommand = new RelayCommand(() => FollowSortMode = FollowSortMode.RecentUpdate);
         SortUnreadCommand = new RelayCommand(() => FollowSortMode = FollowSortMode.UnreadFirst);
         SortOrderCommand = new RelayCommand(() => FollowSortMode = FollowSortMode.FollowOrder);
-        MarkAllReadCommand = new RelayCommand(MarkAllRead);
+        MarkAllReadCommand = new AsyncRelayCommand(MarkAllReadAsync);
     }
 
     /// <summary>
@@ -340,11 +320,13 @@ public class FollowViewModel : ObservableObject
     ///   · Move 产生的 CollectionChanged 是原生 Move 动作, ItemsControl 只挪容器。
     /// 已经是目标顺序时**一个动作都不发**(逐个比对后短路), 所以可以放心频繁调用。
     /// ★ internal 而不是 private: 离线测试(FollowSortTests)要直接驱动这条链路;
-    ///   生产侧的入口只有 UpdateUnreadBadges / ClearUnreadBadge / MarkAllRead / 切模式。
+    ///   生产侧的入口只有 UpdateUnreadBadges / RefreshServerUnreadAsync / 切模式。
     /// </summary>
     internal void SortUsers()
     {
-        if (Users.Count < 2) return;
+        // Reading changes badges immediately, but the visible contact list stays put
+        // until an explicit page refresh. In-flight polls/pages obey the same gate.
+        if (_keepContactOrder || Users.Count < 2) return;
         var ordered = FollowSorting.Arrange(Users, _latestTs, _followOrder, _followSortMode);
         for (var i = 0; i < ordered.Count; i++)
         {
@@ -379,10 +361,13 @@ public class FollowViewModel : ObservableObject
     /// 清空排序/红点用的本地缓存(切换账号时调用)。
     /// ★ 不清的表现: 换个人登录后, 新账号的关注列表会沿用上一个人的关注序号,
     ///   左栏顺序看起来完全是乱的, 而"关注顺序"本来应该是可预期的。
-    /// ★ 不碰 DynamicSeenStore: 那是**按 mid** 存的基准, 本身不会串号。
+    /// 服务端未读快照和请求代次也必须随账号一起重置。
     /// </summary>
     private void ResetSortCaches()
     {
+        _keepContactOrder = false;
+        ++_unreadRequestVersion;
+        _serverUnread.Clear();
         _followOrder.Clear();
         _latestTs.Clear();
         _latestDynamicId.Clear();
@@ -474,6 +459,7 @@ public class FollowViewModel : ObservableObject
     ///   定时轮询路径里 —— 表现就是"过两分钟动态页崩一次"。
     /// </summary>
     private bool _suppressSort;
+    private bool _keepContactOrder;
 
     /// <summary>批量改 NewCount 用: 期间不自动排序, 退出时统一重排一次</summary>
     private void WithoutAutoSort(Action body)
@@ -486,38 +472,39 @@ public class FollowViewModel : ObservableObject
         SortUsers();
     }
 
-    /// <summary>
-    /// 「全部标记已读」: 把当前所有 UP 的已读基准推到**各自最新一条**。
-    ///
-    /// ★ 数据来源优先级: 当前 Dynamics 里该 UP 的最新一条(最准) → 上次见过的 id(_latestDynamicId)。
-    ///   两条都拿不到说明这个 UP 从来没出现在任何一页动态里 —— 那它也不可能有红点,
-    ///   直接按 0 处理不会漏。
-    /// ★ 这里只动"基准", 不动已加载的动态列表: 用户可以继续往下翻, 不会被弹回顶部。
-    /// ★ 只在 UI 线程调(DynamicSeenStore 的静态字典没有锁, 见该类注释)。
-    /// </summary>
-    private void MarkAllRead()
+    /// <summary>Use the official UP-selection requests, then confirm read state from the server.</summary>
+    private async Task MarkAllReadAsync()
     {
-        if (Users.Count == 0) return;
-        var newestInView = FollowSorting.NewestByAuthor(Dynamics);
-        // ★ 同样包在 WithoutAutoSort 里: 下面这个 foreach 正在遍历 Users,
-        //   而「未读优先」模式下改 NewCount 会自动 SortUsers()(Move 集合)——
-        //   遍历中改集合会抛 InvalidOperationException。
-        WithoutAutoSort(() =>
+        if (!Svc.Session.HasLogin) { Error = "请先登录后同步已读状态"; return; }
+        var account = Svc.Session.Current.DedeUserID;
+        var targets = Users.Where(u => u.HasNew).Select(u => u.Mid).Distinct().ToArray();
+        if (targets.Length == 0) return;
+        _keepContactOrder = true;
+        ++_markAllReadVersion;
+        MarkAllReadFlash = false;
+        MarkAllReadText = "正在同步…";
+        Error = "";
+        ++_unreadRequestVersion; // Discard a poll that started before this read action.
+        var failed = false;
+        var confirmed = false;
+        try
         {
-            foreach (var u in Users)
+            foreach (var mid in targets)
             {
-                if (u.Mid <= 0) continue;
-                var id = newestInView.TryGetValue(u.Mid, out var live) && !string.IsNullOrEmpty(live.Id)
-                    ? live.Id
-                    : (_latestDynamicId.TryGetValue(u.Mid, out var last) ? last : null);
-                if (!string.IsNullOrEmpty(id)) DynamicSeenStore.Set(u.Mid, id!);
-                u.NewCount = 0;
+                if (account != Svc.Session.Current.DedeUserID) return;
+                var result = await Svc.Api.GetDynamicFeedFullAsync(hostMid: mid);
+                if (!result.ok) failed = true;
             }
-        });
-        DynamicSeenStore.Flush();
-        RaiseUnreadSummary();
-        SortUsers();
-        FlashMarkAllReadDone();
+            if (account != Svc.Session.Current.DedeUserID) return;
+            var synced = await RefreshServerUnreadAsync();
+            confirmed = !failed && synced && targets.All(mid => !_serverUnread.GetValueOrDefault(mid));
+            if (confirmed) FlashMarkAllReadDone();
+            else Error = "部分动态已读状态尚未同步到 B 站，请稍后刷新或重试";
+        }
+        finally
+        {
+            if (!confirmed) MarkAllReadText = "全部标记已读";
+        }
     }
 
     /// <summary>按钮文案短暂变"已标记"再恢复 —— 给一次明确的"点到了"反馈</summary>
@@ -565,6 +552,12 @@ public class FollowViewModel : ObservableObject
 
     public FollowViewModel()
     {
+        VideoFeed = new ListCollectionView(Dynamics);
+        FilterService.Instance.Attach(VideoFeed,
+            item => item is DynamicItem { Kind: DynamicKind.Video, Video: { } video }
+                && (video.Bvid.Length > 0 || video.Aid > 0));
+        ShowAllFeedCommand = new RelayCommand(() => VideoOnly = false);
+        ShowVideoFeedCommand = new RelayCommand(() => VideoOnly = true);
         InitSortCommands();
         // 左栏集合变化 → 维护 NewCount 订阅(汇总徽标/未读优先排序据此自动跟上, 见 OnUsersChanged)
         Users.CollectionChanged += OnUsersChanged;
@@ -634,6 +627,7 @@ public class FollowViewModel : ObservableObject
     public Task SelectUpAsync(FollowUser u)
     {
         if (u == null || u.Mid <= 0) return Task.CompletedTask;
+        _keepContactOrder = true;
         SelectedUp = u;
         return LoadSelectionAsync(reset: true);
     }
@@ -677,6 +671,7 @@ public class FollowViewModel : ObservableObject
         var forUp = SelectedUp;
         try
         {
+            await RefreshServerUnreadAsync();
             // Always scan the global feed, even while an individual UP is selected.
             var result = await Svc.Api.GetDynamicFeedFullAsync();
             if (generation != _selectionGeneration || !result.ok || result.items == null) return;
@@ -696,11 +691,6 @@ public class FollowViewModel : ObservableObject
             }
             UpdateUnreadBadges(all);
             _lastUnreadScanTs = all.Count > 0 ? all.Max(d => d.PubTs) : _lastUnreadScanTs;
-            var portal = await Svc.Api.GetDynamicUnreadAuthorsAsync();
-            if (generation != _selectionGeneration) return;
-            foreach (var user in Users)
-                if (user.Mid != SelectedUp?.Mid && portal.Contains(user.Mid) && !DynamicSeenStore.TryGet(user.Mid, out _)) user.NewCount = Math.Max(1, user.NewCount);
-            RaiseUnreadSummary();
             var fresh = all.TakeWhile(d => !_seenDynamicIds.Contains(d.Id))
                 .Where(d => d.Id.Length > 0).ToList();
             _pendingNewDynamics = fresh;
@@ -720,6 +710,7 @@ public class FollowViewModel : ObservableObject
     private int _refreshGeneration;
     public async Task RefreshAsync()
     {
+        _keepContactOrder = false;
         var refreshGeneration = ++_refreshGeneration;
         ++_selectionGeneration;
         Loading = true;
@@ -781,6 +772,7 @@ public class FollowViewModel : ObservableObject
                         u.IsSelected = u.Mid == SelectedUp?.Mid;
                         Users.Add(u);
                     }
+                    if (SelectedUp != null) SelectedUp = Users.FirstOrDefault(u => u.Mid == SelectedUp.Mid);
                     _batchUsers = false;
                     RaiseUnreadSummary();
                     _hasMoreUsers = false;
@@ -870,13 +862,9 @@ public class FollowViewModel : ObservableObject
                     OnPropertyChanged(nameof(Count));
                     OnPropertyChanged(nameof(HasFollowUsers));
 
-                    // ★ 左栏翻出新 UP 后要立刻按已缓存的动态流补算一次红点。
-                    //   以前只 Add 用户、不跑 UpdateUnreadBadges —— 关注了 30+ 人的账号
-                    //   往下滚出来的 UP 永远 NewCount=0, 明明有新投稿也不亮红点。
-                    //   只在「全部动态」下算: 单 UP 视图的 Dynamics 只有该 UP 的投稿,
-                    //   拿来给别的 UP 判新旧会把基准写错。
-                    if (SelectedUp == null) UpdateUnreadBadges();
-                    else OnPropertyChanged(nameof(HasFollowUsers));
+                    // Newly loaded rows also inherit the global server snapshot
+                    // while the right-hand pane shows an individual author.
+                    UpdateUnreadBadges();
                 }
             });
         }
@@ -917,7 +905,7 @@ public class FollowViewModel : ObservableObject
         {
             var result = forUp == null
                 ? await Svc.Api.GetDynamicFeedFullAsync(offset)
-                : await Svc.Api.GetSpaceDynamicsAsync(forUp.Mid, offset);
+                : await Svc.Api.GetDynamicFeedFullAsync(offset, hostMid: forUp.Mid);
             if (generation != _selectionGeneration) return;
             if (!result.ok || result.items == null)
             {
@@ -936,8 +924,14 @@ public class FollowViewModel : ObservableObject
             }
             if (Dynamics.Count == 0 && !HasMore)
                 Error = forUp == null ? "关注的 UP 最近没有动态" : "该 UP 最近没有动态";
-            if (forUp == null) UpdateUnreadBadges();
-            else ClearUnreadBadge(forUp);
+            UpdateUnreadBadges();
+            if (reset)
+            {
+                // This is the same UP-selection request as the official dynamic home.
+                // Re-read the server state; do not call a local clear "synced".
+                if (forUp != null) ++_unreadRequestVersion;
+                await RefreshServerUnreadAsync();
+            }
 
         }
         catch (Exception ex)
@@ -959,14 +953,7 @@ public class FollowViewModel : ObservableObject
 
     private bool _useCardWall = Svc.Settings.FollowCardWall;
 
-    /// <summary>
-    /// 右栏排版: true = 卡片墙(多列网格), false = 动态卡(单列: 头像 + 发布时间 + 视频)。
-    ///
-    /// ★ 初值直接读设置(用户偏好, 重启/切页都保持); 改一次就落盘 —— 与"卡片列数"同一类,
-    ///   这不是"每片状态", 不该跟着数据刷新走。
-    /// ★ 切换只改这个 bool: 界面上两套 ItemsControl 各自绑 Its Visibility(见 FollowPage),
-    ///   所以不需要重建列表, 滚动位置也不会丢。
-    /// </summary>
+    /// <summary>旧版配置兼容；当前综合 / 视频模式由 VideoOnly 控制。</summary>
     public bool UseCardWall
     {
         get => _useCardWall;
@@ -975,10 +962,7 @@ public class FollowViewModel : ObservableObject
             if (!SetProperty(ref _useCardWall, value)) return;
             Svc.Settings.FollowCardWall = value;
             Svc.Settings.Save();
-            // 两个"单 UP 档位"可见性跟着档位走(见 ShowUpFeed 的说明)
-            OnPropertyChanged(nameof(ShowDynamicFeed));
-            OnPropertyChanged(nameof(ShowUpFeed));
-            OnPropertyChanged(nameof(ShowUpFeedCardWall));
+
         }
     }
 
@@ -998,74 +982,40 @@ public class FollowViewModel : ObservableObject
     /// </summary>
     public Task RefreshUnreadBadgesAsync() => CheckNewDynamicsAsync();
 
-    /// <summary>
-    /// 「全部动态」加载完 / 轮询拿到新一页 → 按这一页的条目刷新左栏各 UP 的未读红点。
-    ///
-    /// 规则(基准存在 <see cref="DynamicSeenStore"/>, 本地判断、不请求接口):
-    ///   · 没有基准的 UP: 只把 TA 当前最新一条记成基准, **不显示红点**(见该类的说明);
-    ///   · 基准与最新一条相同: 红点消失;
-    ///   · 不同: NewCount = 这一页里排在基准那条**之前**的该 UP 投稿数
-    ///     (基准那条已经翻出本页时, 本页所有该 UP 的条目都算新的)。
-    ///     界面只拿它判断红点亮不亮, 具体条数放在红点的悬浮提示里。
-    /// ★ 本页没有出现的 UP **不动**: 动态接口只给近期条目, 一个 UP 最近没投稿就无从判断,
-    ///   这时把红点清掉是凭空断言"没更新"。宁可留着旧红点, 也不给错的信息。
-    ///
-    /// 实现委托给 <see cref="FollowSorting.ApplyBadges"/>(纯逻辑, 可以离线测):
-    /// 走委托读写基准, 所以这里仍然只在 UI 线程调用 DynamicSeenStore。
-    /// </summary>
+    /// <summary>Remember posting times for sorting; red dots come exclusively from the server snapshot.</summary>
     private void UpdateUnreadBadges() => UpdateUnreadBadges(Dynamics);
 
     /// <summary>用指定的动态条目集合刷新角标(定时刷新时传临时列表, 不碰 Dynamics)</summary>
     private void UpdateUnreadBadges(IReadOnlyList<DynamicItem> items)
     {
-        if (items == null || items.Count == 0) return;
-
-        // 先把时间轴记下来(排序要用), 再算红点 —— 顺序无所谓, 但必须在排序前完成
         RememberTimestamps(items);
-
-        // 单 UP 视图里跳过"正在看的那个": 用户正看着它却亮红点很怪,
-        // 而且它的基准由 ClearUnreadBadge(点开那一刻)单独推。
-        var skipMid = SelectedUp?.Mid ?? 0;
-        // ★ 包在 WithoutAutoSort 里: ApplyBadges 会逐个改 NewCount, 而「未读优先」模式下
-        //   NewCount 变化会触发 SortUsers() 移集合 —— 那就是"遍历中改集合", 枚举器会抛异常。
-        WithoutAutoSort(() => FollowSorting.ApplyBadges(
-            Users,
-            items,
-            mid => DynamicSeenStore.TryGet(mid, out var seen) ? seen : null,
-            (mid, id) => DynamicSeenStore.Set(mid, id),
-            skipMid));
-
-        DynamicSeenStore.Flush();
-        RaiseUnreadSummary();
-        SortUsers();   // 未读优先模式下, 有红点的要立刻提到前面
+        ApplyServerUnreadBadges();
     }
 
-    /// <summary>
-    /// 点开某个 UP(右栏只看 TA 的动态) = 已读: 清红点, 并把基准推到 TA **当前最新一条**。
-    ///
-    /// ★★★ 这里原来是个隐患, 2026-11-05 修掉:
-    ///   旧写法遍历 Dynamics, 命中第一个 AuthorMid 就 Set 并 break, 注释写着
-    ///   "FeedItems 是时间倒序, 第一条就是最新"。但**单 UP 视图的 Dynamics 里可能混进
-    ///   别的作者**(合作投稿/转发/空间动态流的推荐尾), 一旦流里出现乱序(服务端置顶、
-    ///   同秒发布、翻页拼接), "第一条匹配"就会把基准推到一条**较旧**的动态上 ——
-    ///   于是下次刷新算出还有 1 条未读, 红点明明点过了却又亮回来, 看着像"消不掉"。
-    ///   现在改成: 显式按 AuthorMid 过滤, 再**取 PubTs 最大的那条**(见 FollowSorting.NewestFor)。
-    /// ★ 当前视图里一条都没有(比如刚点开、首屏还没回来)时, 退到"最近见过的 id",
-    ///   保证点开这个动作本身不会因为时序而白点。
-    /// </summary>
-    private void ClearUnreadBadge(FollowUser u)
+    private readonly Dictionary<long, bool> _serverUnread = new();
+    private int _unreadRequestVersion;
+
+    internal async Task<bool> RefreshServerUnreadAsync()
     {
-        if (u == null) return;
-        u.NewCount = 0;
+        if (!Svc.Session.HasLogin) return false;
+        var account = Svc.Session.Current.DedeUserID;
+        var version = ++_unreadRequestVersion;
+        var state = await Svc.Api.GetDynamicUnreadStateAsync();
+        if (version != _unreadRequestVersion || account != Svc.Session.Current.DedeUserID || !state.ok) return false;
+        _serverUnread.Clear();
+        foreach (var pair in state.authors) _serverUnread[pair.Key] = pair.Value;
+        ApplyServerUnreadBadges();
+        return true;
+    }
 
-        var newest = FollowSorting.NewestFor(Dynamics, u.Mid);
-        var id = newest?.Id;
-        if (string.IsNullOrEmpty(id) && _latestDynamicId.TryGetValue(u.Mid, out var last)) id = last;
-        if (!string.IsNullOrEmpty(id)) DynamicSeenStore.Set(u.Mid, id!);
-
-        DynamicSeenStore.Flush();
-        RaiseUnreadSummary();
-        SortUsers();
+    private void ApplyServerUnreadBadges()
+    {
+        // A local post-ID comparison cannot know what was read on another device.
+        // The official response supplies a boolean, not an unread post count.
+        WithoutAutoSort(() =>
+        {
+            foreach (var user in Users) user.NewCount = _serverUnread.GetValueOrDefault(user.Mid) ? 1 : 0;
+        });
     }
 
     /// <summary>右栏滚动到底: 追加下一页</summary>

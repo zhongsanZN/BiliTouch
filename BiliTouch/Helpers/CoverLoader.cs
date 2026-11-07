@@ -98,16 +98,12 @@ public static class CoverLoader
             }
             // 并发去重: 同一个键已经有请求在跑, 直接复用它的 Task
             if (InFlight.TryGetValue(cacheKey, out var running)) return running;
+            // Reserve the in-flight entry before the worker can complete. Cold cache
+            // directory and file probes must run off the input/layout thread.
+            var task = Task.Run(() => LoadCoreAsync(url, cacheKey, w));
+            InFlight.Add(cacheKey, task);
+            return task;
         }
-
-        var task = LoadCoreAsync(url, cacheKey, w);
-        lock (Lock)
-        {
-            // 极端情况下两个线程同时走到这里, 后者会覆盖前者 —— 两者结果等价(都会写同一个缓存键),
-            // 唯一的代价是可能多下载一次, 不影响正确性。
-            InFlight[cacheKey] = task;
-        }
-        return task;
     }
 
     /// <summary>
@@ -171,13 +167,13 @@ public static class CoverLoader
             if (File.Exists(cacheFile))
             {
                 var path = cacheFile;
-                img = await Task.Run(() => FromFile(path, decodeWidth)).ConfigureAwait(false);
+                img = FromFile(path, decodeWidth);
             }
             else if (downloaded != null)
             {
                 // 磁盘上没有文件(写失败), 但字节在手上 ⇒ 直接从内存解码, 绝不让封面空着
                 var bytes = downloaded;
-                img = await Task.Run(() => FromBytes(bytes, decodeWidth)).ConfigureAwait(false);
+                img = FromBytes(bytes, decodeWidth);
             }
             else
             {
@@ -572,8 +568,7 @@ public static class Cover
         //   命中缓存说明这格之前见过、不是真正的首次加载, 不该再淡入。
         if (CoverLoader.TryGetCached(url, w, out var cached) && cached != null)
         {
-            await Application.Current.Dispatcher.InvokeAsync(
-                () => ApplyDecoded(border, url, cached, w, fade: false));
+            ApplyDecoded(border, url, cached, w, fade: false);
             return;
         }
 
@@ -628,7 +623,7 @@ public static class Cover
                 border.Opacity = 1.0;
                 border.BeginAnimation(UIElement.OpacityProperty,
                     new System.Windows.Media.Animation.DoubleAnimation(0, 1,
-                        TimeSpan.FromMilliseconds(240)));
+                        TimeSpan.FromMilliseconds(240)) { FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop });
             }
             else
             {

@@ -60,7 +60,7 @@
     </Grid>
    </Grid>
    <Grid Visibility="{Binding IsNotificationChannel,Converter={StaticResource BoolToVis}}" Margin="24,8,24,20">
-    <ScrollViewer VerticalScrollBarVisibility="Auto" helpers:TrackpadScroll.IsFeed="True">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
      <StackPanel>
       <ItemsControl ItemsSource="{Binding Notifications}"><ItemsControl.ItemTemplate><DataTemplate>
        <Border Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="18" Margin="0,0,0,12">

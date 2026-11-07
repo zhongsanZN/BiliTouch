@@ -28,9 +28,13 @@ public partial class DynamicDetailPage : UserControl
     }
     private void OnCommentsScroll(object sender,ScrollChangedEventArgs e)
     {
-        if(!ReferenceEquals(e.OriginalSource,FindScroll(CommentList)))return;
-        if(e.VerticalChange>0 || e.ExtentHeightChange!=0)ScheduleCommentsPrefetch();
+        if (e.OriginalSource is ScrollViewer scroll && ReferenceEquals(scroll.TemplatedParent, CommentList)
+            && (e.VerticalChange > 0 || e.ExtentHeightChange != 0) && NearCommentEnd(scroll))
+            ScheduleCommentsPrefetch();
     }
+    private static bool NearCommentEnd(ScrollViewer scroll) =>
+        scroll.ViewportHeight > 0 && scroll.ScrollableHeight - scroll.VerticalOffset < Math.Max(300, scroll.ViewportHeight * .75);
+
     private void ScheduleCommentsPrefetch()
     {
         if(_prefetchScheduled || !IsLoaded)return;
@@ -40,7 +44,7 @@ public partial class DynamicDetailPage : UserControl
             _prefetchScheduled=false;
             if(!IsLoaded || !ViewModel.CanLoadMore || ViewModel.Error.Length>0)return;
             var scroll=FindScroll(CommentList);
-            if(scroll!=null && scroll.ViewportHeight>0 && scroll.ScrollableHeight-scroll.VerticalOffset<Math.Max(300,scroll.ViewportHeight*0.75))
+            if(scroll!=null && NearCommentEnd(scroll))
                 await ViewModel.LoadCommentsAsync();
         }));
     }

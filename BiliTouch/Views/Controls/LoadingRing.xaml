@@ -12,16 +12,5 @@
             </Ellipse.RenderTransform>
         </Ellipse>
     </Grid>
-    <UserControl.Triggers>
-        <EventTrigger RoutedEvent="Loaded">
-            <BeginStoryboard>
-                <Storyboard>
-                    <DoubleAnimation Storyboard.TargetName="Rot"
-                                     Storyboard.TargetProperty="Angle"
-                                     From="0" To="360" Duration="0:0:1"
-                                     RepeatBehavior="Forever" />
-                </Storyboard>
-            </BeginStoryboard>
-        </EventTrigger>
-    </UserControl.Triggers>
+
 </UserControl>

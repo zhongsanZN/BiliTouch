@@ -32,6 +32,8 @@ def main():
         raise RuntimeError("Refusing to publish to an unexpected repository")
     tag = "v" + args.version
     subprocess.run(["git", "rev-parse", "--verify", "refs/tags/" + tag], cwd=root, check=True, capture_output=True)
+    has_source = subprocess.run(["git", "cat-file", "-e", f"{tag}:BiliTouch/BiliTouch.csproj"],
+                                cwd=root, capture_output=True).returncode == 0
     credential = subprocess.run(["git", "credential", "fill"], input="protocol=https\nhost=github.com\n\n", cwd=root,
                                 text=True, capture_output=True, check=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never"})
     fields = dict(line.split("=", 1) for line in credential.stdout.splitlines() if "=" in line)
@@ -71,11 +73,14 @@ def main():
         if asset["id"] != installer["id"]:
             request(BASE + "/releases/assets/" + str(asset["id"]), method="DELETE")
     download = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{expected}"
-    body = f"[下载安装包]({download}) · [本版源码](https://github.com/{REPOSITORY}/tree/{tag})\n\n"
+    source_label = "本版源码" if has_source else "历史构建归档"
+    body = f"[下载安装包]({download}) · [{source_label}](https://github.com/{REPOSITORY}/tree/{tag})\n\n"
+    if not has_source:
+        body += "此版本保留原始安装器；该标签仅包含归档记录，没有可确认匹配的应用源码快照。当前完整源码见 main 分支及最新正式版标签。\n\n"
     body += notes
     body += "\n\n![BiliTouch 首页](https://raw.githubusercontent.com/zhongsanZN/BiliTouch/main/docs/screenshot-home-current.png)"
     release = request(release["url"], {"body": body, "draft": False, "prerelease": False,
-                                      "make_latest": "true"}, "PATCH")
+                                      "make_latest": "true" if has_source else "false"}, "PATCH")
     remaining = request(release["assets_url"])
     if [asset["name"] for asset in remaining] != [expected]:
         raise RuntimeError("Release must contain exactly one uploaded installer")

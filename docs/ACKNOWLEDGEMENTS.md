@@ -5,3 +5,5 @@ BiliTouch 基于 ABing（ABING1111）的 [BiliDesk](https://github.com/ABING1111
 程序启动时会从该上游产品名对应的旧数据目录导入用户配置与登录信息；只复制新目录缺少的文件，保留原数据。此兼容标识集中在 `Acknowledgements.cs`，当前应用的命名空间、程序集、方案、发布目录与新用户数据目录均使用 BiliTouch。
 
 星引擎主题美术及其他资源权利说明见 `../BiliTouch/Assets/Skins/StarParty/SOURCES.md`。代码许可证见 `../LICENSE`。
+
+影之刃零装扮采用 S-GAME 官网及用户提供的官网素材包。原美术权利归相应权利人。来源及改编方式见 `../BiliTouch/Assets/Skins/PhantomBladeZero/SOURCES.md`。

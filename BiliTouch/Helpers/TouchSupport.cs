@@ -129,7 +129,7 @@ public static class TouchSupport
                 if (sender is not ScrollViewer viewer) return;
                 // Belt and braces for a viewer that was never resized before the first finger.
                 ConfigureScrollViewer(viewer);
-                SmoothScroll.Stop(viewer);
+                TrackpadScroll.Cancel(viewer);
                 MarkTouchPanning(viewer);
                 // ★ 记下按下的位置与命中的卡片: ScrollViewer 一开 PanningMode 就会在按下时
                 //   捕获触摸, 卡片自己的 TouchUp 收不到 —— 点击只能由这里在抬起时补发。
@@ -227,22 +227,14 @@ public static class TouchSupport
     }
 
     /// <summary>
-    /// 全局滚轮入口(**所有** ScrollViewer 的 PreviewMouseWheel 都会走到这里)。
-    ///
-    /// ★ 精密包(|delta|&lt;120)一律交给 TrackpadScroll 累积平滑 —— 这条在信息流之外也成立,
-    ///   因为触控板本来就该顺, 而且是对旧行为的保持。
-    /// ★ 整格包(±120)只对**信息流**放开(<c>helpers:TrackpadScroll.IsFeed="True"</c>, DP 是 Inherits,
-    ///   所以信息流 ScrollViewer 的祖先 UserControl 上写一次就够)。
-    ///   为什么必须用 IsFeed 判定而不能在这里一刀切: 这个类处理器是**全局**的, 一刀切会把
-    ///   设置页 / 播放器右侧信息栏 / 任意列表里的整格滚轮全部改成"90px 起步的缓动",
-    ///   那些页面的原语义是"一格走一段"、且没有按灵敏度标定过 —— 手感会当场退步。
-    ///   非信息流的整格包原样返回(false 且不设 Handled), WPF 照旧瞬移, SmoothScroll 若在该容器
-    ///   上显式 Enabled 也有机会接着处理(它自己再调一次 Handle 时同样只对 IsFeed 生效)。
+    /// 全局滚轮入口(**所有** ScrollViewer 的 PreviewMouseWheel 都会走到这里), 并且这里是唯一入口:
+    /// 精密包与整格包一律交给 <see cref="TrackpadScroll"/>, 参数全站一套(见该类的说明)。
+    /// 逻辑滚动列表与不可垂直滚动的容器由 TrackpadScroll 自己判退, 语义仍是 WPF 原生。
     /// </summary>
     private static void OnTouchpadWheel(object? sender, MouseWheelEventArgs e)
     {
         if (sender is not ScrollViewer viewer) return;
-        TrackpadScroll.Handle(viewer, e, includeNotches: TrackpadScroll.GetIsFeed(viewer));
+        TrackpadScroll.Handle(viewer, e);
     }
 
     private static void ConfigureScrollViewer(ScrollViewer viewer)
@@ -252,6 +244,9 @@ public static class TouchSupport
         // Respect explicit settings, including the internal editors in TextBox controls.
         if (DependencyPropertyHelper.GetValueSource(viewer, ScrollViewer.PanningModeProperty)
             .BaseValueSource != BaseValueSource.Default) return;
+        // The read-only document grows to fit its text. Its template viewer must
+        // leave the finger gesture to the enclosing comment list.
+        if (viewer.TemplatedParent is BiliTouch.Views.Controls.CommentText) return;
         var horizontal = viewer.HorizontalScrollBarVisibility != ScrollBarVisibility.Disabled;
         var vertical = viewer.VerticalScrollBarVisibility != ScrollBarVisibility.Disabled;
         viewer.SetCurrentValue(ScrollViewer.PanningModeProperty,
@@ -287,7 +282,7 @@ public static class TouchSupport
     private static void OnPenDown(object? sender, StylusEventArgs e)
     {
         if (sender is not ScrollViewer viewer || !IsPen(e)) return;
-        SmoothScroll.Stop(viewer);
+        TrackpadScroll.Cancel(viewer);
         // Item-scrolled viewers count offsets in rows: a pixel delta there would jump whole cards.
         if (viewer.CanContentScroll) return;
         if (IsInteractiveSource(e.OriginalSource as DependencyObject, viewer)) return;

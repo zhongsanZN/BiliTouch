@@ -63,7 +63,7 @@ public partial class MainWindow : FluentWindow
     }
 
     private bool _headerPointerInside,_headerRepaintQueued;
-    internal void RepaintHeader(){if(_headerRepaintQueued || !SharedHeaderSurface.IsVisible)return;_headerRepaintQueued=true;Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(()=>{_headerRepaintQueued=false;SharedHeaderSurface.InvalidateVisual();}));}
+    internal void RepaintHeader(){if(_headerRepaintQueued || !SharedHeaderSurface.IsVisible)return;_headerRepaintQueued=true;Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(()=>{_headerRepaintQueued=false;SharedHeaderSurface.InvalidateVisual();if(EmbeddedHost.IsVisible)EmbeddedHeaderSurface.InvalidateVisual();}));}
     private Point? _sidebarThemeOrigin;
     private void OnSidebarThemeDown(object sender,MouseButtonEventArgs e)=>_sidebarThemeOrigin=e.GetPosition(Content as IInputElement ?? this);
     private void OnSidebarTheme(object sender,RoutedEventArgs e)

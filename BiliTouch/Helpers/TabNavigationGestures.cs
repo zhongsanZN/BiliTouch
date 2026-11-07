@@ -63,7 +63,7 @@ internal sealed class TabNavigationGestures
         if(!_decided){if(Math.Max(Math.Abs(_dx),Math.Abs(dy))<12)return false;_decided=true;_horizontal=Math.Abs(_dx)>Math.Abs(dy)*1.4;}
         if(!_horizontal)return false;
         TouchSupport.CancelPendingTap();
-        if(_scroll!=null){_scroll.PanningMode=PanningMode.None;SmoothScroll.Stop(_scroll);_scroll.ScrollToVerticalOffset(_offset);}
+        if(_scroll!=null){_scroll.PanningMode=PanningMode.None;TrackpadScroll.Cancel(_scroll);_scroll.ScrollToVerticalOffset(_offset);}
         var edge=SelectedIndex==0 && _dx>0 || SelectedIndex==Buttons.Length-1 && _dx<0;
         _slide.X=_dx*(edge ? .35 : 1);return true;
     }

@@ -1,4 +1,4 @@
-﻿using System.Collections.Specialized;
+using System.Collections.Specialized;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -20,7 +20,9 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
     private int _anchorIndex, _anchorEpoch;
     private double _anchorFraction;
     private double _anchorOffset;
+    private int _firstRow = -1, _lastRow = -1, _rows;
     public int RealizedCount => InternalChildren.Count;
+    internal int MeasurePasses { get; private set; }
     public double RowHeight => _rowHeight;
 
     public VirtualizingCardWallPanel()
@@ -46,7 +48,9 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
             _anchoring=false;_anchorQueued=false;
             ++_anchorEpoch;
         }
-        if(e.VerticalChange!=0 || e.ViewportHeightChange!=0 || e.ViewportWidthChange!=0)InvalidateMeasure();
+        if (e.ViewportHeightChange != 0 || e.ViewportWidthChange != 0 || e.ExtentHeightChange != 0 ||
+            (e.VerticalChange != 0 && VisibleRows(e.VerticalOffset - OriginY(), e.ViewportHeight) != (_firstRow, _lastRow)))
+            InvalidateMeasure();
     }
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {
@@ -60,8 +64,16 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
             return TranslatePoint(new Point(),content).Y;
         return 0;
     }
+    private (int First, int Last) VisibleRows(double top, double viewport)
+    {
+        top = Math.Max(0, top);
+        int first = Math.Clamp((int)(top / _rowHeight) - 1, 0, Math.Max(0, _rows - 1));
+        int last = Math.Min(_rows - 1, (int)Math.Ceiling((top + viewport) / _rowHeight) + 1);
+        return (first, last);
+    }
     protected override Size MeasureOverride(Size availableSize)
     {
+        MeasurePasses++;
         HookScroll();
         var owner=ItemsControl.GetItemsOwner(this);
         if(owner==null)return new Size();
@@ -107,11 +119,10 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
         _columns=cols;_slotWidth=slot;_rowHeight=rowHeight;_lastWidth=width;
         var viewport=_scroll?.ViewportHeight ?? 0;
         if(!double.IsFinite(viewport) || viewport<=0)viewport=800;
-        var rows=(count+cols-1)/cols;
-        var firstRow=Math.Max(0,Math.Min(Math.Max(0,rows-1),(int)(top/rowHeight)-1));
-        var lastRow=Math.Min(rows-1,(int)Math.Ceiling((top+viewport)/rowHeight)+1);
-        var first=firstRow*cols;
-        var last=Math.Min(count-1,(lastRow+1)*cols-1);
+        _rows = (count + cols - 1) / cols;
+        (_firstRow, _lastRow) = VisibleRows(top, viewport);
+        var first = _firstRow * cols;
+        var last = Math.Min(count - 1, (_lastRow + 1) * cols - 1);
         CleanOutside(first,last);
         if(last>=first)
         {
@@ -123,7 +134,7 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
                 for(int index=first;index<=last;index++,childIndex++)
                 {
                     var child=(UIElement)generator.GenerateNext(out var fresh);
-                    var existing=InternalChildren.IndexOf(child);
+                    var existing = fresh ? -1 : childIndex < InternalChildren.Count && ReferenceEquals(InternalChildren[childIndex], child) ? childIndex : InternalChildren.IndexOf(child);
                     if(existing<0)
                     {
                         if(childIndex>=InternalChildren.Count)AddInternalChild(child);
@@ -135,23 +146,25 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
                         RemoveInternalChildRange(existing,1);
                         InsertInternalChild(childIndex,child);
                     }
-                    child.SetValue(CardWall.ItemWidthProperty,itemWidth);
-                    child.SetValue(CardWall.CoverHeightProperty,itemWidth/aspect);
+                    if (CardWall.GetItemWidth(child) != itemWidth)
+                        child.SetValue(CardWall.ItemWidthProperty, itemWidth);
+                    if (CardWall.GetCoverHeight(child) != itemWidth / aspect)
+                        child.SetValue(CardWall.CoverHeightProperty, itemWidth / aspect);
                     child.Measure(new Size(slot,rowHeight));
                 }
             }
         }
-        return new Size(width,rows*rowHeight);
+        return new Size(width,_rows*rowHeight);
     }
     private void CleanOutside(int first,int last)
     {
         var generator=ItemContainerGenerator;
         for(int i=InternalChildren.Count-1;i>=0;i--)
         {
-            var index=ItemsControl.GetItemsOwner(this).ItemContainerGenerator.IndexFromContainer(InternalChildren[i]);
+            var index=ItemContainerGenerator.IndexFromGeneratorPosition(new GeneratorPosition(i, 0));
             if(index<0) {RemoveInternalChildRange(i,1);continue;}
-            var position=generator.GeneratorPositionFromIndex(index);
             if(index>=first && index<=last)continue;
+            var position=generator.GeneratorPositionFromIndex(index);
             if(generator is IRecyclingItemContainerGenerator recycling)recycling.Recycle(position,1);
             else generator.Remove(position,1);
             RemoveInternalChildRange(i,1);
@@ -161,7 +174,7 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
     {
         for(int i=0;i<InternalChildren.Count;i++)
         {
-            var index=ItemsControl.GetItemsOwner(this).ItemContainerGenerator.IndexFromContainer(InternalChildren[i]);
+            var index=ItemContainerGenerator.IndexFromGeneratorPosition(new GeneratorPosition(i, 0));
             if(index<0)continue;
             InternalChildren[i].Arrange(new Rect(index%_columns*_slotWidth,index/_columns*_rowHeight,_slotWidth,_rowHeight));
         }

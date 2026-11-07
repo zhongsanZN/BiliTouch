@@ -479,7 +479,53 @@ public partial class PlayerWindow : FluentWindow
         // ★ 2026-10-31: 变速收尾也是音轨偶发掉线的暴露点(同 seek 后没声的机理)。
         //   挂一次带宽限期的自愈检查, 命中才动手(见 HealAudioIfDead)。
         HealAudioIfDead("fastforward-end");
+        // ★★★ 2026-11-06 修「松手后偶发永久静音」:
+        //   上面这一句**经常根本不会执行** —— HealAudioIfDead 的闸门是"距上次检查
+        //   超过 AudioHealGraceMs(1500ms)", 而 _audioHealCheckAt 是**全窗口共享**的。
+        //   长按 2 秒期间虽然没人主动检查, 但换片/seek 到位/别的自愈点都可能刚把它写过;
+        //   一旦上一次检查落在 1.5s 内, 这一句就直接 return —— 而松手是**一次性**事件,
+        //   之后再没有任何人补一次检查。于是那条竞态就永久留在那儿: 画面正常、时间在走、
+        //   就是没声音, 直到下一次重建 input。
+        //   ⇒ 松手后排一次**延迟复查**(宽限期之后), 保证"这一次变速"至少被检查一次。
+        //   延迟复查走同一个入口, 闸门语义不变, 不会重复动手。
+        ScheduleAudioHealRecheck();
     }
+
+    /// <summary>
+    /// 排一次"宽限期之后"的音频自愈复查(见 StopFastForward 里的说明)。
+    ///
+    /// ★ 为什么必须是延迟, 不能当场再调一次: 闸门本身就是"过渡期别碰",
+    ///   当场再调只会被同一个闸门挡掉。等到 AudioHealGraceMs 之后再查, 那时
+    ///   aout 已重建完、音轨枚举也稳定了, 判据才可信。
+    /// ★ 用 DispatcherTimer 而不是 Thread.Sleep: 这是 UI 线程上的窗口级瞬态,
+    ///   窗口关闭时由 StopAllTimers 统一收掉, 不会泄漏。
+    /// </summary>
+    private void ScheduleAudioHealRecheck()
+    {
+        if (_closing || _mp == null) return;
+        _audioHealRecheckTimer?.Stop();
+        var generation = _loadGen;
+        var player = _mp;
+        var timer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(AudioHealGraceMs + 200),
+        };
+        _audioHealRecheckTimer = timer;
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            if (!ReferenceEquals(_audioHealRecheckTimer, timer)) return;
+            _audioHealRecheckTimer = null;
+            if (_closing || generation != _loadGen || !ReferenceEquals(player, _mp) || _isFastForwarding) return;
+            // 复查时把闸门基准清零, 让这一次检查一定能落地(它就是为"这一次变速"排的)
+            _audioHealCheckAt = -1;
+            HealAudioIfDead("fastforward-recheck");
+        };
+        timer.Start();
+    }
+
+    /// <summary>松手后音频自愈复查的定时器(见 ScheduleAudioHealRecheck)</summary>
+    private DispatcherTimer? _audioHealRecheckTimer;
 
     // --- SponsorBlock(跳过社区标注的赞助 / 片头片尾片段) ---
     // 原始数据(未过滤, 含所有类别)与"按当前设置挑出来的"分开存:
@@ -844,7 +890,7 @@ public partial class PlayerWindow : FluentWindow
         if (_closing || _relatedShown >= _relatedAll.Count) return;
         // 换片后 _relatedAll 是空的, 上面的闸门已经挡住; 这里再确认面板是显示的,
         // 免得在"简介 tab"下也补(相关视频属于简介 tab, 评论 tab 下整块是隐藏的)。
-        if (RelatedPanel == null || RelatedPanel.Visibility != Visibility.Visible) return;
+        if (!ReferenceEquals(e.OriginalSource, sender) || RelatedPanel?.IsVisible != true) return;
         // 往上滚不补
         if (e.VerticalChange < 0) return;
 
@@ -853,7 +899,7 @@ public partial class PlayerWindow : FluentWindow
         var targetBottom = RelatedList.TransformToVisual(sv)
             .Transform(new Point(0, RelatedList.ActualHeight)).Y;
         // 距"还要再滚一屏才看得见"的阈值内就补下一批
-        if (targetBottom - (sv.VerticalOffset + sv.ViewportHeight) < sv.ViewportHeight)
+        if (targetBottom - sv.ViewportHeight < sv.ViewportHeight)
             ShowMoreRelated();
     }
 
@@ -2515,33 +2561,9 @@ public partial class PlayerWindow : FluentWindow
         BtnPlay.Content = _mp.IsPlaying ? CreatePauseIcon() : CreatePlayIcon();
     }
 
-    private static System.Windows.Shapes.Path CreatePlayIcon()
-    {
-        var geo = System.Windows.Media.Geometry.Parse("M 7,4 L 18,11 L 7,18 Z");
-        geo.Freeze();
-        return new System.Windows.Shapes.Path
-        {
-            Data = geo,
-            Fill = Brushes.White,
-            Width = 15,
-            Height = 15,
-            Stretch = System.Windows.Media.Stretch.Uniform
-        };
-    }
+    private static SkinActionIcon CreatePlayIcon() => PlayerGlyphs.Play();
 
-    private static System.Windows.Shapes.Path CreatePauseIcon()
-    {
-        var geo = System.Windows.Media.Geometry.Parse("M 5,4 L 9,4 L 9,18 L 5,18 Z M 12,4 L 16,4 L 16,18 L 12,18 Z");
-        geo.Freeze();
-        return new System.Windows.Shapes.Path
-        {
-            Data = geo,
-            Fill = Brushes.White,
-            Width = 15,
-            Height = 15,
-            Stretch = System.Windows.Media.Stretch.Uniform
-        };
-    }
+    private static SkinActionIcon CreatePauseIcon() => PlayerGlyphs.Pause();
 
     private void UpdateProgressUi()
     {
@@ -2830,15 +2852,30 @@ public partial class PlayerWindow : FluentWindow
     ///
     /// ★★★ 症状(2026-10-31 用户报"长视频快进后有时没声音"): 画面正常、时间在走,
     ///   但就是没声。实测机理是 libvlc 在 seek/变速时重建音频输出, 偶发地**把选中的
-    ///   音轨丢回"无轨道"**(AudioTrack 变 -1, 音轨数明明 >0) —— 这是库的内部竞态,
-    ///   离线无法稳定复现, 但恢复动作本身是幂等且无害的。
+    ///   音轨丢回"无轨道"**(AudioTrack 变 -1, 音轨数明明 >0) —— 这是库的内部竞态。
     ///
     /// 检查判据(三个条件同时成立才动手, 宁可漏报不可误伤):
     ///   ① 在播放且不在拖动/等待 seek —— 排除过渡期;
     ///   ② 距上次检查超过宽限期 —— 避免对同一次过渡反复操作;
     ///   ③ 音轨数 >0 而 AudioTrack == -1 —— "有轨道却没选"就是那个竞态的指纹。
-    /// 修复动作 = SetAudioTrack(0) 把第一条音轨选回来(单音轨片源恒正确;
-    /// 多音轨片源 libvlc 本来就默认选 0)。只打一次日志, 避免刷爆 vlc-debug.txt。
+    ///
+    /// ★★★ 2026-11-06 修「自愈本身是一条死路」(探针 artifacts/probes/rateaudio/run9.log 实测):
+    ///
+    ///   原来修复动作是 `SetAudioTrack(0)` —— **在 3.0.24 上完全救不回来**:
+    ///     制造掉线后 AudioTrack=-1, 调 SetAudioTrack(0) → AudioTrack 仍是 -1,
+    ///     之后 1.5 秒内 play 回调 **0 次**(音频永久静默, 但 state 仍是 Playing)。
+    ///     对照组: 按**真实 track id** 重选 → AudioTrack 立刻变回 1, 1.5 秒内 play 71 次, 音频恢复。
+    ///
+    ///   原因: `0` 不是"第一条音轨", 而是"无轨道"以外的某个**绝对索引**; 掉线之后
+    ///   libvlc 内部的轨道表已经重排, 写 0 落在一个不存在的槽位上, 被静默丢弃
+    ///   (setter 不看返回值, 所以我们连失败都看不到)。必须从 **AudioTrackDescription
+    ///   里取真实的 id** 才能选中。
+    ///
+    ///   ⇒ 这解释了为什么"快进后没声音"偶发且**自愈无效**: 用户听到的静默不是
+    ///     那零点几秒的变速过渡, 而是这条自愈根本没修好, 一直静默到下一次重建 input。
+    ///
+    /// ★ 顺带把"每次检查都读三个原生 getter"收成一次: 三个 getter 各 ~0.005ms,
+    ///   在 UI 线程上不构成卡顿(v8 实测松手整段中位 0.02ms), 保留原判据不变。
     /// </summary>
     /// <param name="why">调用点标签, 进诊断日志</param>
     private void HealAudioIfDead(string why)
@@ -2851,11 +2888,31 @@ public partial class PlayerWindow : FluentWindow
         {
             // 拖动中/等待 seek 确认期间音轨本来就处于切换途中, 不检查
             if (!_mp.IsPlaying || _isSeeking || _pendingSeekMs >= 0) return;
-            if (_mp.AudioTrackCount <= 0) return;          // 本来就没有音轨(纯视频/直播占位), 无事可做
+            var trackCount = _mp.AudioTrackCount;
+            if (trackCount <= 0) return;                   // 本来就没有音轨(纯视频/直播占位), 无事可做
             if (_mp.AudioTrack != -1) return;              // 音轨选着呢, 一切正常
-            var ok = _mp.SetAudioTrack(0);
+
+            // ★★★ 必须按**真实 id** 重选, 不能写 0(见方法说明里的实测)。
+            var desc = _mp.AudioTrackDescription;
+            var picked = -1;
+            if (desc != null)
+            {
+                foreach (var d in desc)
+                {
+                    if (d.Id >= 0) { picked = d.Id; break; }
+                }
+            }
+            if (picked < 0)
+            {
+                WriteLibVLCDebug(
+                    $"[Audio] 自愈: 检出音轨掉线({why}, tracks={trackCount}), 但拿不到可用 track id, 跳过\n");
+                return;
+            }
+
+            var ok = _mp.SetAudioTrack(picked);
             WriteLibVLCDebug(
-                $"[Audio] 自愈: 检出音轨掉线({why}, tracks={_mp.AudioTrackCount}) → SetAudioTrack(0)={ok}\n");
+                $"[Audio] 自愈: 检出音轨掉线({why}, tracks={trackCount}) → SetAudioTrack({picked})={ok}" +
+                $" → AudioTrack={_mp.AudioTrack}\n");
         }
         catch { /* 播放器已失效就算了 */ }
     }
@@ -4053,7 +4110,7 @@ public partial class PlayerWindow : FluentWindow
                         var cur = premium.FirstOrDefault(a => a.Quality == _actualAudio) ?? premium[0];
                         QualityList.Items.Add(new ListBoxItem
                         {
-                            Content = "正在使用：" + cur.DisplayLabel,
+                            Content = (cur.Quality == _actualAudio ? "正在使用：" : "可用：") + cur.DisplayLabel,
                             IsEnabled = false,
                             Focusable = false,
                             Padding = new Thickness(10, 6, 10, 6),
@@ -4065,7 +4122,7 @@ public partial class PlayerWindow : FluentWindow
             // ★★★ 按钮上的文字必须按"**接口实际给的**档位"或"用户的偏好"来取,
             //   **绝不能**对 _currentQn 直接调 QnToLabel(2026-10-04 修):
             //   「默认画质 = 自动」时 _currentQn 是发给接口的请求上界 127, 而 QnToLabel(127)
-            //   是"杜比视界"(那是真实流里的 8K 档)。于是本地文件/直播/起播失败(actualQn == 0)
+            //   是"8K"。于是本地文件/直播/起播失败(actualQn == 0)
             //   这些"没有实际档位可显示"的路径上, 按钮会写成一个用户根本没有的档位。
             //   这里只显示**确实在播的那一档**: 有实际档位就说它, 没有(本地/直播)就说用户的偏好,
             //   两者都不会把"请求用的内部值"当成画质名报给用户。
@@ -4085,12 +4142,15 @@ public partial class PlayerWindow : FluentWindow
                 var badge = _actualAudio switch
                 {
                     Models.AudioQuality.HiRes => "Hi-Res",
-                    Models.AudioQuality.Dolby => "杜比",
+                    Models.AudioQuality.Dolby => "杜比音轨",
                     _ => "",
                 };
                 if (badge.Length > 0)
                 {
                     AudioBadgeText.Text = badge;
+                    BtnAudioBadge.ToolTip = _actualAudio == Models.AudioQuality.Dolby
+                        ? "已选择杜比音轨；Atmos 输出取决于系统空间音效、输出设备和解码链路，当前未验证。无声时可右键选择音频兼容重试（仅本次）。"
+                        : "已选择 Hi-Res 音轨。无声时可右键选择音频兼容重试（仅本次）。";
                     BtnAudioBadge.Visibility = Visibility.Visible;
                 }
                 else
@@ -4202,7 +4262,18 @@ public partial class PlayerWindow : FluentWindow
     /// ★ 选不到用户要的档(没大会员/UP 没传 Hi-Res)时**不静默降级**:
     ///   弹一句说明, 并把偏好落回 Auto, 免得用户以为选了 Hi-Res 就真在听无损。
     /// </summary>
-    private async Task SwitchAudioQualityAsync(Models.AudioQuality quality)
+    private async void OnAudioCompatibilityRetry(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (_isLive || _isLocalPlayback || _currentCid <= 0) { Svc.Toast.Show("当前来源不支持音轨兼容重试"); return; }
+        var track = _audioTracks.Where(t => t.Quality is Models.AudioQuality.High or Models.AudioQuality.Standard)
+            .OrderByDescending(t => t.Bandwidth).FirstOrDefault();
+        if (track == null) { Svc.Toast.Show("这条视频没有可用的 AAC 兼容音轨"); return; }
+        // High keeps DASH and video resolution intact, even when only a lower AAC track exists.
+        await SwitchAudioQualityAsync(Models.AudioQuality.High, remember: false);
+    }
+
+    private async Task SwitchAudioQualityAsync(Models.AudioQuality quality, bool remember = true)
     {
         if (_closing || _switchingQuality || _isLive || _currentCid <= 0) return;
         _switchingQuality = true;
@@ -4221,6 +4292,11 @@ public partial class PlayerWindow : FluentWindow
                 ShowFail(err ?? "切换音质失败");
                 return;
             }
+            if (!remember && actualAudio is not (Models.AudioQuality.High or Models.AudioQuality.Standard))
+            {
+                ShowFail("服务器未返回 AAC 兼容音轨，请重试或选择其他音质");
+                return;
+            }
             // ★★★ 2026-11-04 二次改: 用户要求「不应切回 aac」。
             //   原来这里在"服务端没给这一档"时会把偏好**退回 Auto**, 而 Auto 在
             //   "这条视频没有高级音质"时就是最高 AAC —— 等于悄悄把用户降回 AAC。
@@ -4229,7 +4305,11 @@ public partial class PlayerWindow : FluentWindow
             //     · 拿到的是**另一种高级音质**(杜比↔Hi-Res 互退) ⇒ 记住实际那档, 并说明;
             //     · 只有**连高级音质都没有**时才提示, 且偏好保持用户的原始选择
             //       (下次遇到有高级音质的视频仍然按他的意愿走)。
-            if (actualAudio == quality)
+            if (!remember)
+            {
+                Svc.Toast.Show($"本次使用{音质名(actualAudio)}，原音质偏好已保留");
+            }
+            else if (actualAudio == quality)
             {
                 Svc.Settings.PreferredAudioQuality = quality;
             }
@@ -7109,6 +7189,7 @@ public partial class PlayerWindow : FluentWindow
     {
         if (_closing) return;
         LikeLabel.Text = VideoItem.FormatCount(_likeCount);
+        ThemedLikeIcon.IsActive = _isLiked;
         CoinLabel.Text = VideoItem.FormatCount(_coinCount);
         FavLabel.Text = VideoItem.FormatCount(_favCount);
         ApplyActionVisual(BtnLike, _isLiked, ActionLikeColor);
@@ -7253,6 +7334,15 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void PlayThemedAction(ThemeReaction action, FrameworkElement anchor, FrameworkElement iconBox, bool celebrate)
     {
+        if (SkinService.Instance.IsPhantomBlade)
+        {
+            if (celebrate && !_closing && SkinService.Instance.EffectsEnabled)
+            {
+                if (action == ThemeReaction.Like) ThemeAudio.PlayLike();
+                if (iconBox is Panel panel) panel.Children.OfType<SkinActionIcon>().FirstOrDefault()?.PulseGlow();
+            }
+            return;
+        }
         if (celebrate && !_closing && !_isFullscreen && !_isFillWindow && ThemeReactions.Show(action, anchor)) return;
         PlayActionPop(iconBox);
     }
@@ -8868,6 +8958,7 @@ public partial class PlayerWindow : FluentWindow
         {
             var (ok, err) = await Svc.Api.CommentLikeAsync(_aid, item.Rpid, target);
             if (_closing) return;
+            if (ok && target) ThemeAudio.PlayLike();
             if (!ok)
             {
                 // 回滚

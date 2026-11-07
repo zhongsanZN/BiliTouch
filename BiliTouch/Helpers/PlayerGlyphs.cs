@@ -19,12 +19,15 @@ public static class PlayerGlyphs
 {
     private const string PlayData = "M 7,4 L 18,11 L 7,18 Z";
     private const string PauseData = "M 5,4 L 9,4 L 9,18 L 5,18 Z M 12,4 L 16,4 L 16,18 L 12,18 Z";
+    public static Geometry PlayGeometry {get;}=Freeze(PlayData);
+    public static Geometry PauseGeometry {get;}=Freeze(PauseData);
+    private static Geometry Freeze(string data){var geometry=Geometry.Parse(data);geometry.Freeze();return geometry;}
 
     /// <summary>播放三角(暂停态显示它: 点一下继续播)</summary>
-    public static Path Play(double size = 15) => Build(PlayData, size);
+    public static SkinActionIcon Play(double size = 15) => Build(PlayGeometry, size);
 
     /// <summary>暂停双竖条(播放中显示它: 点一下暂停)</summary>
-    public static Path Pause(double size = 15) => Build(PauseData, size);
+    public static SkinActionIcon Pause(double size = 15) => Build(PauseGeometry, size);
 
     /// <summary>
     /// 全屏图标码位。**三个地方共用这一个值**: 播放器控制栏(BtnFullscreen2)、
@@ -40,12 +43,11 @@ public static class PlayerGlyphs
     /// <summary>音量图标码位: 有声 E767 / 静音 E74F</summary>
     public static string VolumeGlyph(bool muted) => muted ? "\uE74F" : "\uE767";
 
-    private static Path Build(string data, double size)
+    private static SkinActionIcon Build(Geometry geometry, double size)
     {
-        var geometry = Geometry.Parse(data);
-        geometry.Freeze();
-        return new Path
+        return new SkinActionIcon
         {
+            Kind = "Play",
             Data = geometry,
             Fill = Brushes.White,
             Width = size,

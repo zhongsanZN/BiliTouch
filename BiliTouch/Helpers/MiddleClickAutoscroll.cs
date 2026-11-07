@@ -14,7 +14,7 @@ namespace BiliTouch.Helpers;
 ///
 /// 挂载: App 启动时调一次 <see cref="Install"/>。注册的是 ScrollViewer 的**类处理器**,
 /// 对全应用所有 ScrollViewer 生效 —— 包括 ListBox/ItemsControl 模板里那些以及动态创建的,
-/// 不需要每个页面单独开开关(对比 <see cref="SmoothScroll"/>, 那个是逐处 opt-in 的)。
+/// 不需要每个页面单独开开关: 平滑滚动现在由 <see cref="TrackpadScroll"/> 全站接管, 这里同样不用逐处 opt-in。
 ///
 /// 手感对齐 Chrome(踩过的坑):
 ///   · 滚动必须挂在 CompositionTarget.Rendering 上按帧走、速度按真实 dt 计算 ——

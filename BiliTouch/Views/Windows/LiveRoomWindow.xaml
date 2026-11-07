@@ -206,8 +206,8 @@
                                     <!-- 播放/暂停: 与播放器 OnPlayPauseClick 完全同形同图标 -->
                                     <Button x:Name="PauseButton" Grid.Column="0" Style="{StaticResource LiveControl}"
                                             Width="36" Height="36" Click="PauseClick" ToolTip="暂停 / 继续（空格）">
-                                        <Path x:Name="PauseGlyph" Fill="White" Width="15" Height="15" Stretch="Uniform"
-                                              Data="M 7,4 L 18,11 L 7,18 Z"/>
+                                        <helpers:SkinActionIcon Kind="Play" x:Name="PauseGlyph" Fill="White" Width="15" Height="15" Stretch="Uniform"
+                                              Data="{x:Static helpers:PlayerGlyphs.PlayGeometry}"/>
                                     </Button>
                                     <!-- 回到实时画面(= 播放器的"重播/刷新"位置): 直播暂停后要能一键回实时 -->
                                     <Button Grid.Column="1" Click="ReconnectClick" Style="{StaticResource LiveControl}"

@@ -101,11 +101,11 @@ internal static class ContinuationTests
             var queueType=typeof(CoverLoader).Assembly.GetType("BiliTouch.Helpers.ViewportImageQueue")!;
             int Count()=>(int)queueType.GetProperty("Started",BindingFlags.Static|BindingFlags.NonPublic)!.GetValue(null)!;
             var cards=new StackPanel();for(int i=0;i<180;i++)cards.Children.Add(new VideoCard{DataContext=new VideoItem{Bvid="BV"+i,Title="信息流卡片 "+i,Cover=url}});
-            var viewer=new ScrollViewer{Content=cards,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};SmoothScroll.SetEnabled(viewer,true);TrackpadScroll.SetIsFeed(viewer,true);
+            var viewer=new ScrollViewer{Content=cards,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
             host=new Window{Width=700,Height=650,Content=viewer};var before=Count();host.Show();Pump(700);
             var initiallyStarted=Count()-before;check(initiallyStarted>0 && initiallyStarted<30,"180-card feed starts image work only near its viewport");
             viewer.ScrollToVerticalOffset(12000);Pump(650);check(Count()-before>initiallyStarted && Count()-before<55,"scrolling prefetches the next nearby cards without decoding the entire feed");
-            SmoothScroll.Stop(viewer);viewer.ScrollToVerticalOffset(0);Pump(70);
+            TrackpadScroll.Cancel(viewer);viewer.ScrollToVerticalOffset(0);Pump(70);
             for(int i=0;i<5;i++)Wheel(cards,-120);Pump(1000);
                         // ★ 2026-11-05: 整格滚轮现在也吃"信息流灵敏度"(与触控板共用同一把尺子)。
             //   旧断言写死 450 = 5 格 × 90px, 那是"整格不被接管"时的语义。

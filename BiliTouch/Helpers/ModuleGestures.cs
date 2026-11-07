@@ -88,7 +88,7 @@ internal sealed class ModuleGestures
         {
             if(Math.Abs(dx)>12 && Math.Abs(dx)>Math.Abs(dy)){Reset();return false;}
             if(dy<14 || Math.Abs(dy)<Math.Abs(dx)*1.4 || _scroll==null || _scroll.VerticalOffset>0.5)return false;
-            _pull=true;_panning=_scroll.PanningMode;_scroll.PanningMode=PanningMode.None;SmoothScroll.Stop(_scroll);
+            _pull=true;_panning=_scroll.PanningMode;_scroll.PanningMode=PanningMode.None;TrackpadScroll.Cancel(_scroll);
             _card?.CancelGestureTap();TouchSupport.CancelPendingTap();
         }
         _distance=Math.Clamp(dy,0,160);Hint(_distance>=72?"松开刷新":"下拉刷新");return true;

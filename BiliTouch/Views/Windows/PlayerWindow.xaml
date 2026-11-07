@@ -96,7 +96,7 @@
                             IsEnabled="{Binding CanLike}"
                             ToolTip="点赞 / 取消点赞">
                         <StackPanel Orientation="Horizontal">
-                            <helpers:SkinActionIcon Kind="Like" Data="{StaticResource LikeIconGeometry}" Width="12" Height="12"
+                            <helpers:SkinActionIcon Kind="Like" IsActive="{Binding IsLiked}" Data="{StaticResource LikeIconGeometry}" Width="12" Height="12"
                                   Stretch="Uniform" VerticalAlignment="Center">
                                 <helpers:SkinActionIcon.Style>
                                     <Style TargetType="helpers:SkinActionIcon">
@@ -788,11 +788,12 @@
                 <ContentControl x:Name="OriginalImageHost" Grid.Row="1" Margin="12"/>
             </Grid>
             <Grid x:Name="WebLeftPane" Grid.Column="0" Visibility="Collapsed">
+                <helpers:SkinSurface Kind="Content" />
                 <ScrollViewer x:Name="WebLeftScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" ScrollChanged="OnWebLeftScrollChanged">
                     <StackPanel>
                         <Border x:Name="WebVideoPlaceholder" />
                         <Border x:Name="WebCommentsScaleRoot" Margin="20,20,20,32">
-                            <StackPanel><TextBlock x:Name="WebCommentsHeading" Text="评论" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,14"/><ContentControl x:Name="WebCommentsHost"/></StackPanel>
+                            <StackPanel><TextBlock x:Name="WebCommentsHeading" Text="评论" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,14"/><ContentControl x:Name="WebCommentsHost" HorizontalContentAlignment="Stretch"/></StackPanel>
                         </Border>
                     </StackPanel>
                 </ScrollViewer>
@@ -932,6 +933,10 @@
                                     <Button Content="重试" Style="{StaticResource AccentButtonStyle}"
                                             HorizontalAlignment="Center" Margin="0,16,0,0" Padding="24,7"
                                             Click="OnRetryClick" />
+                                    <Button Content="音频兼容重试" Style="{StaticResource AccentButtonStyle}"
+                                            HorizontalAlignment="Center" Margin="0,10,0,0" Padding="18,7"
+                                            ToolTip="仅在高级音轨无法播放时，临时尝试 AAC；不更改音质偏好"
+                                            Click="OnAudioCompatibilityRetry" />
                                 </StackPanel>
                             </Border>
 
@@ -1029,7 +1034,7 @@
                                    但**外观与图标**必须一致。 -->
                             <Border x:Name="WebMiniControls" Visibility="Collapsed" VerticalAlignment="Bottom" HorizontalAlignment="Stretch" Margin="8" Padding="4" CornerRadius="10" Background="#B8000000" Panel.ZIndex="15">
                                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <Button x:Name="WebMiniPlay" Width="36" Height="36" Style="{StaticResource PlayerRoundBtn}" Click="OnPlayPauseClick" ToolTip="播放/暂停"><Path x:Name="WebMiniPlayGlyph" Width="15" Height="15" Stretch="Uniform" Fill="White" Data="M 7,4 L 18,11 L 7,18 Z"/></Button>
+                                    <Button x:Name="WebMiniPlay" Width="36" Height="36" Style="{StaticResource PlayerRoundBtn}" Click="OnPlayPauseClick" ToolTip="播放/暂停"><helpers:SkinActionIcon Kind="Play" x:Name="WebMiniPlayGlyph" Width="15" Height="15" Stretch="Uniform" Fill="White" Data="{x:Static helpers:PlayerGlyphs.PlayGeometry}"/></Button>
                                     <TextBlock x:Name="WebMiniTime" Grid.Column="1" FontSize="11" Foreground="White" VerticalAlignment="Center" Margin="4,0" TextTrimming="CharacterEllipsis"/>
                                     <Button x:Name="BtnMiniEnhancement" Grid.Column="2" Width="34" Height="36" Content="增强" Visibility="Collapsed" Style="{StaticResource PlayerTextBtn}" Click="OnEnhancementClick"/>
                                     <Button Grid.Column="3" Width="36" Height="36" Style="{StaticResource PlayerRoundBtn}" Click="OnWebRestoreVideo" ToolTip="回到视频"><TextBlock Text="&#xE70E;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15" Foreground="White"/></Button>
@@ -1093,8 +1098,8 @@
                                         <!-- 播放/暂停 -->
                                         <Button Grid.Column="0" x:Name="BtnPlay" Style="{StaticResource PlayerRoundBtn}"
                                                 Width="36" Height="36" Click="OnPlayPauseClick" ToolTip="播放/暂停 (空格)">
-                                            <Path Fill="White" Width="15" Height="15" Stretch="Uniform"
-                                                  Data="M 7,4 L 18,11 L 7,18 Z" />
+                                            <helpers:SkinActionIcon Kind="Play" Fill="White" Width="15" Height="15" Stretch="Uniform"
+                                                  Data="{x:Static helpers:PlayerGlyphs.PlayGeometry}" />
                                         </Button>
                                         <TextBlock x:Name="TimeText" Grid.Column="1" Foreground="#E6FFFFFF" FontSize="12"
                                                    VerticalAlignment="Center" Margin="10,0,0,0" Text="00:00 / 00:00" />
@@ -1248,9 +1253,14 @@
                                                  任何新增子元素都必须写列号, 漏写就等于"叠到播放键上"。 -->
                                         <Border Grid.Column="7" x:Name="BtnAudioBadge" Margin="4,0,0,0"
                                                 VerticalAlignment="Center"
-                                                IsHitTestVisible="False"
+                                                IsHitTestVisible="True"
                                                 Background="#33FF6B9D" CornerRadius="3" Padding="5,1"
                                                 Visibility="Collapsed">
+                                            <Border.ContextMenu>
+                                                <ContextMenu>
+                                                    <MenuItem Header="音频兼容重试（仅本次）" Click="OnAudioCompatibilityRetry" />
+                                                </ContextMenu>
+                                            </Border.ContextMenu>
                                             <TextBlock x:Name="AudioBadgeText" Text="Hi-Res"
                                                        FontSize="10.5" FontWeight="SemiBold" Foreground="#FFFFD9E6" />
                                         </Border>
@@ -1442,6 +1452,7 @@
             <!-- ============ 右: 信息面板 ============ -->
             <!-- x:Name 供全屏退出时做淡入用(400px 的一大块"啪"地出现很跳) -->
             <Grid x:Name="InfoPanel" Grid.Column="1" Background="{DynamicResource AppBackgroundBrush}">
+                <helpers:SkinSurface Kind="Content" />
                 <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1,0,0,0">
                     <Grid x:Name="RightLayoutGrid"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                         <ContentControl x:Name="WebHeaderHost" Grid.Row="0" Margin="20,18,20,0" Visibility="Collapsed"/>
@@ -1578,7 +1589,7 @@
                                             Click="OnLikeClick" ToolTip="点赞 / 取消点赞">
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                             <Grid x:Name="LikeIconBox" Style="{StaticResource ActionIconBox}">
-                                                <helpers:SkinActionIcon Kind="Like" Data="{StaticResource LikeIconGeometry}"
+                                                <helpers:SkinActionIcon Kind="Like" x:Name="ThemedLikeIcon" Data="{StaticResource LikeIconGeometry}"
                                                       Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                                                       Width="36" Height="36" Stretch="Uniform" VerticalAlignment="Center" />
                                             </Grid>
@@ -1932,8 +1943,7 @@
                                                  Padding="10,4,10,10"
                                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                                  VirtualizingPanel.ScrollUnit="Pixel"
-                                                 SelectionChanged="OnSeasonEpisodeSelected"
-                                                 behaviors:SmoothScroll.Enabled="True">
+                                                 SelectionChanged="OnSeasonEpisodeSelected">
                                             <ListBox.Resources>
                                                 <!-- 隐式样式会吃掉继承的前景色(全局隐式 TextBlock 样式带 Foreground setter),
                                                      所以模板里每一个 TextBlock 都显式给刷子。 -->

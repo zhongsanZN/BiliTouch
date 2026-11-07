@@ -28,6 +28,13 @@ internal static class LiveRoomTests
     static void Until(Func<bool> ready) { var start = Environment.TickCount64; while (!ready()) { if (Environment.TickCount64 - start > 15000) throw new TimeoutException("live-room UI timeout"); Pump(20); } }
     static T Wait<T>(Task<T> task) { Until(() => task.IsCompleted); return task.GetAwaiter().GetResult(); }
     static void Wait(Task task) { Until(() => task.IsCompleted); task.GetAwaiter().GetResult(); }
+    static ScrollViewer? ScrollChild(DependencyObject root)
+    {
+        if(root is ScrollViewer viewer)return viewer;
+        for(var i=0;i<VisualTreeHelper.GetChildrenCount(root);i++)
+            if(ScrollChild(VisualTreeHelper.GetChild(root,i)) is {} found)return found;
+        return null;
+    }
     static void Save(FrameworkElement root, string path) { var b = new RenderTargetBitmap((int)root.ActualWidth, (int)root.ActualHeight, 96, 96, PixelFormats.Pbgra32); b.Render(root); var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(b)); using var f = File.Create(path); png.Save(f); }
     static byte[] Packet(byte[] body, int version = 0, int op = 5) { var b = new byte[16 + body.Length]; BinaryPrimitives.WriteInt32BigEndian(b, b.Length); BinaryPrimitives.WriteInt16BigEndian(b.AsSpan(4), 16); BinaryPrimitives.WriteInt16BigEndian(b.AsSpan(6), (short)version); BinaryPrimitives.WriteInt32BigEndian(b.AsSpan(8), op); body.CopyTo(b, 16); return b; }
     static byte[] Packet(string json, int op = 5) => Packet(Encoding.UTF8.GetBytes(json), 0, op);
@@ -121,7 +128,7 @@ internal static class LiveRoomTests
             //     那是正确行为, 拿它当回归点会变成看运气的假失败。这里只验"滑杆确实住在弹层里"。
             var volumePopup = (System.Windows.Controls.Primitives.Popup)window.FindName("VolumePopup");
             var volumeSlider = (Slider)window.FindName("LiveVolume");
-            var pauseGlyph = (System.Windows.Shapes.Path)window.FindName("PauseGlyph");
+            var pauseGlyph = (SkinActionIcon)window.FindName("PauseGlyph");
             check(volumePopup != null && volumePopup.Child != null && volumeSlider != null &&
                   volumePopup.Child.IsAncestorOf(volumeSlider),
                 "live volume slider lives in an upward popup instead of occupying the control bar");
@@ -155,7 +162,16 @@ internal static class LiveRoomTests
             model.Flush(); Pump(300);
             var list = (ListBox)window.FindName("ChatList");
             check(VirtualizingPanel.GetIsVirtualizing(list) && VirtualizingPanel.GetVirtualizationMode(list) == VirtualizationMode.Recycling, "live sidebar uses a recycling virtualized list");
-            Call(window, "ChatWheel", list, new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, 120));
+            // A direct handler call alone does not move WPF's viewport, so the next
+            // layout can legitimately restore following at the bottom. Route the
+            // real preview + bubble wheel pair and wait until older rows are visible.
+            var chatScroll=ScrollChild(list)!;
+            var wheelSource=(UIElement)chatScroll.Content;
+            var previewWheel=new MouseWheelEventArgs(Mouse.PrimaryDevice,Environment.TickCount,120){RoutedEvent=Mouse.PreviewMouseWheelEvent,Source=wheelSource};
+            wheelSource.RaiseEvent(previewWheel);
+            if(!previewWheel.Handled)wheelSource.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice,Environment.TickCount,120){RoutedEvent=Mouse.MouseWheelEvent,Source=wheelSource});
+            Until(()=>chatScroll.ScrollableHeight-chatScroll.VerticalOffset>8);
+            check(!Field<bool>(window,"_followLatest"),"an actual upward chat wheel pauses following above the bottom");
             model.Enqueue(new LiveChatEntry { User = "新观众", Text = "向上阅读时不抢回底部" }); model.Flush(); Pump(120);
             check(((Button)window.FindName("LatestButton")).Visibility == Visibility.Visible, "reading older messages pauses automatic following and shows unread messages");
             Call(window, "LatestClick", list, new RoutedEventArgs()); Pump(150);

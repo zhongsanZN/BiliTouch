@@ -17,16 +17,16 @@
    </Border>
   </DataTemplate>
  </UserControl.Resources>
- <Grid Margin="16,8">
+ <Grid x:Name="DetailBody" Margin="24,12,24,20">
   <!-- 2026-11-04 修"动态详情页底部内容被裁切":
        原来是 [* / Auto], 底部评论输入区在 Auto 行。窗口一矮, Auto 行**不能被压缩**,
        整页就超出窗口, 输入框被裁掉一截(用户截图: "发表评论"框只剩半截)。
        现在: 上面给 MinHeight 保住可读区域, 底部给 MaxHeight 让输入框自己滚;
        两行都受限, 窗口再矮也不会把任何一块挤到窗口外。 -->
   <Grid.RowDefinitions><RowDefinition Height="*"/></Grid.RowDefinitions>
-  <Grid>
-   <Grid.ColumnDefinitions><ColumnDefinition Width="3*" MinWidth="280"/><ColumnDefinition Width="2*" MinWidth="300"/></Grid.ColumnDefinitions>
-   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,0,12,0">
+  <Grid x:Name="DetailColumns">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="3*" MinWidth="260"/><ColumnDefinition Width="20"/><ColumnDefinition Width="2*" MinWidth="280"/></Grid.ColumnDefinitions>
+   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
     <StackPanel>
      <controls:DynamicFeedCard DataContext="{Binding Item}" IsDetail="True" MaxWidth="800" CommentRequested="OnFocusComment" RepostRequested="OnFocusRepost" />
      <TextBlock Text="{Binding DetailError}" Visibility="{Binding DetailError, Converter={StaticResource StrToVis}}" TextWrapping="Wrap" Margin="12,6" Foreground="{DynamicResource DangerTextBrush}" />
@@ -96,14 +96,15 @@
      </Border>
     </StackPanel>
    </ScrollViewer>
-   <Grid x:Name="CommentsPane" Grid.Column="1">
+   <Border Grid.Column="1" Width="1" Background="{DynamicResource DividerBrush}" Margin="0,6,0,0" />
+   <Grid x:Name="CommentsPane" Grid.Column="2">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <Grid Grid.Row="0" Margin="8,6,8,10">
+    <Grid Grid.Row="0" Margin="8,6,8,14">
      <controls:LoadingRing Width="18" Height="18" HorizontalAlignment="Left" Margin="50,0,0,0" Visibility="{Binding Loading,Converter={StaticResource BoolToVis}}"/>
-     <TextBlock Text="评论" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
+     <TextBlock Text="评论" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimaryBrush}" />
      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-      <RadioButton Content="最热" GroupName="CommentSort" IsChecked="True" Checked="OnHot" Margin="8,0" />
-      <RadioButton Content="最新" GroupName="CommentSort" Checked="OnNewest" Margin="8,0" />
+      <RadioButton Content="最热" GroupName="CommentSort" Style="{StaticResource UnderlineTabStyle}" Padding="10,6" MinHeight="36" IsChecked="True" Checked="OnHot" Margin="8,0" />
+      <RadioButton Content="最新" GroupName="CommentSort" Style="{StaticResource UnderlineTabStyle}" Padding="10,6" MinHeight="36" Checked="OnNewest" Margin="8,0" />
      </StackPanel>
     </Grid>
 
@@ -113,7 +114,7 @@
      <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem"><ContentPresenter/></ControlTemplate></Setter.Value></Setter></Style></ListBox.ItemContainerStyle>
      <ListBox.ItemTemplate>
       <DataTemplate>
-       <Border Padding="12" Margin="0,0,0,8" CornerRadius="8" Background="{DynamicResource CardBackgroundBrush}">
+       <Border Padding="12" Margin="0,0,0,8" CornerRadius="10" Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
         <StackPanel>
          <StackPanel Orientation="Horizontal">
           <Border Width="30" Height="30" CornerRadius="15" Margin="0,0,8,0" Cursor="Hand" MouseLeftButtonUp="OnAuthor" helpers:Cover.Source="{Binding UserFace}" />
@@ -124,7 +125,7 @@
          <ItemsControl ItemsSource="{Binding Pictures}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><Border Width="90" Height="80" Margin="3" helpers:Cover.Source="{Binding Url}" MouseLeftButtonUp="OnCommentPicture" Cursor="Hand"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
          <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
           <TextBlock Text="{Binding RcTime}" FontSize="11" VerticalAlignment="Center" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,8,0" />
-          <Button Click="OnLike" IsEnabled="{Binding CanLike}" ToolTip="点赞/取消点赞" Style="{StaticResource SubtleButtonStyle}"><StackPanel Orientation="Horizontal"><helpers:SkinActionIcon Kind="Like" Width="16" Height="16" Margin="0,0,5,0" Fill="{DynamicResource TextSecondaryBrush}" Data="{StaticResource LikeIconGeometry}"/><TextBlock Text="{Binding LikeText}" Style="{StaticResource CommentReactionText}"/></StackPanel></Button>
+          <Button Click="OnLike" IsEnabled="{Binding CanLike}" ToolTip="点赞/取消点赞" Style="{StaticResource SubtleButtonStyle}"><StackPanel Orientation="Horizontal"><helpers:SkinActionIcon Kind="Like" IsActive="{Binding IsLiked}" Width="16" Height="16" Margin="0,0,5,0" Fill="{DynamicResource TextSecondaryBrush}" Data="{StaticResource LikeIconGeometry}"/><TextBlock Text="{Binding LikeText}" Style="{StaticResource CommentReactionText}"/></StackPanel></Button>
           <Button Content="回复" Click="OnReply" Style="{StaticResource SubtleButtonStyle}" Margin="6,0" />
          </StackPanel>
          <ItemsControl ItemsSource="{Binding Replies}" ItemTemplate="{StaticResource ReplyTemplate}" />

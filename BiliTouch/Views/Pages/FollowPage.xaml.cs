@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -11,7 +12,7 @@ namespace BiliTouch.Views.Pages;
 
 /// <summary>
 /// 「动态」页: 左栏 = 全部动态 + 关注 UP 列表(有未读时头像左侧带红点),
-/// 右栏 = 选中对象的内容, 两档排版(单列动态卡 / 多列卡片墙)由右上角的两枚 chip 切换。
+/// 右栏 = 选中对象的综合时间线或视频投稿。
 /// 选中态与数据都在 FollowViewModel; 这个 code-behind 只做事件转发、滚动加载与排版 chip 的选中态。
 /// </summary>
 public partial class FollowPage : UserControl
@@ -41,6 +42,8 @@ public partial class FollowPage : UserControl
     {
         if (DataContext is FollowViewModel vm)
         {
+            vm.PropertyChanged -= OnFeedStateChanged;
+            vm.PropertyChanged += OnFeedStateChanged;
             FilterService.Instance.Attach(vm.Dynamics);
             FilterService.Instance.Attach(vm.LiveNow);
             await vm.InitAsync();
@@ -51,18 +54,23 @@ public partial class FollowPage : UserControl
         }
     }
 
-    /// <summary>屏蔽条件落地后, 等布局量完再判断要不要补一页动态</summary>
+    private void OnFeedStateChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(FollowViewModel.VideoOnly) or nameof(FollowViewModel.Loading)
+            or nameof(FollowViewModel.LoadingMore)) OnFilterApplied();
+    }
+
+    /// <summary>模式切换、筛选或加载完成后，补齐当前可见列表的首屏。</summary>
     private void OnFilterApplied()
     {
         if (!IsLoaded) return;
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(async () =>
         {
-            if (!IsLoaded || DataContext is not FollowViewModel vm) return;
-            var sv = FindScrollViewer(DynamicList);
-            if (sv == null) return;
-            var distanceToBottom = sv.ScrollableHeight - sv.VerticalOffset;
-            var contentShort = sv.ScrollableHeight < sv.ActualHeight * 0.8;
-            if (distanceToBottom > AutoLoadThreshold && !contentShort) return;
+            if (!IsLoaded || !IsVisible || DataContext is not FollowViewModel vm) return;
+            if (vm.Loading || vm.LoadingMore || !vm.HasMore || vm.Error.Length > 0) return;
+            var sv = vm.VideoOnly ? VideoFeedScroll : FindScrollViewer(DynamicList);
+            if (sv == null || !sv.IsVisible || sv.ViewportHeight <= 0) return;
+            if (sv.ScrollableHeight - sv.VerticalOffset > AutoLoadThreshold) return;
             await vm.LoadMoreFeedAsync();
         }));
     }
@@ -79,6 +87,7 @@ public partial class FollowPage : UserControl
     {
         // 页面实例不会跟着导航销毁(MainWindow 缓存), 定时器必须自己停:
         // 否则用户在别的页面上, 这边还在定时打接口。
+        if (DataContext is FollowViewModel vm) vm.PropertyChanged -= OnFeedStateChanged;
         _liveBoardTimer?.Stop();
         _unreadTimer?.Stop();
     }
@@ -116,13 +125,10 @@ public partial class FollowPage : UserControl
                win.WindowState != WindowState.Minimized;
     }
 
-    // ------------------------------------------------------------ 右栏排版切换(已废弃)
-
-    // ★ 2026-11-04 删除「动态卡 / 卡片墙」两枚 chip 与 UpdateLayoutChips:
-    //   用户明确要求"要综合, 不要纯视频, 也不要什么卡片墙", 官方 PC 客户端的动态页
-    //   只有一条混合时间线。排版档位(UseCardWall)不再有 UI 入口, 两个 handler
-    //   与 chip 同步逻辑一并删掉 —— 留着会让人以为还有别的档位可选。
-    //   对应地 FollowViewModel.UseCardWall 仍保留(配置兼容), 但不再参与任何可见性判断。
+    private async void OnLoadMoreFeed(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is FollowViewModel vm) await vm.LoadMoreFeedAsync();
+    }
 
     /// <summary>点「N 条新动态」: 把攒下的新动态插到列表最前面</summary>
     private void OnApplyNewDynamics(object sender, RoutedEventArgs e)
@@ -211,7 +217,7 @@ public partial class FollowPage : UserControl
     private void FeedScroll_OnScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (DataContext is not FollowViewModel vm) return;
-        if (e.OriginalSource is not ScrollViewer sv) return;
+        if (e.OriginalSource is not ScrollViewer sv || !sv.IsVisible) return;
         if (e.VerticalChange <= 0 && e.ExtentHeightChange <= 0) return;
         if (vm.Error.Length > 0) return;
         var distanceToBottom = sv.ScrollableHeight - sv.VerticalOffset;

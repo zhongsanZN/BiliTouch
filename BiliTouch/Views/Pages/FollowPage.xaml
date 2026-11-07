@@ -1,18 +1,11 @@
-﻿<UserControl helpers:TrackpadScroll.IsFeed="True" x:Class="BiliTouch.Views.Pages.FollowPage"
+﻿<UserControl x:Class="BiliTouch.Views.Pages.FollowPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
              xmlns:helpers="clr-namespace:BiliTouch.Helpers"
              Background="{DynamicResource AppBackgroundBrush}">
     <UserControl.Resources>
-        <!--
-            右栏排版切换的两枚小 chip(动态卡 / 卡片墙)。
-            写法与播放页评论区的「热门 / 时间」一致: 常态浅灰底, 选中态由 Tag="on" 触发粉底粉字。
-            ★ 选中态**只由 code-behind 写 Tag 驱动** —— 两个按钮的亮/灭在一个地方决定,
-              分散着改必然出现"两边都亮"或"两边都不亮"(沿用播放页那条经验)。
-            ★ 绑定必须写 RelativeSource Self: ControlTemplate 的触发器里不写解析不到,
-              改用 TemplatedParent 也会静默失效(2026-10-03 探针实测)。
-        -->
+        <!-- 综合 / 视频模式与新动态提示共用的按钮样式。 -->
         <Style x:Key="FeedLayoutChipStyle" TargetType="Button">
             <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
             <Setter Property="FontSize" Value="12" />
@@ -160,7 +153,7 @@
                            VerticalAlignment="Bottom" Margin="6,0,0,6" TextTrimming="CharacterEllipsis"
                            Foreground="{DynamicResource TextTertiaryBrush}" FontSize="14" />
             </DockPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,24,0,0">
                 <Button x:Name="NewDynamicsButton" MinHeight="44" Margin="0,0,8,0"
                         Content="{Binding NewDynamicsText}" Click="OnApplyNewDynamics" ToolTip="点击显示新动态">
                     <Button.Style>
@@ -245,7 +238,7 @@
                             <WrapPanel Margin="0,4,0,0">
                                 <Border DockPanel.Dock="Left" CornerRadius="8" Padding="7,2" VerticalAlignment="Center"
                                         Background="{DynamicResource DangerBrush}"
-                                        ToolTip="这些 UP 有未读动态（点开某个 UP 才算已读）"
+                                        ToolTip="B 站返回这些 UP 有未读更新；读取后同步刷新已读状态"
                                         Visibility="{Binding HasUnreadSummary, Converter={StaticResource BoolToVis}}">
                                     <TextBlock Text="{Binding UnreadSummary}" FontSize="10.5" FontWeight="SemiBold"
                                                Foreground="{DynamicResource TextOnDangerBrush}" />                                </Border>
@@ -443,6 +436,18 @@
                     </Border>
 
                     <DockPanel Grid.Row="1" LastChildFill="True">
+                            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,0,8,10">
+                                <Button x:Name="AllFeedModeButton" Style="{StaticResource FeedLayoutChipStyle}"
+                                        MinHeight="36" MinWidth="64" Margin="0,0,8,0"
+                                        Tag="{Binding FeedTagAll}" Command="{Binding ShowAllFeedCommand}">
+                                    <TextBlock Text="综合" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                </Button>
+                                <Button x:Name="VideoFeedModeButton" Style="{StaticResource FeedLayoutChipStyle}"
+                                        MinHeight="36" MinWidth="64" Tag="{Binding FeedTagVideo}"
+                                        Command="{Binding ShowVideoFeedCommand}" ToolTip="只看视频投稿">
+                                    <TextBlock Text="视频" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                </Button>
+                            </StackPanel>
                             <!-- 出错/为空提示(非阻断, 放在列表上方) -->
                             <Border DockPanel.Dock="Top" HorizontalAlignment="Center" MaxWidth="520"
                                     Margin="4,4,4,10" Padding="14,10" CornerRadius="8"
@@ -462,13 +467,6 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- ===== 混合流(唯一的动态时间线, 2026-11-04) =====
-                                 对标官方 PC 客户端的「动态」页: 视频/图文/纯文字/转发/专栏/直播混排,
-                                 每条卡片带头像、时间、正文、图片、热评、互动行。
-                                 ★ 「全部动态」与「单 UP」都走这一条 —— 单 UP 也是 TA 的动态时间线,
-                                   不是投稿视频列表(用户原话: "要综合, 不要纯视频")。 -->
-
-
                             <!-- 底部状态 -->
                             <StackPanel DockPanel.Dock="Bottom" Margin="0,6,0,8" HorizontalAlignment="Center">
                                 <StackPanel Orientation="Horizontal"
@@ -477,10 +475,30 @@
                                     <TextBlock Text="加载中…" Margin="8,0,0,0"
                                                VerticalAlignment="Center" Style="{StaticResource MetaTextStyle}" />
                                 </StackPanel>
+                                <Button Content="加载更多" Style="{StaticResource SubtleButtonStyle}"
+                                        Click="OnLoadMoreFeed" MinHeight="36"
+                                        Visibility="{Binding HasMore, Converter={StaticResource BoolToVis}}" />
                                 <TextBlock Text="已经到底啦" Style="{StaticResource MetaTextStyle}"
                                            Visibility="{Binding HasMore, Converter={StaticResource InvBoolToVis}}" />
                             </StackPanel>
+                            <Grid>
+                            <ScrollViewer x:Name="VideoFeedScroll" VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          Visibility="{Binding ShowVideoFeed, Converter={StaticResource BoolToVis}}"
+                                          ScrollChanged="FeedScroll_OnScrollChanged">
+                                <ItemsControl ItemsSource="{Binding VideoFeed}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <helpers:VirtualizingCardWallPanel helpers:CardWall.Enable="True" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate><controls:VideoCard DataContext="{Binding Video}" /></DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                             <ListBox x:Name="DynamicList" ItemsSource="{Binding Dynamics}"
+                                     Visibility="{Binding ShowDynamicFeed, Converter={StaticResource BoolToVis}}"
                                      Background="Transparent" BorderThickness="0" Padding="0"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
@@ -506,6 +524,7 @@
                                     <DataTemplate><controls:DynamicFeedCard MaxWidth="760" /></DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
+                            </Grid>
                     </DockPanel>
                 </Grid>
             </Grid>

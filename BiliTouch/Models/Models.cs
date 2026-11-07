@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -636,15 +636,7 @@ public class FollowUser : System.ComponentModel.INotifyPropertyChanged
 
     private int _newCount;
 
-    /// <summary>
-    /// 「未读动态」条数 —— 左栏头像左侧未读红点的判定依据(0 = 不显示红点)。
-    /// 红点本身只表达"有没有新动态", 具体条数放在红点的悬浮提示里。
-    ///
-    /// ★ 由**本地**判断, 不新增接口(见 DynamicSeenStore): 拿动态流里"该 UP 最新的一条"
-    ///   与上次记录的比对, 不一样就是有新动态。
-    /// ★ 必须带通知: 红点是刷新后由 ViewModel 侧统一刷的(见 FollowViewModel.UpdateUnreadBadges),
-    ///   界面要跟着变。
-    /// </summary>
+    /// <summary>服务端未读标记。官方接口只提供布尔值，生产侧使用 0/1，不声称知道未读条数。</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public int NewCount
     {
@@ -1526,16 +1518,9 @@ public class AppSettings
     /// </summary>
     public bool FollowCardWall { get; set; }
 
-    /// <summary>
-    /// 「动态」页**左栏 UP 主列表**的排序模式(2026-11-05), 取值见
-    /// <see cref="FollowSortMode"/>: 0=最近更新(默认) / 1=未读优先 / 2=关注顺序。
-    ///
-    /// ★ 存 int 而不是枚举: 与 <see cref="LastSearchKind"/> 同一套理由 ——
-    ///   JSON 里枚举本来就按数字走; 老配置没有这个字段时拿到 0, 正好是默认的"最近更新",
-    ///   不需要任何版本兼容代码。越界值由 SettingsStore 读取时归一到默认(见 FollowSorting.Normalize)。
-    /// ★ 与 Services/SettingsStore.cs 的同名属性是**读写契约**, 两处必须一致。
-    /// </summary>
-    public int FollowSortMode { get; set; }
+    /// <summary>左栏排序：0=最近更新，1=未读优先（默认），2=关注顺序。</summary>
+    public int FollowSortMode { get; set; } = (int)BiliTouch.Models.FollowSortMode.UnreadFirst;
+    public int FollowSortSelectionVersion { get; set; }
 
     /// <summary>
     /// 软件缩放百分比(80~150, 默认 100)。把整个界面按比例放大/缩小, 与系统 DPI 无关。
@@ -1686,6 +1671,24 @@ public class AppSettings
     /// 老配置缺这个字段时保持初始化值 ⇒ "默认打开"自动成立, 不需要版本号兼容。
     /// </summary>
     public bool AutoCheckUpdate { get; set; } = true;
+
+    /// <summary>
+    /// GPU 硬件加速(默认 true)。0.2.7 新增。
+    ///
+    /// 开: 走 WPF 默认的硬件渲染管线(RenderOptions.ProcessRenderMode = Default),
+    ///     位图缩放取 HighQuality、边缘取 AntiAliased —— 滚动时由 GPU 合成图层,
+    ///     首页/动态这类大量卡片滚动的表面帧间隔更稳。
+    /// 关: 强制软件渲染(ProcessRenderMode = SoftwareOnly), 缩放降为 LowQuality、
+    ///     边缘 Unspecified —— 不占显存, 老旧核显/虚拟机上更不容易花屏或掉驱动。
+    ///
+    /// ★ 可空是**必须**的: 老配置里没有这个字段, 而 bool 的默认值 false 会被误判成
+    ///   "用户主动关掉了 GPU 加速" —— 那会让所有老用户升级后静默掉进软件渲染。
+    ///   null(缺字段)按"开"处理, 与 SettingsStore.HardwareAccelerationEnabled 一致。
+    /// ★ 只影响**下一个进程**: 渲染模式是进程级、在窗口创建前定死的,
+    ///   所以设置页改完要重启应用才生效(界面上有提示)。
+    /// ★ 与 Services/SettingsStore.cs 的同名属性是读写契约, 两处必须一致。
+    /// </summary>
+    public bool? HardwareAccelerationEnabled { get; set; }
 
     /// <summary>
     /// 用户点过「跳过此版本」的版本号(如 "1.2.0")。空 = 没跳过任何版本。
