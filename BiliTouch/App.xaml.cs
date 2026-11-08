@@ -17,7 +17,7 @@ public partial class App : Application
     /// 同步点(漏一个就会出现"关于页写 1.2.3、安装包文件名还是 1.2.2"这种不一致):
     ///   BiliTouch.csproj 的 &lt;Version&gt;、Publish\installer.iss 的 MyAppVersion、发布.ps1 的默认 $Version。
     /// </summary>
-    public const string AppVersion = "0.2.8";
+    public const string AppVersion = "0.2.9";
 
     public static MainViewModel MainVm { get; } = new();
 
@@ -45,6 +45,16 @@ public partial class App : Application
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
             _ = PublishVerification.RunAsync(this, e.Args);
+            return;
+        }
+
+        // 退出全屏不闪退的专项自证(2026-11-08): 反复进出全屏并确认画面还在推进。
+        // ★ 与 --verify-publish 同样放在最前面: 它要隔离配置目录、且不该被单实例闸门挡掉
+        //   (装好的程序可能已经在跑, 探针是**另一次**启动, 拿不到单实例就会静默退出)。
+        if (e.Args.Contains("--verify-fullscreen"))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            _ = FullscreenVerification.RunAsync(this, e.Args);
             return;
         }
 

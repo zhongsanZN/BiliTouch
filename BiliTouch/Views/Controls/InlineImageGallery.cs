@@ -63,6 +63,7 @@ public sealed class InlineImageGallery:UserControl
     private static Button Button(string label,Action action)
     {
         var button=new Button{Content=new TextBlock{Text=label,Foreground=Brushes.White,FontWeight=FontWeights.SemiBold},MinWidth=44,Height=44,Margin=new Thickness(8),Padding=new Thickness(12,0,12,0),Cursor=Cursors.Hand,Foreground=Brushes.White,Background=new SolidColorBrush(Color.FromArgb(190,30,30,30))};
+        if(label is "‹" or "›")button.Content=new SkinGlyph{Kind=label=="‹"?"Left":"Right",IconSize=22,Tint=Brushes.White,Child=(UIElement)button.Content};
         button.SetResourceReference(StyleProperty,"SubtleButtonStyle");button.Click+=(_,e)=>{e.Handled=true;action();};return button;
     }
     public async Task OpenAsync(IEnumerable<string> urls,int index)

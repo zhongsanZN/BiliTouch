@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -6392,8 +6392,20 @@ public partial class PlayerWindow : FluentWindow
                 WindowState = WindowState.Normal;
                 if (!_beforeFullscreenBounds.IsEmpty)
                 {
-                    Left = _beforeFullscreenBounds.Left; Top = _beforeFullscreenBounds.Top;
-                    Width = _beforeFullscreenBounds.Width; Height = _beforeFullscreenBounds.Height;
+                    // ★★★ 2026-11-08 修「退出全屏后卡死闪退」的第二层(第一层是 VlcPlacePictureGuard):
+                    //   这里原来是四次独立赋值(Left / Top / Width / Height) —— 每一个都会各自发一次
+                    //   SetWindowPos, 于是退出全屏时窗口被连续 resize **四次**, 每一次都让 LibVLC
+                    //   重协商 vout。重协商的窗口期里 d3d11 的 processor/super 缩放会拿一份已被
+                    //   video_format_Clean 清零的 pool_fmt 去算几何, 撞上 libvlccore
+                    //   vout_display_PlacePicture 里的 0/0(0xC0000094)。
+                    //   ⇒ 合并成**一次**原生 SetWindowPos: 危险窗口从四次缩到一次。
+                    //   ★ 原生调用失败(极端情况: 句柄还没建好)时回落到原来的四次赋值,
+                    //     宁可多一次 resize 也不能让窗口停在错误尺寸上。
+                    if (!SetWindowBoundsOnce(_beforeFullscreenBounds))
+                    {
+                        Left = _beforeFullscreenBounds.Left; Top = _beforeFullscreenBounds.Top;
+                        Width = _beforeFullscreenBounds.Width; Height = _beforeFullscreenBounds.Height;
+                    }
                 }
             }
             DwmInterop.SyncCaptionForAcrylic(this);
@@ -7190,6 +7202,7 @@ public partial class PlayerWindow : FluentWindow
         if (_closing) return;
         LikeLabel.Text = VideoItem.FormatCount(_likeCount);
         ThemedLikeIcon.IsActive = _isLiked;
+        ThemedFavoriteIcon.IsActive = _isFavorited;
         CoinLabel.Text = VideoItem.FormatCount(_coinCount);
         FavLabel.Text = VideoItem.FormatCount(_favCount);
         ApplyActionVisual(BtnLike, _isLiked, ActionLikeColor);

@@ -6,4 +6,4 @@ BiliTouch 基于 ABing（ABING1111）的 [BiliDesk](https://github.com/ABING1111
 
 星引擎主题美术及其他资源权利说明见 `../BiliTouch/Assets/Skins/StarParty/SOURCES.md`。代码许可证见 `../LICENSE`。
 
-影之刃零装扮采用 S-GAME 官网及用户提供的官网素材包。原美术权利归相应权利人。来源及改编方式见 `../BiliTouch/Assets/Skins/PhantomBladeZero/SOURCES.md`。
+影之刃零装扮采用 S-GAME 官网、用户提供的官网素材包与图片，以及按用户要求从本机游戏提取的界面和鼠标素材。原美术权利归相应权利人。来源及改编方式见 `../BiliTouch/Assets/Skins/PhantomBladeZero/SOURCES.md`。

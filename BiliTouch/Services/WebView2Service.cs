@@ -14,6 +14,26 @@ namespace BiliTouch.Services;
 public class WebView2Service
 {
     private Task<CoreWebView2Environment>? _envTask;
+    private readonly List<WeakReference<WebView2>> _cursorViews = new();
+
+    public WebView2Service() => SkinService.Instance.Changed += RefreshCursors;
+
+    private async void RefreshCursors()
+    {
+        _cursorViews.RemoveAll(reference=>!reference.TryGetTarget(out _));
+        foreach(var reference in _cursorViews.ToArray())
+        {
+            if(reference.TryGetTarget(out var view))await RefreshCursorAsync(view);
+        }
+    }
+
+    private static async Task RefreshCursorAsync(WebView2 view)
+    {
+        try{if(view.CoreWebView2!=null)await view.CoreWebView2.ExecuteScriptAsync(AppCursor.WebScript);}
+        catch(ObjectDisposedException){}
+        catch(InvalidOperationException){}
+        catch(System.Runtime.InteropServices.COMException){}
+    }
 
     public Task<CoreWebView2Environment> GetEnvironmentAsync()
         => _envTask ??= CoreWebView2Environment.CreateAsync(
@@ -42,6 +62,8 @@ public class WebView2Service
         {
             await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(VideoPageCleanerScript);
             await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(AppCursor.WebScript);
+            _cursorViews.Add(new WeakReference<WebView2>(webView));
+            webView.CoreWebView2.NavigationCompleted += async (_,_) => await RefreshCursorAsync(webView);
             _cleanerInjectedWebViews.Add(hash);
         }
         catch

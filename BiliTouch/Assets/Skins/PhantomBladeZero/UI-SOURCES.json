@@ -1,0 +1,169 @@
+[
+  {
+    "id": "I1229",
+    "file": "ui_1229.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/InGame/Bell/T_Loading.uasset",
+    "sha256": "54216706f8227868369f65e5d29a0ac175a9ba8a5429722c9c352c3902788258"
+  },
+  {
+    "id": "I1273",
+    "file": "ui_1273.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/InGame/Literature/T_Literature_ArrowL.uasset",
+    "sha256": "66031242b6504d37345d54f1730b8e79a667406b721b5b5b487d66ac9030b4e3"
+  },
+  {
+    "id": "I1275",
+    "file": "ui_1275.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/InGame/Literature/T_Literature_ArrowR.uasset",
+    "sha256": "196e61c572a13d973375219f24a3aa64d98d916b966f4d48ef6f79b09f48c588"
+  },
+  {
+    "id": "I1316",
+    "file": "ui_1316.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/InGame/Map/T_SingleDoor_PH.uasset",
+    "sha256": "2908539840a52c212c599cc6ac13c79b8dcba4cda65ba2a286b8a8ec61798c7f"
+  },
+  {
+    "id": "I1420",
+    "file": "ui_1420.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/InGame/Map/Texture/T_Map_Portal.uasset",
+    "sha256": "09461b8c5b18dcc592397b3ac16cddc293c6145246539ab0274461308963e17f"
+  },
+  {
+    "id": "I1490",
+    "file": "ui_1490.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/InGame/Quest/T_QuestListHun.uasset",
+    "sha256": "3fb811e86b2c9bab34ca11ed2120ba3da986953aa3de0bb00ebb00738673ac31"
+  },
+  {
+    "id": "I2030",
+    "file": "ui_2030.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/Settings/Texture/T_SecondTab_FanHui.uasset",
+    "sha256": "1e5cdbc7fa787c554c9aff347a872d253f467d4d002ee649f0710d16c009d0fc"
+  },
+  {
+    "id": "I2031",
+    "file": "ui_2031.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/Settings/Texture/T_SecondTab_Settings_HuaZhi.uasset",
+    "sha256": "4b811b69412a37bebc01951a2a81bbe23e1f9e844d41e8f9e347665b3e57ff8e"
+  },
+  {
+    "id": "I2032",
+    "file": "ui_2032.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/Settings/Texture/T_SecondTab_Settings_KongZhi.uasset",
+    "sha256": "b8c68802e23fbc7066cef63825fe7108f47013635832c5452dd7bb6237db4943"
+  },
+  {
+    "id": "I2193",
+    "file": "ui_2193.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/Texture/PauseMenu/T_Mission_Finish.uasset",
+    "sha256": "268560b04de1c795bf8cfa93b24666eb7a059ba8be85a317d86a7ccb4786a46e"
+  },
+  {
+    "id": "I2213",
+    "file": "ui_2213.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/Texture/PauseMenu/T_Tag_Setting_Default.uasset",
+    "sha256": "c0cf5b7b7cf41890192dd07ced5a982bb1c94f24a86d20ac03b8acf2e783de76"
+  },
+  {
+    "id": "I2214",
+    "file": "ui_2214.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/Texture/PauseMenu/T_Tag_Setting_Selected.uasset",
+    "sha256": "56f1e51aa504652315ab46979f26b38c2e47b82f844afce5061f7e02c840cb7b"
+  },
+  {
+    "id": "I2211",
+    "file": "ui_2211.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/Texture/PauseMenu/T_Tag_Reading_Default.uasset",
+    "sha256": "43450ccf59397ef58b1585627f33d2838d780bcdba99ff56ade6b591a9bdc196"
+  },
+  {
+    "id": "I2212",
+    "file": "ui_2212.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/Texture/PauseMenu/T_Tag_Reading_Selected.uasset",
+    "sha256": "3741f50c7e9566b5daeaad43a5950ad4e10d3ce639de9ffb0342b2c704de7bc4"
+  },
+  {
+    "id": "I2208",
+    "file": "ui_2208.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/Texture/PauseMenu/T_Tag_Map_Default.uasset",
+    "sha256": "8535ae0b5525bc4b1d71ee45cb71837eee7fd04960510c3ec410d98602013da7"
+  },
+  {
+    "id": "I2206",
+    "file": "ui_2206.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/Texture/PauseMenu/T_Tag_Inventory_Map_Select.uasset",
+    "sha256": "d1fc626a9ac0fadba27efddf69b27e5013d3443ed846b1a88b67292eb7e121db"
+  },
+  {
+    "id": "I2684",
+    "file": "ui_2684.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/UINew/System/Character/Texture/T_WeaponTypeButton_IP.uasset",
+    "sha256": "d314425c9ee8d7f4659ac0222925b08621b9a79ddd385a313a584036eb3b94bb"
+  },
+  {
+    "id": "I0395",
+    "file": "ui_0395.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/HUD/Art/Icon_Hud_JingChun_Fire.uasset",
+    "sha256": "ed642c7f44d373e0c1c2b6d1d094bea6ec827549542a43713b33ebd1f37002da"
+  },
+  {
+    "id": "I0397",
+    "file": "ui_0397.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/HUD/Art/Icon_Hud_JingChun_Fire_Purple.uasset",
+    "sha256": "1ace147fb5bede0f929ab37c1aae3af2de6b457e7119f6fded85f5828e1bc556"
+  },
+  {
+    "id": "I1327",
+    "file": "ui_1327.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/InGame/Map/Texture/T_Bell_W.uasset",
+    "sha256": "673a65b8fab5844ed04e3a745b4a84619a0af0a430a78d37dd181b401f2f3374"
+  },
+  {
+    "id": "I1336",
+    "file": "ui_1336.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/InGame/Map/Texture/T_Map_BellGold.uasset",
+    "sha256": "53b145a22fa8f02a2d5ca545438bac8fc1c32788a9426cc0d6e74abda6cff2d5"
+  },
+  {
+    "id": "I1335",
+    "file": "ui_1335.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/InGame/Map/Texture/T_Map_Bell.uasset",
+    "sha256": "8650aaafabb9ecaf34e6751dccfbf855a04ec5f584fc87e443c7e93555a02347"
+  },
+  {
+    "id": "I1334",
+    "file": "ui_1334.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/InGame/Map/Texture/T_JiYiZhiHua_W.uasset",
+    "sha256": "c1adfb0a7aa428bcc831d2ef4b392a955d392debaf63b1311e3de6e06b003ddd"
+  },
+  {
+    "id": "I1333",
+    "file": "ui_1333.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/InGame/Map/Texture/T_JiYiZhiHua_B.uasset",
+    "sha256": "6ca7665585ed0e32d66a1a0b46f75872e0444b10edd41beb3a8c7c68258080a4"
+  },
+  {
+    "id": "I2114",
+    "file": "ui_2114.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/Texture/Character/T_Attribute_ShaChi.uasset",
+    "sha256": "41c414a6d0dbe5bbb4897cc844222588a7b42366de5c13f0d7f960a73a329608"
+  },
+  {
+    "id": "I2184",
+    "file": "ui_2184.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/Texture/PauseMenu/T_Icon_JingHuaShuiYue.uasset",
+    "sha256": "a94adc79576d206e359134203c6cd0c16f3bba79a75fc37f1c0b3692c7b6223d"
+  },
+  {
+    "id": "I1325",
+    "file": "ui_1325.png",
+    "source": "../../../ProjectPBZ/Content/PBZContent/UI/InGame/Map/Texture/T_Bell_M.uasset",
+    "sha256": "fa651574671a8bea51f9a9df1cc4126f5c1067f24422844c1bf2e6bcf307cf97"
+  },
+  {
+    "file": "ui_gramophone.png",
+    "source": "User attachment",
+    "sha256": "a693e7f2573b8fe4ed3cbd8d90df53d579ce57dbe00ec65f4eaab79274ba362e"
+  }
+]

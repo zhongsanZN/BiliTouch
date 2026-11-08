@@ -14,9 +14,11 @@ public static class AppCursor
 {
     public const int Size=30;
     private static bool _installed;
-    private static Cursor? _normal,_pressed;
-    public static Cursor Normal=>_normal??=Load("Cursor_up.cur");
-    public static Cursor Pressed=>_pressed??=Load("Cursor_down.cur");
+    private static Cursor? _normal,_pressed,_phantom;
+    private static Cursor Phantom=>_phantom??=Load("PBZCursor.cur");
+    public static Cursor Normal=>SkinService.Instance.IsPhantomBlade?Phantom:_normal??=Load("Cursor_up.cur");
+    public static Cursor Pressed=>SkinService.Instance.IsPhantomBlade?Phantom:_pressed??=Load("Cursor_down.cur");
+    private static readonly Dictionary<string,string> WebPointers = new();
     private static Cursor Load(string name)
     {
         using var stream=Application.GetResourceStream(new Uri("pack://application:,,,/BiliTouch;component/Assets/Cursors/"+name))!.Stream;
@@ -37,17 +39,24 @@ public static class AppCursor
         {
             string Pointer(string name)
             {
+                if(WebPointers.TryGetValue(name,out var cached))return cached;
                 using var stream=Application.GetResourceStream(new Uri("pack://application:,,,/BiliTouch;component/Assets/Cursors/"+name))!.Stream;
                 using var bytes=new System.IO.MemoryStream();stream.CopyTo(bytes);
                 // CUR contains the untouched source PNG after its 22-byte directory/header.
-                var png="data:image/png;base64,"+Convert.ToBase64String(bytes.ToArray()[22..]);
-                var svg=$"<svg xmlns='http://www.w3.org/2000/svg' width='{Size}' height='{Size}' viewBox='0 0 60 60'><image width='60' height='60' href='{png}'/></svg>";
-                return "url(data:image/svg+xml,"+Uri.EscapeDataString(svg)+") 4 4, auto";
+                var data=bytes.ToArray();var width=data[6];var height=data[7];
+                var png="data:image/png;base64,"+Convert.ToBase64String(data[22..]);
+                var svg=$"<svg xmlns='http://www.w3.org/2000/svg' width='{Size}' height='{Size}' viewBox='0 0 {width} {height}'><image width='{width}' height='{height}' href='{png}'/></svg>";
+                var x=(int)Math.Round(BitConverter.ToUInt16(data,10)*(double)Size/width);
+                var y=(int)Math.Round(BitConverter.ToUInt16(data,12)*(double)Size/height);
+                return WebPointers[name]="url(data:image/svg+xml,"+Uri.EscapeDataString(svg)+$") {x} {y}, auto";
             }
-            var normal=JsonSerializer.Serialize(Pointer("Cursor_up.cur"));var pressed=JsonSerializer.Serialize(Pointer("Cursor_down.cur"));
-            return "(()=>{if(window.__biliTouchCursor)return;window.__biliTouchCursor=true;const normal="+normal+",pressed="+pressed+";"+"""
+            var phantom=SkinService.Instance.IsPhantomBlade;
+            var normal=JsonSerializer.Serialize(Pointer(phantom?"PBZCursor.cur":"Cursor_up.cur"));var pressed=JsonSerializer.Serialize(Pointer(phantom?"PBZCursor.cur":"Cursor_down.cur"));
+            return "(()=>{let normal="+normal+",pressed="+pressed+";if(window.__biliTouchSetCursor){window.__biliTouchSetCursor(normal,pressed);return;}window.__biliTouchCursor=true;"+"""
                 function init(){
                   const root=document.documentElement;if(!root)return;
+                  let down=false;
+                  window.__biliTouchSetCursor=(n,p)=>{normal=n;pressed=p;root.style.setProperty('--bilitouch-pointer',down?pressed:normal);};
                   const style=document.createElement('style');style.textContent='[data-bilitouch-pointer]{cursor:var(--bilitouch-pointer)!important}';root.appendChild(style);
                   root.style.setProperty('--bilitouch-pointer',normal);root.setAttribute('data-bilitouch-pointer','');
                   document.addEventListener('pointerover',e=>{
@@ -55,8 +64,8 @@ public static class AppCursor
                     const cursor=getComputedStyle(e.target).cursor;
                     if(/^(auto|default|pointer)$/.test(cursor))e.target.setAttribute('data-bilitouch-pointer','');
                   },true);
-                  document.addEventListener('pointerdown',()=>root.style.setProperty('--bilitouch-pointer',pressed),true);
-                  const reset=()=>root.style.setProperty('--bilitouch-pointer',normal);
+                  document.addEventListener('pointerdown',()=>{down=true;root.style.setProperty('--bilitouch-pointer',pressed);},true);
+                  const reset=()=>{down=false;root.style.setProperty('--bilitouch-pointer',normal);};
                   document.addEventListener('pointerup',reset,true);document.addEventListener('pointercancel',reset,true);window.addEventListener('blur',reset);
                 }
                 if(document.documentElement)init();else document.addEventListener('DOMContentLoaded',init,{once:true});
@@ -77,6 +86,7 @@ public static class AppCursor
     public static void Install()
     {
         if(_installed)return;_installed=true;
+        SkinService.Instance.Changed+=Mouse.UpdateCursor;
         EventManager.RegisterClassHandler(typeof(UIElement),Mouse.QueryCursorEvent,new QueryCursorEventHandler(OnQueryCursor),true);
         InputManager.Current.PostProcessInput+=(_,e)=>
         {if(e.StagingItem.Input is MouseButtonEventArgs button && button.StylusDevice==null)Mouse.UpdateCursor();};
@@ -84,7 +94,7 @@ public static class AppCursor
     private static void OnQueryCursor(object sender,QueryCursorEventArgs e)
     {
         var cursor=e.Cursor;
-        if(cursor!=null && cursor!=Cursors.Arrow && cursor!=Cursors.Hand && cursor!=Normal && cursor!=Pressed)return;
+        if(cursor!=null && cursor!=Cursors.Arrow && cursor!=Cursors.Hand && cursor!=_normal && cursor!=_pressed && cursor!=_phantom)return;
         e.Cursor=Mouse.LeftButton==MouseButtonState.Pressed || Mouse.RightButton==MouseButtonState.Pressed?Pressed:Normal;
         e.Handled=true;
     }

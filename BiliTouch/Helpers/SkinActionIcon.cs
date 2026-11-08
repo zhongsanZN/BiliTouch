@@ -18,11 +18,11 @@ public sealed class SkinActionIcon : Shape
  public bool IsActive{get=>(bool)GetValue(IsActiveProperty);set=>SetValue(IsActiveProperty,value);}
  private static readonly Geometry ArtworkGeometry=CreateArtworkGeometry();
  private static Geometry CreateArtworkGeometry(){var geometry=new RectangleGeometry(new Rect(0,0,1,1));geometry.Freeze();return geometry;}
- protected override Geometry DefiningGeometry=>ThemedAsset=="play"?ArtworkGeometry:Kind=="Puzzle" && Data==Geometry.Empty?Geometry.Parse("M0,0 H8 V8 H0 Z M12,0 H20 V8 H12 Z M0,12 H8 V20 H0 Z M12,12 H20 V20 H12 Z"):Data;
+ protected override Geometry DefiningGeometry=>Kind=="Play" && ThemedAsset!=null?ArtworkGeometry:Kind=="Puzzle" && Data==Geometry.Empty?Geometry.Parse("M0,0 H8 V8 H0 Z M12,0 H20 V8 H12 Z M0,12 H8 V20 H0 Z M12,12 H20 V20 H12 Z"):Data;
  private bool _hasPlaybackSize;
  private double _baseWidth,_baseHeight;
  private Button? _playButton;
- public SkinActionIcon(){Loaded+=(_,_)=>{SkinService.Instance.Changed+=Refresh;Refresh();};Unloaded+=(_,_)=>{SkinService.Instance.Changed-=Refresh;if(_playButton!=null)_playButton.SizeChanged-=OnPlayButtonSize;_playButton=null;ClearGlow();};IsVisibleChanged+=(_,_)=>UpdatePlaybackSize();}
+ public SkinActionIcon(){Loaded+=(_,_)=>{SkinService.Instance.Changed+=Refresh;Svc.Theme.ThemeChanged+=Refresh;Refresh();};Unloaded+=(_,_)=>{SkinService.Instance.Changed-=Refresh;Svc.Theme.ThemeChanged-=Refresh;if(_playButton!=null)_playButton.SizeChanged-=OnPlayButtonSize;_playButton=null;ClearGlow();};IsVisibleChanged+=(_,_)=>UpdatePlaybackSize();}
  private void OnPlayButtonSize(object sender,SizeChangedEventArgs e)=>UpdatePlaybackSize();
  private void Refresh(){ClearGlow();UpdatePlaybackSize();InvalidateMeasure();InvalidateVisual();}
  private void UpdatePlaybackSize()
@@ -34,8 +34,8 @@ public sealed class SkinActionIcon : Shape
   if(!ReferenceEquals(_playButton,button)){if(_playButton!=null)_playButton.SizeChanged-=OnPlayButtonSize;_playButton=button;button.SizeChanged+=OnPlayButtonSize;}
   if(!_hasPlaybackSize){_baseWidth=Width;_baseHeight=Height;_hasPlaybackSize=true;}
   var size=Math.Clamp(Math.Min(button.ActualWidth,button.ActualHeight)-2,14,40);
-  SetCurrentValue(WidthProperty,ThemedAsset=="play"?size:_baseWidth);
-  SetCurrentValue(HeightProperty,ThemedAsset=="play"?size:_baseHeight);
+  SetCurrentValue(WidthProperty,ThemedAsset!=null?size:_baseWidth);
+  SetCurrentValue(HeightProperty,ThemedAsset!=null?size:_baseHeight);
  }
  private void ClearGlow(){if(Effect is DropShadowEffect glow)glow.BeginAnimation(DropShadowEffect.OpacityProperty,null);Effect=null;}
  public bool PulseGlow()
@@ -58,25 +58,21 @@ public sealed class SkinActionIcon : Shape
   // Support callers supplying an equivalent custom geometry.
   return Data?.ToString() == PlayerGlyphs.PlayGeometry.ToString();
  }
+ public bool IsCompact => (double.IsFinite(Width)?Width:ActualWidth)<=22;
  public string? ThemedAsset => SkinService.Instance.IsPhantomBlade ? Kind switch {
-  "Favorite"=>"memory_flower", "Coin"=>"jade", "Like"=>IsActive?"like_on":"like_off",
-  "Play" when IsPlayGlyph()=>"play", _=>null
+  "Favorite" or "Coin" or "Like" or "Puzzle"=>PhantomUiArtwork.Asset(Kind,Svc.Theme.IsDark,IsActive,Count,IsCompact),
+  "Play"=>IsPlayGlyph()?"play":"ui_1316", _=>null
  } : null;
  protected override void OnRender(DrawingContext dc)
  {
   if(Kind=="Play"){
-   if(ThemedAsset is {} play)SkinService.Instance.DrawArtwork(dc,play,new Rect(RenderSize));else base.OnRender(dc);
+   if(ThemedAsset is {} play){if(play=="play")SkinService.Instance.DrawArtwork(dc,play,new Rect(RenderSize));else PhantomUiArtwork.Draw(dc,play,new Rect(RenderSize),Fill);}else base.OnRender(dc);
    return;
   }
   if(!SkinService.Instance.IsEnabled){base.OnRender(dc);return;}
   if(SkinService.Instance.IsPhantomBlade)
   {
-   if(ThemedAsset is {} asset){
-    if(Kind=="Coin" && Count>1){
-     dc.PushOpacity(.65);SkinService.Instance.DrawArtwork(dc,asset,new Rect(0,0,ActualWidth*.82,ActualHeight*.82));dc.Pop();
-     SkinService.Instance.DrawArtwork(dc,asset,new Rect(ActualWidth*.18,ActualHeight*.18,ActualWidth*.82,ActualHeight*.82));
-    }else SkinService.Instance.DrawArtwork(dc,asset,new Rect(RenderSize));
-   }else base.OnRender(dc);
+   if(ThemedAsset!=null)PhantomUiArtwork.DrawAction(dc,Kind,new Rect(RenderSize),IsActive,Count,IsCompact);else base.OnRender(dc);
    return;
   }
   var name=Kind switch{"Coin"=>Count>1?"action_coins":"action_coin","Favorite"=>"action_favorite","Puzzle"=>"action_puzzle",_=>"action_like"};

@@ -1,4 +1,4 @@
-﻿<views:FluentWindow x:Class="BiliTouch.Views.PlayerWindow"
+<views:FluentWindow x:Class="BiliTouch.Views.PlayerWindow"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:views="clr-namespace:BiliTouch.Views"
@@ -947,8 +947,8 @@
                                  既挡住那块白, 又顺手给了个"重播"入口。 -->
                             <Border x:Name="EndOverlay" Background="#CC000000" Visibility="Collapsed">
                                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                               FontSize="30" Foreground="#AAA" HorizontalAlignment="Center" />
+                                    <helpers:SkinGlyph Kind="Finished" IconSize="72" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White"><TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                               FontSize="30" Foreground="#AAA" HorizontalAlignment="Center" /></helpers:SkinGlyph>
                                     <TextBlock x:Name="EndText" Text="已播完" Margin="0,12,0,0"
                                                Foreground="#DDD" FontSize="13" HorizontalAlignment="Center" />
                                     <Button Content="重播" Style="{StaticResource AccentButtonStyle}"
@@ -965,9 +965,9 @@
                                     Background="#B3000000" IsHitTestVisible="False"
                                     Visibility="Collapsed" Opacity="0" Panel.ZIndex="98">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock x:Name="VolumeOsdIcon" Text="&#xE767;"
+                                    <helpers:SkinGlyph Kind="Volume" IconSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White" State="{Binding Text,ElementName=VolumeOsdIcon}"><TextBlock x:Name="VolumeOsdIcon" Text="&#xE767;"
                                                FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                               FontSize="16" Foreground="White" VerticalAlignment="Center" />
+                                               FontSize="16" Foreground="White" VerticalAlignment="Center" /></helpers:SkinGlyph>
                                     <TextBlock x:Name="VolumeOsdText" Text="80%" Margin="9,0,0,0"
                                                FontSize="14" Foreground="White" VerticalAlignment="Center" />
                                 </StackPanel>
@@ -1007,8 +1007,8 @@
                                     Background="#B3000000" Visibility="Collapsed" Opacity="0"
                                     Panel.ZIndex="97">
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="&#xE76C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                               FontSize="12" Foreground="#F2FFFFFF" VerticalAlignment="Center" />
+                                    <helpers:SkinGlyph Kind="Right" IconSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White"><TextBlock Text="&#xE76C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                               FontSize="12" Foreground="#F2FFFFFF" VerticalAlignment="Center" /></helpers:SkinGlyph>
                                     <TextBlock x:Name="SkipNoticeText" Margin="8,0,0,0" FontSize="12"
                                                Foreground="#F2FFFFFF" VerticalAlignment="Center" />
                                     <!-- 撤回按钮复用控制栏那个 PlayerTextBtn: 它本来就是为"压在视频上"定的
@@ -1125,9 +1125,9 @@
                                                 Width="36" Height="36" Margin="6,0,0,0" Click="OnMuteClick"
                                                 MouseEnter="OnVolumeHoverEnter" MouseLeave="OnVolumeHoverLeave"
                                                 ToolTip="静音 / 展开音量条">
-                                            <TextBlock x:Name="VolumeIcon" Text="&#xE767;"
+                                            <helpers:SkinGlyph Kind="Volume" IconSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White" State="{Binding Text,ElementName=VolumeIcon}"><TextBlock x:Name="VolumeIcon" Text="&#xE767;"
                                                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                                       FontSize="14" Foreground="White"/>
+                                                       FontSize="14" Foreground="White"/></helpers:SkinGlyph>
                                         </Button>
                                         <Popup x:Name="VolumePopup" Placement="Top" StaysOpen="True"
                                                AllowsTransparency="True" PopupAnimation="Fade" VerticalOffset="-10">
@@ -1237,7 +1237,7 @@
                                         <!-- 清晰度 -->
                                         <Button Grid.Column="6" x:Name="BtnQuality" Style="{StaticResource PlayerTextBtn}"
                                                 Margin="4,0,0,0" Click="OnQualityClick" ToolTip="切换清晰度">
-                                            <TextBlock x:Name="QualityText" Text="1080P" Foreground="#F2FFFFFF" />
+                                            <StackPanel Orientation="Horizontal"><helpers:SkinGlyph Kind="Quality" IconSize="24" Tint="White"/><TextBlock x:Name="QualityText" Text="1080P" Foreground="#F2FFFFFF" /></StackPanel>
                                         </Button>
                                         <!-- 音质标识(2026-11-04): 用户问"到底开没开 Hi-Res", 这里直接写出来。
                                              ★ 用户要求「只作为显示, 不应切回 aac」——
@@ -1331,7 +1331,7 @@
                                         <!-- 弹幕区域占比 -->
                                         <Button Grid.Column="10" x:Name="BtnDanmakuArea" Style="{StaticResource PlayerTextBtn}"
                                                 Margin="4,0,0,0" Click="OnDanmakuAreaClick" ToolTip="弹幕设置" AutomationProperties.Name="弹幕设置">
-                                            <TextBlock Text="弹幕设置" Foreground="#F2FFFFFF"/>
+                                            <helpers:SkinGlyph Kind="DanmakuSettings" IconSize="24" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White"><TextBlock Text="弹幕设置" Foreground="#F2FFFFFF"/></helpers:SkinGlyph>
                                         </Button>
                                         <Popup x:Name="DanmakuAreaPopup"
                                                Placement="Top" StaysOpen="False" AllowsTransparency="True"
@@ -1615,7 +1615,7 @@
                                             Click="OnFavoriteClick" PreviewMouseLeftButtonDown="FavoritePress" PreviewMouseLeftButtonUp="FavoriteRelease" MouseLeave="FavoriteRelease" ToolTip="点击收藏／取消收藏，长按选择收藏夹">
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                             <Grid x:Name="FavIconBox" Style="{StaticResource ActionIconBox}">
-                                                <helpers:SkinActionIcon Kind="Favorite" Data="{StaticResource FavoriteIconGeometry}"
+                                                <helpers:SkinActionIcon Kind="Favorite" x:Name="ThemedFavoriteIcon" Data="{StaticResource FavoriteIconGeometry}"
                                                       Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                                                       Width="36" Height="36" Stretch="Uniform" VerticalAlignment="Center" />
                                             </Grid>
@@ -2457,8 +2457,8 @@
                         Margin="0,0,70,16" Width="46" Height="46"
                         Style="{StaticResource CommentFabStyle}" Click="OnCommentDetailBack"
                         ToolTip="返回评论列表">
-                    <TextBlock Text="&#xE72B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                               FontSize="18" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    <helpers:SkinGlyph Kind="Back" IconSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White"><TextBlock Text="&#xE72B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                               FontSize="18" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" /></helpers:SkinGlyph>
                 </Button>
                 <Button x:Name="CommentFab" Grid.Row="0" Visibility="Collapsed"
                         Panel.ZIndex="2"

@@ -1,7 +1,8 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using BiliTouch.Helpers;
 using LibVLCSharp.Shared;
 
 namespace BiliTouch.Services;
@@ -63,6 +64,17 @@ public static class VlcCore
 
             try { Core.Initialize(Directory.Exists(libvlcDir) ? libvlcDir : null); }
             catch { /* 已初始化过, 忽略 */ }
+
+            // ★★★ 给 libvlccore 的 vout_display_PlacePicture 挂除零守卫(2026-11-08)。
+            //   背景: 0.2.9 退出播放器全屏后闪退, 异常代码 0xC0000094, 故障地址
+            //   libvlccore+0x6F4E0 = 那句 `idiv rcx`, 分子分母同时为 0
+            //   (source->i_visible_width / i_visible_height 都是 0)。
+            //   触发条件是 d3d11 的 processor / super 两种缩放模式 —— 它们会在 vout 重建的
+            //   窗口期拿一份被 video_format_Clean 清零的 pool_fmt 去算几何。
+            //   ★ 必须在 Core.Initialize **之后**(否则还没有 libvlccore 可供插件导入)、
+            //     在 new LibVLC **之前**(否则第一帧就可能崩在这个窗口期里)。
+            //   细节与反汇编证据见 VlcPlacePictureGuard 的注释。
+            VlcPlacePictureGuard.Install();
 
             // 显式给一份插件绝对路径(和 libvlc.dll 同目录那份是同一个地方)。
             // ★ 不要再传 `--plugin-path=`: VLC 3.0.20 已经删掉了这个选项, 传了会打印

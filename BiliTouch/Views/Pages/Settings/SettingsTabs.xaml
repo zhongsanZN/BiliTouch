@@ -1060,6 +1060,39 @@
                         <TextBlock Text="{Binding RuntimeInfo}" Style="{StaticResource SettingsRowDescStyle}" />
                     </StackPanel>
                 </Border>
+                <!-- 更新(2026-11-08): 检查更新的入口一直在 ViewModel 里(CheckUpdateCommand / AutoCheckUpdate),
+                     但设置页 2026-10-03 重做后**没有任何控件绑它** —— 用户点不到, 等于功能不存在。
+                     放在「版本信息」卡片下面, 因为它回答的正是"我这个版本是不是最新的"。 -->
+                <ContentControl ContentTemplate="{StaticResource SectionHeaderTemplate}" Content="更新" />
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <StackPanel Margin="0,14">
+                        <Grid Style="{StaticResource SettingsRowStyle}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="自动检查更新" Style="{StaticResource SettingsRowTitleStyle}" />
+                                <TextBlock Text="{Binding AutoCheckUpdateHint}" Style="{StaticResource SettingsRowDescStyle}" />
+                            </StackPanel>
+                            <CheckBox Grid.Column="1" IsChecked="{Binding AutoCheckUpdate, Mode=TwoWay}"
+                                      Style="{StaticResource SettingsToggleStyle}" />
+                        </Grid>
+                        <Grid Style="{StaticResource SettingsRowStyle}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="立即检查" Style="{StaticResource SettingsRowTitleStyle}" />
+                                <!-- 手动检查的反馈落在这里: 断网时按钮点下去不能"毫无反应" -->
+                                <TextBlock Text="{Binding UpdateStatusText}" Style="{StaticResource SettingsRowDescStyle}" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="检查更新" Style="{StaticResource SubtleButtonStyle}"
+                                    MinHeight="40" MinWidth="96" Command="{Binding CheckUpdateCommand}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
                 <ContentControl ContentTemplate="{StaticResource SectionHeaderTemplate}" Content="触控体验" />
                 <Border Style="{StaticResource SettingsCardStyle}">
                     <StackPanel Margin="0,14">

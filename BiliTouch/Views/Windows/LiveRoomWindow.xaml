@@ -1,4 +1,4 @@
-﻿<views:FluentWindow x:Class="BiliTouch.Views.LiveRoomWindow"
+<views:FluentWindow x:Class="BiliTouch.Views.LiveRoomWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:views="clr-namespace:BiliTouch.Views"
@@ -212,8 +212,8 @@
                                     <!-- 回到实时画面(= 播放器的"重播/刷新"位置): 直播暂停后要能一键回实时 -->
                                     <Button Grid.Column="1" Click="ReconnectClick" Style="{StaticResource LiveControl}"
                                             Width="36" Height="36" ToolTip="回到实时画面 / 重新连接">
-                                        <TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                                   FontSize="14" Foreground="White" VerticalAlignment="Center"/>
+                                        <helpers:SkinGlyph Kind="Refresh" IconSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White"><TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                                   FontSize="14" Foreground="White" VerticalAlignment="Center"/></helpers:SkinGlyph>
                                     </Button>
 
                                     <!-- 音量: 喇叭 + 向上展开的滑杆 -->
@@ -221,14 +221,14 @@
                                             Width="36" Height="36" Click="MuteClick"
                                             MouseEnter="VolumeHoverEnter" MouseLeave="VolumeHoverLeave"
                                             ToolTip="点击静音 / 悬停或点一下展开音量条">
-                                        <TextBlock x:Name="VolumeGlyphText" Text="&#xE767;"
+                                        <helpers:SkinGlyph Kind="Volume" IconSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White" State="{Binding Text,ElementName=VolumeGlyphText}"><TextBlock x:Name="VolumeGlyphText" Text="&#xE767;"
                                                    FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                                   FontSize="14" Foreground="White"/>
+                                                   FontSize="14" Foreground="White"/></helpers:SkinGlyph>
                                     </Button>
                                     <!-- 清晰度: 播放器同款 PlayerTextBtn -->
                                     <Button Grid.Column="4" x:Name="QualityButton" Style="{StaticResource PlayerTextBtn}"
                                             Margin="4,0,0,0" Click="QualityClick" ToolTip="切换直播清晰度">
-                                        <TextBlock x:Name="QualityText" Text="原画" Foreground="#F2FFFFFF"/>
+                                        <StackPanel Orientation="Horizontal"><helpers:SkinGlyph Kind="Quality" IconSize="24" Tint="White"/><TextBlock x:Name="QualityText" Text="原画" Foreground="#F2FFFFFF"/></StackPanel>
                                     </Button>
                                     <Popup x:Name="QualityPopup" Placement="Top" StaysOpen="False" AllowsTransparency="True"
                                            PopupAnimation="Fade">
@@ -287,7 +287,7 @@
                                     <!-- 弹幕设置: 与播放器同位置(弹幕开关右边) -->
                                     <Button Grid.Column="6" x:Name="LiveSettingsButton" Style="{StaticResource PlayerTextBtn}"
                                             Margin="4,0,0,0" Click="OverlaySettingsClick" ToolTip="弹幕设置">
-                                        <TextBlock Text="弹幕设置" Foreground="#F2FFFFFF"/>
+                                        <helpers:SkinGlyph Kind="DanmakuSettings" IconSize="24" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White"><TextBlock Text="弹幕设置" Foreground="#F2FFFFFF"/></helpers:SkinGlyph>
                                     </Button>
                                     <Popup x:Name="LiveSettingsPopup" PlacementTarget="{Binding ElementName=LiveSettingsButton}"
                                            Placement="Top" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">

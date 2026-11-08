@@ -149,7 +149,7 @@
             </Button>
             <Button x:Name="HomeRefreshButton" Width="44" Height="44" Canvas.Right="24" Canvas.Top="44"
                     Style="{StaticResource IconButtonStyle}" Click="OnRefreshClick" ToolTip="刷新">
-                <TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15"/>
+                <helpers:SkinGlyph Kind="Refresh" IconSize="20" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15"/></helpers:SkinGlyph>
             </Button>
         </Canvas>
 

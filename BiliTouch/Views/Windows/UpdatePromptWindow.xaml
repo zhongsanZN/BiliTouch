@@ -8,13 +8,59 @@
                     ShowInTaskbar="False">
     <!--
         「发现新版本」弹窗(自动检查与手动检查共用)。
-        只做"展示 + 跳浏览器", 不做程序内下载(职责边界见 UpdateChecker 的注释)。
-        窗口底色不在这里写: FluentWindow.ApplyChrome 会按当前主题设(与其它窗口一致)。
+
+        2026-11-08 起职责扩展: 主按钮是「下载并安装」(程序内下载 → 校验 → 静默安装 → 自动重启),
+        「前往 GitHub 下载」退为次按钮 —— 它不是摆设: 内置下载失败(断网/被墙/杀软拦 UAC)时
+        那是用户唯一还能走的路。
+
+        ★ 窗口底色不在这里写: FluentWindow.ApplyChrome 会按当前主题设(与其它窗口一致)。
+        ★ Owner 可能为 null(自动检查在后台任务里弹窗, 那一刻主窗口不一定就绪),
+          所以这里写 CenterOwner 只是默认值; 真正的位置由 ShowFor 决定, 并在 Loaded 里兜一次
+          (见 CenterIfOwnerless)。
     -->
     <Grid Margin="24,20,24,20" Background="{DynamicResource AppBackgroundBrush}">
+        <Grid.Resources>
+            <!--
+                进度条没有全局样式(全应用只有缓存页用过一条 3px 的默认条), 所以就地定义。
+                ★ 必须自己写模板: WPF 默认的 ProgressBar 在深色主题下是浅灰底 + 系统绿,
+                  和本应用的强调色体系完全不搭, 一眼看上去像"别的程序的控件"。
+                ★ PART_Track / PART_Indicator 这两个名字是 ProgressBar 的契约 ——
+                  控件在 OnApplyTemplate 里按名字找它们来算指示条宽度, 改成别的名字进度就永远不动。
+                ★ 放在 Grid.Resources 而不是窗口的 Resources: 根元素是 UpdatePromptWindow
+                  (FluentWindow 的派生类), 用基类名写属性元素虽然合法, 但一旦以后有人给
+                  这个窗口换基类就会变成"资源找不到"的运行时错误; 就地声明没有这个隐患。
+            -->
+            <Style x:Key="UpdateProgressBarStyle" TargetType="ProgressBar">
+                <Setter Property="Height" Value="6" />
+                <Setter Property="Minimum" Value="0" />
+                <Setter Property="Maximum" Value="100" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ProgressBar">
+                            <Border Background="{DynamicResource ControlFillDefaultBrush}"
+                                    CornerRadius="3" ClipToBounds="True">
+                                <!-- ★ PART_Track / PART_Indicator 的**嵌套关系与 WPF 自带模板一致**:
+                                     控件在 SetProgressBarIndicatorLength 里按
+                                     `indicator.Width = track.ActualWidth * percent` 算宽度,
+                                     所以 track 必须是"占满可用宽度的那一层", indicator 在它里面
+                                     左对齐、宽度由控件自己写。换成别的层级也能显示, 但只要 track
+                                     不是"撑满"的那一层, 百分比就会算成另一个数(进度条差一截)。 -->
+                                <Grid x:Name="PART_Track">
+                                    <Rectangle x:Name="PART_Indicator" HorizontalAlignment="Left"
+                                               Fill="{DynamicResource AccentBrush}"
+                                               RadiusX="3" RadiusY="3" />
+                                </Grid>
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </Grid.Resources>
+
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
@@ -35,17 +81,37 @@
             </ScrollViewer>
         </Border>
 
-        <Grid Grid.Row="2" Margin="0,18,0,0">
+        <!-- 下载进度区: 平时 Collapsed, 点「下载并安装」后才出现。
+             ★ 不用 Visibility.Hidden: 那会留一块空白, 而窗口高度是固定的(520), 白白少一行说明。 -->
+        <StackPanel x:Name="ProgressArea" Grid.Row="2" Margin="0,14,0,0"
+                    Visibility="Collapsed">
+            <ProgressBar x:Name="DownloadProgress" Style="{StaticResource UpdateProgressBarStyle}"
+                         Value="0" />
+            <TextBlock x:Name="ProgressText" Margin="0,8,0,0" FontSize="12"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondaryBrush}" />
+        </StackPanel>
+
+        <Grid Grid.Row="3" Margin="0,18,0,0">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
                 <Button x:Name="BtnSkip" Content="跳过此版本" Style="{StaticResource SubtleButtonStyle}"
                         Padding="14,9" Click="OnSkipClick"
                         ToolTip="这个版本不再自动提醒(下一个新版本仍会提醒)" />
-                <Button Content="以后再说" Style="{StaticResource SubtleButtonStyle}"
+                <Button x:Name="BtnLater" Content="以后再说" Style="{StaticResource SubtleButtonStyle}"
                         Margin="10,0,0,0" Padding="14,9" Click="OnLaterClick" />
+                <!-- 取消下载: 只在下载中显示, 与上面两个互斥(见 SetBusy) -->
+                <Button x:Name="BtnCancelDownload" Content="取消下载" Style="{StaticResource SubtleButtonStyle}"
+                        Margin="10,0,0,0" Padding="14,9" Click="OnCancelDownloadClick"
+                        Visibility="Collapsed" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="前往 GitHub 下载" Style="{StaticResource AccentButtonStyle}"
-                        Padding="20,9" Click="OnGithubClick" />
+                <!-- 次按钮: 内置下载走不通时的唯一退路, 任何时候都保留 -->
+                <Button x:Name="BtnGithub" Content="前往 GitHub 下载" Style="{StaticResource SubtleButtonStyle}"
+                        Padding="16,9" Click="OnGithubClick" />
+                <!-- 主按钮: 内置下载 + 校验 + 静默安装 + 自动重启 -->
+                <Button x:Name="BtnInstall" Content="下载并安装" Style="{StaticResource AccentButtonStyle}"
+                        Margin="10,0,0,0" Padding="20,9" Click="OnInstallClick"
+                        ToolTip="自动下载安装包并静默安装, 完成后重新打开 BiliTouch" />
             </StackPanel>
         </Grid>
     </Grid>

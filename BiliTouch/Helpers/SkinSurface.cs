@@ -134,6 +134,12 @@ public sealed class SkinProfileLayout : Decorator
                 veil.GradientStops.Add(new GradientStop(Tint(0), .77));
                 dc.DrawRectangle(veil, null, area);
             }
+            var figureBounds=PhantomUiArtwork.VisibleBounds("ui_1490");
+            var figureHeight=area.Height;
+            var figureWidth=figureHeight*figureBounds.Width/figureBounds.Height;
+            dc.PushOpacity(.88);
+            PhantomUiArtwork.Draw(dc,"ui_1490",new Rect(area.X+(area.Width-figureWidth)/2,area.Bottom-figureHeight,figureWidth,figureHeight),Brushes.White);
+            dc.Pop();
             dc.Pop(); return;
         }
         // Reserve the complete width of the two faces, cropping only the lower body.

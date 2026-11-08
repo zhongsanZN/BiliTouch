@@ -543,6 +543,61 @@ public class FluentWindow : Window
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int width, int height, uint flags);
 
+    /// <summary>SWP_NOZORDER —— 不改 Z 序(我们只关心几何)</summary>
+    private const uint SwpNozorder = 0x0004;
+
+    /// <summary>SWP_NOACTIVATE —— 不抢焦点(退出全屏不该把前台从别的窗口抢回来)</summary>
+    private const uint SwpNoactivate = 0x0010;
+
+    /// <summary>
+    /// SWP_ASYNCWINDOWPOS —— 目标窗口在别的线程时把请求排队而不是同步等待。
+    ///
+    /// ★★ 2026-11-08 实测结论：**不要用**。加上它之后退出全屏的尺寸变化变成"投递"
+    ///   而不是"发送"，于是 <c>ApplyFullscreenLayout</c> 返回时窗口尺寸还是旧的，
+    ///   WPF 的布局/滚动位置会先按旧尺寸算一遍再被改写 —— 回归测试 web-player-layout
+    ///   当场抓到"退出全屏后评论回到顶部"（阅读位置丢失）。
+    ///   我们要的只是"把四次 SetWindowPos 合成一次"，同步语义必须保留。
+    /// </summary>
+    private const uint SwpAsyncWindowPos = 0x4000;
+
+    /// <summary>
+    /// 把窗口**一次性**放到指定的 DIP 矩形 —— 单次 <c>SetWindowPos</c>, 而不是逐个赋
+    /// <c>Left/Top/Width/Height</c>。
+    ///
+    /// ★★★ 为什么要这么做(2026-11-08, 修 0.2.9 退出全屏闪退的**诱发条件**):
+    ///   WPF 的 <c>Left</c>/<c>Top</c>/<c>Width</c>/<c>Height</c> 每个都是独立的依赖属性,
+    ///   逐个赋值会各自发一次 <c>SetWindowPos</c> ⇒ 窗口被连续 resize **四次**。
+    ///   而播放器的视频区是 LibVLC 的 HwndHost: 每一次 resize 都会让 vout 重新协商,
+    ///   重新协商期间 <c>pool_fmt</c> 可能正处于"已 Clean、尚未重建"的状态 ——
+    ///   d3d11 的 processor/super 缩放模式此时会拿它去算几何, 撞上 libvlccore 里
+    ///   <c>vout_display_PlacePicture</c> 的 0/0(见 <see cref="VlcPlacePictureGuard"/>)。
+    ///   把四次并成一次, 就把这段危险窗口从四次缩到一次。
+    ///   ★ 真正的除零由守卫兜住; 这里是**降低触发概率**的第二道, 两层都留着。
+    ///
+    /// ★ 为什么用原生调用而不是先算好再赋属性: 无论怎么赋值, WPF 都是一个属性一次调用。
+    ///   原生 SetWindowPos 之后 WPF 会从 <c>WM_WINDOWPOSCHANGED</c> 把四个属性同步回来,
+    ///   不需要我们再写一遍。
+    /// </summary>
+    /// <returns>true = 已经用原生调用放好了; false = 调用不可用, 调用方应回落到属性赋值</returns>
+    protected bool SetWindowBoundsOnce(Rect dipBounds)
+    {
+        if (dipBounds.IsEmpty || dipBounds.Width <= 0 || dipBounds.Height <= 0) return false;
+        if (double.IsNaN(dipBounds.Left) || double.IsInfinity(dipBounds.Left)) return false;
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return false;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        if (dpi.DpiScaleX <= 0 || dpi.DpiScaleY <= 0) return false;
+
+        // DIP → 物理像素。WM_GETMINMAXINFO / SetWindowPos 都吃物理像素, 而 Left/Top/Width/Height 是 DIP。
+        var x = (int)Math.Round(dipBounds.Left * dpi.DpiScaleX);
+        var y = (int)Math.Round(dipBounds.Top * dpi.DpiScaleY);
+        var w = (int)Math.Round(dipBounds.Width * dpi.DpiScaleX);
+        var h = (int)Math.Round(dipBounds.Height * dpi.DpiScaleY);
+        if (w <= 0 || h <= 0) return false;
+
+        return SetWindowPos(hwnd, IntPtr.Zero, x, y, w, h, SwpNozorder | SwpNoactivate);
+    }
+
     /// <summary>Change monitor/work-area bounds while keeping the HWND maximized throughout.</summary>
     protected void RefreshMaximizedBounds()
     {

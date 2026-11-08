@@ -177,6 +177,8 @@ internal static class AudioImagesFontsTests
  }
  public static void WebCursor(Action<bool,string> check)
  {
+  var oldSkin=Svc.Settings.SkinId;var oldEffects=Svc.Settings.SkinEffects;var oldAccent=Svc.Settings.SkinUseAccent;
+  SkinService.Instance.Configure("",oldEffects,oldAccent);
   foreach(var cursor in new[]{AppCursor.Normal,AppCursor.Pressed})
   {
    var handle=(System.Runtime.InteropServices.SafeHandle)typeof(Cursor).GetProperty("Handle",Hidden)!.GetValue(cursor)!;
@@ -203,8 +205,33 @@ internal static class AudioImagesFontsTests
    check(svg.Contains("width='30' height='30'") && svg.Contains("data:image/png;base64,"),"embedded webpage cursor displays at 30 × 30 using the original image");
    check(root.GetProperty("normal").GetString()!=root.GetProperty("pressed").GetString() && root.GetProperty("normal").GetString()==root.GetProperty("reset").GetString(),"embedded webpages switch cursor color on press and restore it on release");
    check(root.GetProperty("text").GetString()=="text" && root.GetProperty("resize").GetString()=="ew-resize","embedded webpage text and resize cursors retain their original purpose");
+   var defaultCursor=AppCursor.Normal;
+   SkinService.Instance.Configure(SkinService.PhantomBlade,oldEffects,oldAccent);Pump(150);
+   check(AppCursor.Normal!=defaultCursor && AppCursor.Pressed==AppCursor.Normal,"Phantom Blade uses its original game cursor for normal and pressed states");
+   var phantomHandle=(System.Runtime.InteropServices.SafeHandle)typeof(Cursor).GetProperty("Handle",Hidden)!.GetValue(AppCursor.Normal)!;
+   if(!GetIconInfo(phantomHandle.DangerousGetHandle(),out var phantomInfo))throw new InvalidOperationException("Cannot inspect game cursor");
+   try{check(phantomInfo.X==7 && phantomInfo.Y==1,"game cursor clicks at the blade tip (7,1)");}
+   finally{if(phantomInfo.Color!=IntPtr.Zero)DeleteObject(phantomInfo.Color);if(phantomInfo.Mask!=IntPtr.Zero)DeleteObject(phantomInfo.Mask);}
+   var gameResult=Wait(view.CoreWebView2.ExecuteScriptAsync("getComputedStyle(document.getElementById('pointer')).cursor"));
+   var gameCursor=JsonSerializer.Deserialize<string>(gameResult)!;
+   check(gameCursor!=root.GetProperty("normal").GetString() && gameCursor.Contains("7 1"),"already open embedded pages switch immediately to the game cursor with matching hotspot");
+   view.Cursor=defaultCursor;var oldQuery=new QueryCursorEventArgs(Mouse.PrimaryDevice,0){RoutedEvent=Mouse.QueryCursorEvent};view.RaiseEvent(oldQuery);
+   check(oldQuery.Cursor==AppCursor.Normal,"existing native controls replace a cached cursor from the previous theme");
+   var navigated=new TaskCompletionSource<bool>();view.CoreWebView2.NavigationCompleted+=(_,e)=>navigated.TrySetResult(e.IsSuccess);
+   view.NavigateToString("<html><body><button id='pointer' style='cursor:pointer'>新页面</button></body></html>");
+   check(Wait(navigated.Task),"embedded browser navigates after a theme switch");Pump(150);
+   var afterNavigation=Wait(view.CoreWebView2.ExecuteScriptAsync("(()=>{const p=document.getElementById('pointer');p.dispatchEvent(new PointerEvent('pointerover',{bubbles:true}));return getComputedStyle(p).cursor;})()"));
+   check(JsonSerializer.Deserialize<string>(afterNavigation)==gameCursor,"new documents retain the currently selected game cursor");
+   foreach(var meaningful in new[]{Cursors.IBeam,Cursors.SizeWE,Cursors.None})
+   {
+    view.Cursor=meaningful;var query=new QueryCursorEventArgs(Mouse.PrimaryDevice,0){RoutedEvent=Mouse.QueryCursorEvent};view.RaiseEvent(query);
+    check(query.Cursor==meaningful,"game theme retains text, resizing and hidden pointer behavior");
+   }
+   SkinService.Instance.Configure(SkinService.StarParty,oldEffects,oldAccent);Pump(150);
+   check(AppCursor.Normal==defaultCursor && AppCursor.Pressed!=defaultCursor,"switching to Star Party restores both existing cursor states");
+   check(JsonSerializer.Deserialize<string>(Wait(view.CoreWebView2.ExecuteScriptAsync("getComputedStyle(document.getElementById('pointer')).cursor")))==root.GetProperty("normal").GetString(),"embedded pages restore the previous cursor without reopening");
   }
-  finally{view.Dispose();window.Close();SynchronizationContext.SetSynchronizationContext(context);}
+  finally{view.Dispose();window.Close();SkinService.Instance.Configure(oldSkin,oldEffects,oldAccent);SynchronizationContext.SetSynchronizationContext(context);}
  }
  [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
  struct CursorInfo{public int Icon;public uint X,Y;public IntPtr Mask,Color;}
