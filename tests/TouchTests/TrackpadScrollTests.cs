@@ -55,7 +55,7 @@ internal static class TrackpadScrollTests
    var outer=new ScrollViewer{Content=panel,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
    window.Width=600;window.Height=550;window.Content=outer;Pump(200);
    settings.TouchpadFeedSensitivity=100;
-   check(Math.Abs(TrackpadScroll.PixelsPerDelta-0.15)<0.001 && Math.Abs(TrackpadScroll.NotchPixels-45)<0.001,"one pinned calibration covers every scrolling container at 100 percent");
+   check(Math.Abs(TrackpadScroll.PixelsPerDelta-0.45)<0.001 && Math.Abs(TrackpadScroll.NotchPixels-45)<0.001,"one pinned calibration covers every scrolling container at 100 percent");
    var distances=new List<double>();
    foreach(var sensitivity in new[]{25,75,175})
    {
@@ -64,7 +64,7 @@ internal static class TrackpadScrollTests
     for(var i=0;i<60;i++)Wheel(innerContent,-5);
     check(inner.VerticalOffset<0.5 && Counter("OffsetWrites")==before,"input packets wait for a render frame at "+sensitivity+" percent");
     Pump(500);distances.Add(inner.VerticalOffset);
-    check(Math.Abs(inner.VerticalOffset-300*0.15*sensitivity/100.0)<2,"all high-frequency packet distance is retained at "+sensitivity+" percent");
+    check(Math.Abs(inner.VerticalOffset-300*0.45*sensitivity/100.0)<2,"all high-frequency packet distance is retained at "+sensitivity+" percent");
     check(Counter("InputPackets")-input==60 && Counter("OffsetWrites")-before<60,"sixty packets are coalesced into fewer viewport writes at "+sensitivity+" percent");
    }
    check(Math.Abs(distances[2]/distances[0]-7)<0.1,"low and high sensitivity change distance proportionally");

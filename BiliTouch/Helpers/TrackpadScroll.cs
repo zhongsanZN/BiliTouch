@@ -29,9 +29,7 @@ public static class TrackpadScroll
     /// <summary>
     /// 整格滚轮的时间常数(秒)。
     ///
-    /// ★ 为什么必须和精密输入分开: 精密包是"每 8ms 来一小口", 位移本身就是手指位移的缩放, 所以
-    ///   它**不缓动** —— 下一帧直接把累积目标交出去, 再缓一道就是迟滞。整格不同, 它是"一次性甩来
-    ///   120 个单位"的离散量, 目标一步跳到 45px 外, 不缓就是原样的瞬移。
+    /// ★ 整格是"一次性甩来 120 个单位"的离散量, 目标一步跳到 45px 外, 不缓就是原样的瞬移。
     ///   整格要的是"看得见的滑动": tau 0.12 ⇒ 首帧 13%、3 帧 34%、0.3s 到 92%, 收尾靠 0.5px 吸附。
     /// ★ 为什么取区间下限 0.12 而不是 0.18: 指数逼近的尾巴很长, tau 0.18 时一格要飘到 0.9s 才停,
     ///   快速连滚会明显"追不上手"。0.12 在"滑动感"和"跟手"之间折中。
@@ -40,8 +38,38 @@ public static class TrackpadScroll
     /// </summary>
     internal const double NotchTauSeconds=0.12;
 
-    /// <summary>精密包每单位 delta 的像素数, 由设置页的滚动灵敏度缩放。</summary>
-    internal const double PrecisionPixelsPerDeltaUnit=0.15;
+    /// <summary>
+    /// 精密包(触控板)的时间常数(秒)。**2026-11-08 起精密包不再直达, 也走指数逼近。**
+    ///
+    /// ★ 为什么推翻"精密包不缓动"这条旧结论:
+    ///   旧理由写的是"精密包每 8ms 来一小口, 位移本身就是手指位移的缩放, 再缓一道就是迟滞"。
+    ///   这个理由的**前提**是"驱动已经把手指轨迹采样成足够密的包", 而实测不成立:
+    ///     · 触控板包率与渲染帧率不同频(常见 60Hz 包 / 120Hz 屏, 或反过来),
+    ///       每帧消费掉 1~2 个包 ⇒ 位移序列是"6px、12px、6px..."的阶梯, 不是连续曲线;
+    ///     · 一些触控板/驱动把精密手势折成 ±120 的整格包, 那种情况下它和鼠标滚轮完全同质。
+    ///   于是"直达"表现为: 手指匀速划, 画面按包的节奏一顿一顿 —— 用户原话"不丝滑"。
+    ///   ★ 参照实现(BiliDesk WheelScroll)对**所有**包统一用 tau=0.05 的指数逼近, 且实测顺滑;
+    ///     它的问题只有"距离太大"(见 PrecisionPixelsPerDeltaUnit), 与缓动无关。
+    ///   所以这里只借它的**曲线**, 不借它的**幅度**。
+    /// ★ 取 0.05: 60fps 下每帧推进 28%(3 帧 62%、5 帧 78%), 120fps 下每帧 15%。
+    ///   比 NotchTauSeconds(0.12) 快一倍多 —— 精密输入本身是连续的, 拖尾必须短, 否则就成了迟滞。
+    /// </summary>
+    internal const double PrecisionTauSeconds=0.05;
+
+    /// <summary>
+    /// 精密包每单位 delta 的像素数, 由设置页的滚动灵敏度缩放。**2026-11-08: 0.15 → 0.45。**
+    ///
+    /// ★ 为什么原来的 0.15 是 bug 而不是设计:
+    ///   WPF 原生滚轮在 WheelScrollLines=3 时一格 = 3×16 = 48px, 即精密包 **0.4 px/单位**。
+    ///   我们整格那一路是 45px/格(`NotchPixels`)—— 和原生 48px 基本对齐;
+    ///   而精密那一路是 0.15, **只有原生的 37.5%**。
+    ///   ⇒ 两条路的"同一根手指走多远"差了 2.7 倍: 滚轮一格跨 45px, 触控板同样距离只走 17px。
+    ///     这不是"灵敏度调得保守", 是**两条路径的换算基准不一致**, 表现为"触控板像拖着沙袋"。
+    /// ★ 取 0.45: 原生的 112.5%, 与整格 45/48 = 94% 同一个量级, 两条路终于用一把尺子。
+    ///   ★ 不要照抄参照实现的 1.0(= 原生 250%): 那是它"太灵敏"的来源, 用户明确要的那个缺点。
+    ///   用户仍可在设置页用灵敏度滑杆(25%~175%)在这把尺子上再缩。
+    /// </summary>
+    internal const double PrecisionPixelsPerDeltaUnit=0.45;
 
     private const int PrecisionIdleMs = 90;
     // Releasing a render callback is not the end of device identification. A touchpad
@@ -104,10 +132,22 @@ public static class TrackpadScroll
             motion.LastFrame=now;motion.Active=true;Active.Add(viewer);
         }
         var delta=precision ? -e.Delta*PixelsPerDelta : -e.Delta/120.0*NotchPixels;
-        // Reversing kills the in-flight overshoot instead of first finishing it and then coming back.
+        // Reversing truncates the in-flight overshoot instead of first finishing it and then coming back.
+        //
+        // ★ 2026-11-08 改: 旧写法 `motion.Target = motion.Applied = motion.Observed = VerticalOffset`
+        //   一反转就**抹掉全部历史**(目标、已应用、观测值全清)。精密输入的包很小(0.45px/单位),
+        //   而人手天然有 1~2 个单位的抖动, 加上掌根误触和 X 轴噪声, 高频流里反向小包很常见 ——
+        //   每来一个就把 Target 归零重来, 结果是一整段手势被切碎成若干短段, 每一段都要重新
+        //   从静止加速, 观感是"划不动 / 一顿一顿"。
+        //   参照实现(BiliDesk WheelScroll.OnWheel)对反向的处理只是 `Target = Current`
+        //   (把残余截断到当前位置), 不动 Current 记账 —— 这也是"丝滑"的一部分。
+        //   现在同样只截断: 反向时把目标拉回**当前实际偏移**, 历史记账交给
+        //   WasMovedExternally(它才是"别人动过滚动条"的判据)。
         var direction = Math.Sign(delta);
-        if (direction != motion.Direction || WasMovedExternally(viewer, motion))
+        if (WasMovedExternally(viewer, motion))
             motion.Target = motion.Applied = motion.Observed = viewer.VerticalOffset;
+        else if (direction != motion.Direction && direction != 0)
+            motion.Target = viewer.VerticalOffset;
         motion.Direction = direction;
         motion.Precision=precision;
         motion.Target=Math.Clamp(motion.Target+delta,0,viewer.ScrollableHeight);
@@ -155,16 +195,24 @@ public static class TrackpadScroll
                 continue;
             }
             var remaining=motion.Target-viewer.VerticalOffset;
-            // Precision devices have already sampled finger displacement and OS inertia.
-            // Present the accumulated distance at the next render, without a second easing tail.
-            var next = motion.Target;
-            if (!motion.Precision && Math.Abs(remaining) >= .5)
-            {
-                next = viewer.VerticalOffset + remaining * (1 - Math.Exp(-dt / NotchTauSeconds));
-            }
+            // ★ 2026-11-08: 精密包**不再直达**, 改成和整格同一套指数逼近, 只换一个更短的 tau。
+            //   旧写法 `var next = motion.Target;` 是"本帧把累积目标一次写完"。它的问题不是
+            //   "写得不够快", 而是"写得**太**快": 触控板的包率和渲染帧率不同频, 每帧消费 1~2 个包,
+            //   于是画面按包的节奏走阶梯(6px、12px、6px…), 手指匀速但画面一顿一顿。
+            //   加一层短拖尾之后, 每一帧都从当前偏移往目标推进一段, 阶梯被抹平成连续曲线。
+            //   tau 取 0.05(整格是 0.12): 精密输入本身连续, 拖尾必须短, 否则就是迟滞。
+            //   ★ 残留 < 0.5px 时直接吸附到目标, 不做无限逼近 —— 否则精密包会因为
+            //     "永远差一点点"而永不满足 Target == Applied, 空转烧帧。
+            var tau = motion.Precision ? PrecisionTauSeconds : NotchTauSeconds;
+            var next = Math.Abs(remaining) >= .5
+                ? viewer.VerticalOffset + remaining * (1 - Math.Exp(-dt / tau))
+                : motion.Target;
             // No new animation clock per input packet; all packets share this frame update.
             motion.Observed=viewer.VerticalOffset;
             viewer.ScrollToVerticalOffset(next);motion.Applied=next;OffsetWrites++;
+            // ★ 精密包不在这里收摊: 它要留着这一次手势的订阅(见上面 PrecisionIdleMs 那段),
+            //   收摊由 `motion.Target == motion.Applied` + 空闲 90ms 那条路负责。
+            //   否则每个包都会退订再重订 CompositionTarget.Rendering, 白白抖动。
             if(!motion.Precision && Math.Abs(motion.Target-next)<0.01)Stop(viewer);
         }
     }

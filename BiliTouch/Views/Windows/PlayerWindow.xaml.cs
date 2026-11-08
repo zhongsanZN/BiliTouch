@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -5898,8 +5898,14 @@ public partial class PlayerWindow : FluentWindow
         Canvas.SetTop(border, 6 + lane * _laneHeight);
 
         var canvasWidth = DanmakuCanvas.ActualWidth;
-        // 预置到"刚好在画面右侧外", 第一帧就是进场位置(下方每帧会立刻覆盖成精确值)
-        var translate = new TranslateTransform(canvasWidth, 0);
+        // 预置到"刚好在画面右侧外", 这是新弹幕的入场位置（RollingX 在 elapsed=0 时
+        // 同样返回 canvasWidth）。★ 别因为怕"窗口不可见时弹幕停在这里看不见"就把主时钟
+        // 降级成 16ms DispatcherTimer —— 0.1.6 正是这么修的，结果浮层帧率被钉在 ~33fps
+        // （见 docs/FPS-REGRESSION-2026-11-09.md）。正解是主时钟用 CompositionTarget.Rendering
+        // 跟 DWM 合成走，再加一条低频看门狗：合成停摆时补一次推进，弹幕立刻跳到
+        // DanmakuClock() 外推出的正确位置。弹幕时钟基于墙钟外推，停多久都不会丢进度。
+        var translate = new TranslateTransform(
+            Helpers.DanmakuMotion.RollingX(canvasWidth, width, 0, _danmakuScrollSeconds), 0);
         border.RenderTransform = translate;
 
         TrackFlying(new FlyingDanmaku
@@ -5959,21 +5965,54 @@ public partial class PlayerWindow : FluentWindow
         StartDanmakuClock();
     }
 
-    /// <summary>挂上逐帧推进器。CompositionTarget.Rendering 是**静态**事件, 必须在关窗时解绑</summary>
-    private System.Windows.Threading.DispatcherTimer? _danmakuFrameTimer;
+    /// <summary>
+    /// 挂上逐帧推进器。★ 主时钟必须跟 DWM 合成节奏（CompositionTarget.Rendering），
+    /// 不能用 16ms DispatcherTimer —— 后者受系统定时器粒度限制实际落在 ~30ms 一跳，
+    /// 会把整个视频浮层窗口的呈现帧率钉在 ~33fps（实测 36.8 上屏帧/秒 vs desk 的 83.4）。
+    /// 见 docs/FPS-REGRESSION-2026-11-09.md。
+    ///
+    /// 0.1.6 为修"窗口不可见时 Rendering 停摆导致弹幕停在右缘外"改成了定时器，
+    /// 那属于修错了层：正解是 ① 弹幕初始位置直接按时钟算（见 RenderRolling）
+    /// ② 加一条低频看门狗，只在合成真的停摆时补一次推进，而不是拿它当主时钟。
+    /// CompositionTarget.Rendering 是**静态**事件，必须在关窗时解绑。
+    /// </summary>
+    private System.Windows.Threading.DispatcherTimer? _danmakuWatchdog;
+    private long _lastDanmakuRenderTicks;
     private void StartDanmakuClock()
     {
         if (_danmakuClockAttached || _closing) return;
         _danmakuClockAttached = true;
-        _danmakuFrameTimer ??= new System.Windows.Threading.DispatcherTimer(TimeSpan.FromMilliseconds(16), System.Windows.Threading.DispatcherPriority.Render, OnDanmakuRendering, Dispatcher);
-        _danmakuFrameTimer.Start();
+        _lastDanmakuRenderTicks = Stopwatch.GetTimestamp();
+        CompositionTarget.Rendering += OnDanmakuRendering;
+        StartDanmakuWatchdog();
     }
 
     private void StopDanmakuClock()
     {
         if (!_danmakuClockAttached) return;
         _danmakuClockAttached = false;
-        _danmakuFrameTimer?.Stop();
+        CompositionTarget.Rendering -= OnDanmakuRendering;
+        StopDanmakuWatchdog();
+    }
+
+    /// <summary>低频兜底：合成回调停摆（窗口被遮挡/最小化/DWM 暂停）时补一次推进。</summary>
+    private void StartDanmakuWatchdog()
+    {
+        _danmakuWatchdog ??= new System.Windows.Threading.DispatcherTimer(
+            TimeSpan.FromMilliseconds(250), System.Windows.Threading.DispatcherPriority.Background,
+            OnDanmakuWatchdogTick, Dispatcher);
+        _danmakuWatchdog.Start();
+    }
+
+    private void StopDanmakuWatchdog() => _danmakuWatchdog?.Stop();
+
+    private void OnDanmakuWatchdogTick(object? sender, EventArgs e)
+    {
+        if (!_danmakuClockAttached || _closing || _flying.Count == 0) return;
+        // Rendering 正常跑时这里几乎零成本：距上次回调还不到 200ms 就直接返回。
+        var now = Stopwatch.GetTimestamp();
+        if (Stopwatch.GetElapsedTime(_lastDanmakuRenderTicks, now).TotalMilliseconds < 200) return;
+        OnDanmakuRendering(sender, e);
     }
 
     /// <summary>
@@ -5989,6 +6028,7 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void OnDanmakuRendering(object? sender, EventArgs e)
     {
+        _lastDanmakuRenderTicks = Stopwatch.GetTimestamp();
         if (_flying.Count == 0)
         {
             // 一条都没在飞就没必要继续挂在渲染回调上(它每帧都会被调, 空转也是成本)

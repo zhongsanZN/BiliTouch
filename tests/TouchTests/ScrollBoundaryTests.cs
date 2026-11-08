@@ -23,17 +23,22 @@ internal static class ScrollBoundaryTests
             void Frame() => typeof(TrackpadScroll).GetMethod("OnFrame", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, [null, EventArgs.Empty]);
 
             // ScrollToVerticalOffset queues a layout command. Another input can arrive before it applies.
+            // Note: these expectations deliberately derive from the live calibration constant,
+            // not from a hard-coded 0.15 — else every recalibration of the touchpad scale
+            // would look like a boundary regression.
             Input(-60); Frame();
             check(scroll.VerticalOffset == 0, "fixture retains an unapplied asynchronous scroll command");
             Input(-60); Frame();
-            Pump(200);
-            Console.WriteLine($"BOUNDARY pending commands: expected=18 actual={scroll.VerticalOffset:F2}");
-            check(Math.Abs(scroll.VerticalOffset - 18) < 1, "input arriving before scroll acknowledgement keeps both packet distances");
+            var expectedPending = 120 * TrackpadScroll.PrecisionPixelsPerDeltaUnit;
+            Pump(400);
+            Console.WriteLine($"BOUNDARY pending commands: expected={expectedPending:F2} actual={scroll.VerticalOffset:F2}");
+            check(Math.Abs(scroll.VerticalOffset - expectedPending) < 1, "input arriving before scroll acknowledgement keeps both packet distances");
 
             TrackpadScroll.Cancel(scroll); scroll.ScrollToVerticalOffset(0); Pump(100);
             Input(-20); Pump(160); Input(-120); Pump(700);
-            Console.WriteLine($"BOUNDARY slow tail: expected=21 actual={scroll.VerticalOffset:F2}");
-            check(Math.Abs(scroll.VerticalOffset - 21) < 1, "a paused precision tail never changes to the wheel distance scale");
+            var expectedTailNotch = 140 * TrackpadScroll.PrecisionPixelsPerDeltaUnit;
+            Console.WriteLine($"BOUNDARY slow tail: expected={expectedTailNotch:F2} actual={scroll.VerticalOffset:F2}");
+            check(Math.Abs(scroll.VerticalOffset - expectedTailNotch) < 1, "a paused precision tail never changes to the wheel distance scale");
 
             TrackpadScroll.Cancel(scroll); scroll.ScrollToVerticalOffset(0); Pump(100);
             var tail = new[] { -60, -45, -30, -20, -15, -10, -8, -6, -4, -3, -2, -1 };
@@ -47,8 +52,8 @@ internal static class ScrollBoundaryTests
                 monotonic &= scroll.VerticalOffset >= previous;
                 previous = scroll.VerticalOffset;
             }
-            Pump(200);
-            var expectedTail = -tail.Sum() * .15;
+            Pump(400);
+            var expectedTail = -tail.Sum() * TrackpadScroll.PrecisionPixelsPerDeltaUnit;
             Console.WriteLine($"BOUNDARY deceleration: expected={expectedTail:F2} actual={scroll.VerticalOffset:F2}");
             check(monotonic && Math.Abs(scroll.VerticalOffset - expectedTail) < 1,
                 "decelerating finger-off input preserves distance through uneven frame delivery");
@@ -58,8 +63,9 @@ internal static class ScrollBoundaryTests
 
             TrackpadScroll.Cancel(scroll); scroll.ScrollToVerticalOffset(0); Pump(100);
             for (int i = 0; i < 20; i++) { Input(-1); Frame(); scroll.UpdateLayout(); }
-            Pump(200);
-            check(Math.Abs(scroll.VerticalOffset - 3) < 1, "fractional touchpad tail distance accumulates without a minimum jump");
+            Pump(400);
+            check(Math.Abs(scroll.VerticalOffset - 20 * TrackpadScroll.PrecisionPixelsPerDeltaUnit) < 1,
+                "fractional touchpad tail distance accumulates without a minimum jump");
 
             TrackpadScroll.Cancel(scroll); scroll.ScrollToVerticalOffset(0); Pump(100);
             Input(-60); Frame(); scroll.UpdateLayout();

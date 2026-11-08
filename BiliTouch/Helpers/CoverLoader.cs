@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -42,6 +44,87 @@ public static class CoverLoader
     private static readonly Dictionary<string, Task<BitmapImage?>> InFlight = new();
     private static readonly object Lock = new();
 
+    /// <summary>
+    /// 下载并发闸门 —— **2026-11-08 新增**(同 BiliDesk 1.7.0 的 DownloadGate 思路)。
+    ///
+    /// ★ 为什么需要: 一次铺满一屏(4 列 × 5 行 = 20 张)时, 20 条 HTTP 同时出站;
+    ///   滚动加载再叠上来就是几十条。CDN 侧会因为突发并发判为异常流量(实测过 -412),
+    ///   本地这边则是线程池被 I/O 完成任务占满。8 是一个"能跑满小水管带宽、
+    ///   又不至于把服务端惹毛"的值 —— 上游同样取 8。
+    /// </summary>
+    private static readonly SemaphoreSlim DownloadSlots = new(Math.Clamp(8, 1, 16));
+
+    /// <summary>
+    /// 解码并发闸门 —— **2026-11-08 新增**。
+    ///
+    /// ★ 为什么必须限: 解码是**纯 CPU**、单张 1280 宽 JPEG 要几毫秒到几十毫秒。
+    ///   没有上限时, 一次铺满一屏就是 20 个解码同时抢核, 每个都被拖慢,
+    ///   UI 线程那几次布局全排在它们后面 —— 表现就是"首屏出来得慢、滚一下卡一下"。
+    /// ★ 取值 min(CPU/2, 4): 留一半核给 UI 线程与合成, 上限 4 是因为再多也吃不满
+    ///   —— 实测超出 4 的并发只会抬高单张延迟, 总吞吐不变。与上游一致。
+    /// </summary>
+    private static readonly SemaphoreSlim DecodeSlots =
+        new(Math.Clamp(Environment.ProcessorCount / 2, 1, 4));
+
+    /// <summary>"这张图现在还要不要"。纯函数, 给探针断言用。</summary>
+    internal static int DecodeSlotCount => DecodeSlots.CurrentCount;
+
+    /// <summary>解码并发上限(测试断言用, 避免把数字写死在两处)</summary>
+    internal static int DecodeConcurrency => Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
+
+    /// <summary>
+    /// 一次加载请求的"还要不要"标记 —— **2026-11-08 新增**(同 BiliDesk 1.7.0 的修法)。
+    ///
+    /// ★★ 为什么必须是一个**独立对象**、而不是直接去问那个 Border:
+    ///   解码跑在 `ConfigureAwait(false)` 之后的后台线程上, 而在后台线程读
+    ///   `border.GetValue(...)` 会抛 `InvalidOperationException: 调用线程无法访问此对象`。
+    ///   上游为了这里正好踩过一次(commit daa5a93「播放器相关视频封面不显示」) ——
+    ///   异常被吞进"无人观察的任务", 界面上完全没痕迹, 那一格永远灰。
+    ///   所以这个类**只放一个 int**, 由 UI 线程写、后台线程读, 全程不碰任何 DependencyObject。
+    ///
+    /// ★ 为什么是 ConditionalWeakTable 而不是 Dictionary: 键是 UI 元素, 强引用会让
+    ///   被回收的卡片永久留在表里; 弱表在卡片释放后自己清掉。
+    /// ★ 为什么是 public 而不是 internal: 它是 LoadAsync 的公开参数类型(CS0051)。
+    ///   对外没有泄露任何实现细节 —— 整个类就一个 bool 语义的 int。
+    /// </summary>
+    public sealed class LoadInterest
+    {
+        /// <summary>0 = 还要; 1 = 调用方已经不要了(换源/被回收)。只由 UI 线程写。</summary>
+        private int _abandoned;
+        public bool IsAbandoned => Volatile.Read(ref _abandoned) != 0;
+        public void Abandon() => Volatile.Write(ref _abandoned, 1);
+    }
+
+    /// <summary>
+    /// 一个 Border 当前那次加载的标记容器。
+    ///
+    /// ★ 为什么每次换源要 **new 一个新的 LoadInterest** 而不是把旧的置回 0:
+    ///   换源那一刻, 上一张图的加载可能还在解码路上。复用同一个对象的话,
+    ///   新一次请求把它清零, 旧任务就会以为"我还要", 继续把旧图解码完 —— 白干;
+    ///   更糟的是反过来: 旧任务看到 1 直接放弃, 新任务也跟着被放弃。
+    ///   每个 URL 一个独立标记, 各算各的。
+    /// </summary>
+    private sealed class InterestSlot { public LoadInterest? Current; }
+
+    private static readonly ConditionalWeakTable<Border, InterestSlot> Interests = new();
+
+    /// <summary>
+    /// 取这个 Border 当前那次加载的"还要不要"标记; 必要时新建(**必须在 UI 线程调用**)。
+    /// ★ 每次换源前先 <see cref="AbandonInterest"/>, 于是这里拿到的一定是新的那个。
+    /// </summary>
+    internal static LoadInterest InterestOf(Border border)
+    {
+        var slot = Interests.GetOrCreateValue(border);
+        slot.Current ??= new LoadInterest();
+        return slot.Current;
+    }
+
+    /// <summary>换源/被回收时把这一次的标记作废(UI 线程)。</summary>
+    internal static void AbandonInterest(Border border)
+    {
+        if (Interests.TryGetValue(border, out var slot)) slot.Current?.Abandon();
+    }
+
     private static long _clock;
     private static long _cachedBytes;
 
@@ -80,8 +163,13 @@ public static class CoverLoader
     }
 
     /// <summary>加载图片。decodeWidth>0 时按目标像素宽解码(大幅降低内存),
-    /// 0 表示按原图解码。不同档位的结果分别缓存</summary>
-    public static Task<BitmapImage?> LoadAsync(string? url, int decodeWidth = 0)
+    /// 0 表示按原图解码。不同档位的结果分别缓存
+    /// <param name="interest">
+    /// 可选的"还要不要"标记。传了它, 解码排到队后才会再复核一次: 调用方已经换源/被回收时
+    /// **直接放弃解码**, 把名额让给视口内的图。不传 = 无条件解(图片预览、头像这类独一份的图)。
+    /// ★ 这个参数只放 int, 后台线程读它不会碰任何 DependencyObject —— 见 LoadInterest 的说明。
+    /// </param>
+    public static Task<BitmapImage?> LoadAsync(string? url, int decodeWidth = 0, LoadInterest? interest = null)
     {
         url = UrlUtil.Normalize(url);
         if (url.Length == 0) return Task.FromResult<BitmapImage?>(null);
@@ -99,7 +187,7 @@ public static class CoverLoader
             if (InFlight.TryGetValue(cacheKey, out var running)) return running;
             // Reserve the in-flight entry before the worker can complete. Cold cache
             // directory and file probes must run off the input/layout thread.
-            var task = Task.Run(() => LoadCoreAsync(url, cacheKey, w));
+            var task = Task.Run(() => LoadCoreAsync(url, cacheKey, w, interest));
             InFlight.Add(cacheKey, task);
             return task;
         }
@@ -145,7 +233,8 @@ public static class CoverLoader
         return false;
     }
 
-    private static async Task<BitmapImage?> LoadCoreAsync(string url, string cacheKey, int decodeWidth)
+    private static async Task<BitmapImage?> LoadCoreAsync(string url, string cacheKey, int decodeWidth,
+                                                          LoadInterest? interest = null)
     {
         try
         {
@@ -158,32 +247,61 @@ public static class CoverLoader
             //   ⇒ 现在把字节留在 downloaded 里, 写盘失败就退回内存解码: 封面照常显示,
             //     只是这一张不进磁盘缓存(下次再看会重新下载)。
             byte[]? downloaded = null;
-            try
+            if (!File.Exists(cacheFile))
             {
-                if (!File.Exists(cacheFile))
+                // ★ 下载闸门(2026-11-08): 一次铺满一屏会同时发起 20+ 条 HTTP,
+                //   叠上滚动加载就是几十条。8 个并发既够跑满带宽, 又不至于把 CDN 惹毛
+                //   (突发并发是被判 -412 的常见原因之一)。
+                await DownloadSlots.WaitAsync().ConfigureAwait(false);
+                try
                 {
-                    downloaded = await Http.GetByteArrayAsync(url).ConfigureAwait(false);
-                    await File.WriteAllBytesAsync(cacheFile, downloaded).ConfigureAwait(false);
+                    if (!File.Exists(cacheFile))
+                    {
+                        downloaded = await Http.GetByteArrayAsync(url).ConfigureAwait(false);
+                        await File.WriteAllBytesAsync(cacheFile, downloaded).ConfigureAwait(false);
+                    }
                 }
-            }
-            catch
-            {
-                // 写盘失败**不等于**取图失败 —— 下面的内存兜底会处理; 真没字节才返回 null
+                catch
+                {
+                    // 写盘失败**不等于**取图失败 —— 下面的内存兜底会处理; 真没字节才返回 null
+                }
+                finally
+                {
+                    DownloadSlots.Release();
+                }
             }
 
             // 解码放后台线程: 一张 1280 宽的 JPEG 解码要几毫秒到几十毫秒,
             // 放在 UI 线程上会直接表现为滚动/切页的卡顿。
-            BitmapImage? img;
-            if (File.Exists(cacheFile))
+            BitmapImage? img = null;
+            var haveFile = File.Exists(cacheFile);
+            if (haveFile || downloaded != null)
             {
-                var path = cacheFile;
-                img = FromFile(path, decodeWidth);
-            }
-            else if (downloaded != null)
-            {
-                // 磁盘上没有文件(写失败), 但字节在手上 ⇒ 直接从内存解码, 绝不让封面空着
-                var bytes = downloaded;
-                img = FromBytes(bytes, decodeWidth);
+                // ★★ 解码闸门 + 排队后复核(2026-11-08, 同 BiliDesk 1.7.0):
+                //
+                //   卡片是**一被添加就发起加载**的。滚动时几十上百张排队等槽, 轮到它们时
+                //   卡片早就被 VirtualizingCardWallPanel 回收给别的条目了 —— 那一份解码纯属白干,
+                //   而且它占着名额, 真正在视口里的图只能干等。
+                //   上游实测: 滚 6 页后 InFlight 积压 212 个任务, 回顶要等 2.3 秒。
+                //
+                //   ⇒ 拿到槽位后**先复核一次"还要不要"**, 不要就直接把槽让出去。
+                //   ★ 复核只读 interest 里那个 int(纯内存), **绝不碰 Border 的 DP** ——
+                //     这里是后台线程, 碰了就是上游 daa5a93 那个"封面永远灰"的事故。
+                await DecodeSlots.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    if (interest is { IsAbandoned: true })
+                    {
+                        // 放弃这一次解码 —— 但**不要把结果塞进缓存**(没解), 直接返回 null。
+                        // 调用方(Cover.LoadAsync)已经复核过源, 拿到 null 就自然什么都不做。
+                        return null;
+                    }
+                    img = haveFile ? FromFile(cacheFile, decodeWidth) : FromBytes(downloaded!, decodeWidth);
+                }
+                finally
+                {
+                    DecodeSlots.Release();
+                }
             }
             else
             {
@@ -469,6 +587,11 @@ public static class Cover
         //   "先整块消失、等异步回调回来再出现", 和 VideoCard 的入场动画叠在一起, 就是用户看到的
         //   "切 tab 闪几下"。清空改到**真正要下载**的那条路径里(见 LoadAsync 的 miss 分支):
         //   命中内存缓存走快路径时**根本不碰 Opacity**, 封面稳稳地直接换上。
+        //
+        // ★ 2026-11-08: 换源 = 上一次请求作废。虚拟化面板把这一格回收给别的条目时, 上一次的
+        //   解码可能还排在 DecodeSlots 里 —— 打上标记, 轮到它时直接跳过, 名额让给视口内的图。
+        //   (换源后 LoadAsync 会 new 一个新的标记, 两次请求各算各的。)
+        CoverLoader.AbandonInterest(border);
         border.SetValue(DecodedPixelWidthProperty, 0);
         var url = e.NewValue as string;
         // Recycled containers must not display the previous video's cover while waiting.
@@ -596,7 +719,10 @@ public static class Cover
         // 缓存 miss: 真正要下载/解码。这里**也不清透明度** —— 封面 Border 默认 Opacity=1 但还没
         // 贴背景(透明), 于是外层 CoverCard 的 PlaceholderBrush 会透出来当占位符; 等图解好
         // ApplyDecoded(fade:true) 再播 0→1 淡入盖上去。全程没有"先整块变黑再变回来"的闪。
-        var img = await CoverLoader.LoadAsync(url, w).ConfigureAwait(false);
+        //
+        // ★ 带上"还要不要"标记(2026-11-08): 解码在后台排队, 轮到它时这一格很可能已经被
+        //   VirtualizingCardWallPanel 回收给别的条目了。标记让那次解码连同 CPU 一起让出去。
+        var img = await CoverLoader.LoadAsync(url, w, CoverLoader.InterestOf(border)).ConfigureAwait(false);
         if (img == null) return;
 
         await Application.Current.Dispatcher.InvokeAsync(

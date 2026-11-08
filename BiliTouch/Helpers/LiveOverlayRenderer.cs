@@ -15,8 +15,11 @@ namespace BiliTouch.Helpers;
 ///     ② 加弹幕那一刻画布已经有真实尺寸。
 ///   任一前提不成立, 文本就会**停在初始位置**(画布右缘之外), 用户看到的就是"弹幕没了"。
 ///   探针截图 live-room-video-overlay.png 里那几行"这是—"贴着右边缘不动, 正是这个症状。
-///   ⇒ 现在改用 <see cref="DispatcherTimer"/>(DispatcherPriority.Render) 自己走时:
-///     位置只由 Stopwatch 决定, 与"WPF 这一帧有没有人看"完全解耦。
+///   ⇒ 0.1.6 一度改成 16ms DispatcherTimer 自己走时，但它受系统定时器粒度限制
+///     实际 ~30ms 一跳，把整个浮层呈现帧率钉在 ~33fps（见 docs/FPS-REGRESSION-2026-11-09.md）。
+///   ⇒ 现在: 主时钟仍是 CompositionTarget.Rendering 跟 DWM 合成走，另加一条 250ms
+///     低频看门狗，只在合成真的停摆时补一次推进；位置由 Stopwatch 外推，停多久都不丢进度。
+///     预加载队列继续承担"画布还没尺寸时不丢弹幕"。
 ///
 /// ★ "弹幕要预加载, 权重要高"(用户原话)的落地:
 ///   · <see cref="Add"/> 在画布还没尺寸时**不丢弃**, 而是进 pending 队列, 等第一次
@@ -35,17 +38,20 @@ public sealed class LiveOverlayRenderer : IDisposable
     private readonly List<(TextBlock text, TranslateTransform move, long start, double width)> _items = new();
     private readonly Queue<(string message, uint color)> _pending = new();
     private readonly long[] _lanes = new long[LaneCount];
-    private readonly DispatcherTimer _clock;
-    private bool _disposed;
+    private readonly DispatcherTimer _watchdog;
+    private long _lastRenderTicks;
+    private bool _clockAttached, _disposed;
     private double _fontSize = 20, _area = .35, _opacity = .8, _speed = 150;
 
     public LiveOverlayRenderer(Canvas canvas)
     {
         _canvas = canvas;
-        // 16ms ≈ 60Hz。用 Render 优先级: 它排在布局之后、真正提交合成之前,
-        // 位置写进去当帧就能看见, 又不会和输入/布局抢时间片。
-        _clock = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
-        _clock.Tick += (_, _) => Tick();
+        // ★ 主时钟跟 DWM 合成节奏（CompositionTarget.Rendering），不用 16ms 定时器：
+        //   后者受系统定时器粒度限制实际 ~30ms 一跳，会把浮层呈现帧率钉在 ~33fps
+        //   （实测见 docs/FPS-REGRESSION-2026-11-09.md）。
+        //   低频看门狗只在合成停摆（窗口被遮挡/最小化）时补一次，避免弹幕停在右缘外。
+        _watchdog = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(250) };
+        _watchdog.Tick += (_, _) => WatchdogTick();
         canvas.Unloaded += (_, _) => StopClock();
         canvas.Loaded += (_, _) => EnsureClock();
     }
@@ -113,8 +119,9 @@ public sealed class LiveOverlayRenderer : IDisposable
         EnsureClock();
     }
 
-    private void Tick()
+    private void Tick(object? sender, EventArgs e)
     {
+        _lastRenderTicks = Stopwatch.GetTimestamp();
         if (_disposed) { StopClock(); return; }
         // 先补预加载队列: 画布一有尺寸就把攒着的弹幕铺上去。
         if (_pending.Count > 0 && _canvas.ActualWidth >= 1 && _canvas.ActualHeight >= 1)
@@ -135,8 +142,31 @@ public sealed class LiveOverlayRenderer : IDisposable
         if (_items.Count == 0 && _pending.Count == 0) StopClock();
     }
 
-    private void EnsureClock() { if (!_disposed && !_clock.IsEnabled) _clock.Start(); }
-    private void StopClock() { if (_clock.IsEnabled) _clock.Stop(); }
+    private void WatchdogTick()
+    {
+        if (!_clockAttached || _disposed) return;
+        // Rendering 正常跑时这里几乎零成本：距上次回调还不到 200ms 就直接返回。
+        var now = Stopwatch.GetTimestamp();
+        if (Stopwatch.GetElapsedTime(_lastRenderTicks, now).TotalMilliseconds < 200) return;
+        Tick(this, EventArgs.Empty);
+    }
+
+    private void EnsureClock()
+    {
+        if (_disposed || _clockAttached) return;
+        _clockAttached = true;
+        _lastRenderTicks = Stopwatch.GetTimestamp();
+        CompositionTarget.Rendering += Tick;
+        _watchdog.Start();
+    }
+
+    private void StopClock()
+    {
+        if (!_clockAttached) return;
+        _clockAttached = false;
+        CompositionTarget.Rendering -= Tick;
+        _watchdog.Stop();
+    }
 
     /// <summary>清空画面与所有状态(换房间/改设置/关闭时调用)。</summary>
     public void Clear()

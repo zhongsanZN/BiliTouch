@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -46,10 +46,10 @@ public partial class PlayerWindow
     private long _webSurfaceSettledAt;
     private int _webScrollGeneration;
     private bool _webRestoreScrolling;
-    private VideoFrameTransition? _webFrameTransition;
-    private bool _webFramePending,_webFrameAnimating;
     private bool _webApplyingBounds;
-    private int _webFrameGeneration;
+    /// <summary>正在跑的实时镜像过渡（DWM Thumbnail）；失败会自动回退到纯 WPF 遮罩。</summary>
+    private LiveWindowTransition? _liveTransition;
+    private bool _liveTransitionRunning;
     private FrameworkElement[] _webHeaderParts = Array.Empty<FrameworkElement>();
     private readonly StackPanel _webHeaderStack = new();
     private ScrollViewer? _webHeaderScroll;
@@ -59,6 +59,9 @@ public partial class PlayerWindow
     private readonly ScaleTransform _webCoverScale = new(1, 1);
     private readonly TranslateTransform _webCoverMove = new();
     private readonly TranslateTransform _webBrandMove = new();
+    // ★ 品牌块缩放原来每帧 `new ScaleTransform` 赋给 LayoutTransform，会强制整棵浮层
+    //   measure/arrange。改成一次性挂实例、逐帧只改 ScaleX/ScaleY，行为等价但不再每帧重排。
+    private readonly ScaleTransform _webBrandLayoutScale = new(1, 1);
 
     private static readonly DependencyProperty WebScrollOffsetProperty = DependencyProperty.Register(
         "WebScrollOffset", typeof(double), typeof(PlayerWindow), new PropertyMetadata(0.0, (d, e) =>
@@ -90,6 +93,9 @@ public partial class PlayerWindow
             {
                 brand.RenderTransform = _webBrandMove;
                 brand.RenderTransformOrigin = new Point(0.5, 0.5);
+                // ★ 一次性把缩放实例挂到 LayoutTransform；之后逐帧只改 ScaleX/ScaleY，
+                //   不再每帧 new + 赋值（那会强制整棵浮层重新 measure/arrange）。
+                brand.LayoutTransform = _webBrandLayoutScale;
             }
         }
         WebLeftScroll.PreviewTouchDown += (_, _) => StopWebScrollAnimation();
@@ -249,7 +255,7 @@ public partial class PlayerWindow
         var dockHeight = Math.Max(0, RightLayoutGrid.ActualWidth - 40) * 9 / 16;
         WebHeaderHost.MaxHeight = Math.Max(80, Math.Min(RightLayoutGrid.ActualHeight * 0.55, RightLayoutGrid.ActualHeight - dockHeight - 44));
         UpdateDockForOffset(height);
-        if (!_webRendering && !_webFramePending && !_webFrameAnimating) ApplyWebVideoBounds();
+        if (!_webRendering) ApplyWebVideoBounds();
     }
 
     private void UpdateDockForOffset(double height)
@@ -273,13 +279,121 @@ public partial class PlayerWindow
     /// <summary>
     /// 起一次停靠/还原过渡。
     /// ★ 目标与当前位置几乎相同时不重启动画(滚动时每帧都会调到这里, 不能每帧重建动画状态)。
+    ///
+    /// ★★★ 2026-11-09 停用「截图替身」过渡（TryWebFrameTransitionAsync）：
+    ///   它每次停靠/还原要 TakeSnapshot 写 1280px PNG、开一个透明分层窗口、两次 DwmFlush、
+    ///   把 VideoView 隐藏 ~0.43s、380ms 弹簧、180ms 停留、commit 时重建一次 vout 交换链，
+    ///   正常一轮 0.65~0.8s 画面被静态截图替代，最坏 3s+，之后还挂 3s 守护定时器；
+    ///   期间弹幕与控制栏全部隐藏。这正是「开网页版布局卡顿更多」的来源。
+    ///   实测与调用链见 docs/FPS-REGRESSION-2026-11-09.md。
+    ///   ⇒ 2026-11-09 第二轮: 纯 WPF 遮罩虽然不卡了，但它是"深灰板盖住画面 + 结束帧瞬移"，
+    ///     内容没有连续性，用户反馈"生硬，想要澎湃OS那种"。现在改成
+    ///     LiveWindowTransition：用 DWM Thumbnail 镜像**实时视频画面**，位置/尺寸/圆角
+    ///     用临界阻尼 spring 连续插值，结束帧才让原生窗口落位、镜像淡出交接。
+    ///     任何原生调用失败都会自动回退到 StartLegacyWebDockTarget，不会更差。
     /// </summary>
     private void SetWebDockTarget(double target)
     {
-        if(_webFramePending || _webFrameAnimating){_webAnimationTo=target;return;}
-        if(Math.Abs(target-_webDockProgress)>.001 && _mp.IsPlaying){_webAnimationTo=target;_ = TryWebFrameTransitionAsync();return;}
+        if (Math.Abs(target - _webDockProgress) > .001 && TryStartLiveTransition(target)) return;
         StartLegacyWebDockTarget(target);
     }
+
+    /// <summary>把相对 PlayerStage 的 DIP 矩形换算成屏幕物理像素(SetWindowPos / DWM 用)。</summary>
+    private Rect WebStageToScreenPixels(Rect dip)
+    {
+        var origin = PlayerStage.PointToScreen(new Point(0, 0));
+        var dpi = VisualTreeHelper.GetDpi(this);
+        return new Rect(origin.X + dip.Left * dpi.DpiScaleX, origin.Y + dip.Top * dpi.DpiScaleY,
+            dip.Width * dpi.DpiScaleX, dip.Height * dpi.DpiScaleY);
+    }
+
+    /// <summary>视频区在 PlayerWindow 客户区的物理像素矩形，用作 thumbnail 的 rcSource。</summary>
+    private Rect WebVideoSourceRect()
+    {
+        var r = VideoSurface.TransformToAncestor(this).TransformBounds(new Rect(VideoSurface.RenderSize));
+        var dpi = VisualTreeHelper.GetDpi(this);
+        return new Rect(r.Left * dpi.DpiScaleX, r.Top * dpi.DpiScaleY,
+            r.Width * dpi.DpiScaleX, r.Height * dpi.DpiScaleY);
+    }
+
+    /// <summary>启动实时镜像过渡；返回 false 表示应走纯 WPF 遮罩兜底。</summary>
+    private bool TryStartLiveTransition(double target)
+    {
+        try
+        {
+            if (!_webLayoutMounted || _closing || !_mp.IsPlaying) return false;
+            StopWebVideoAnimation();                 // 收掉可能正在跑的 legacy 动画
+            _liveTransition?.Dispose(); _liveTransition = null;
+
+            PrepareWebDockAnchor(target);            // 排好版，TransformToAncestor 才读得到目标几何
+            var fromDip = VideoSurface.TransformToAncestor(PlayerStage).TransformBounds(new Rect(VideoSurface.RenderSize));
+            var toDip = CalculateWebVideoBounds(target);
+            if (fromDip.IsEmpty || toDip.IsEmpty || fromDip.Width < 2 || fromDip.Height < 2) return false;
+            var from = WebStageToScreenPixels(fromDip);
+            var to = WebStageToScreenPixels(toDip);
+            var root = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            if (root == IntPtr.Zero) return false;
+
+            var transition = new LiveWindowTransition();
+            _liveTransition = transition;
+            _liveTransitionRunning = true;
+            _webAnimationTo = target;
+            // ★ 镜像窗口移走后，起点的原生 vout 仍会露出来 ⇒ 两个画面重影。
+            //   用 DockTransitionCover 把起点压成不透明背景，只留镜像在上层连续变形。
+            //   它在 VideoView.Content 浮层里，镜像窗口是后 Show 的 owned window，Z 序更高。
+            DockTransitionCover.Visibility = Visibility.Visible;
+            DockTransitionCover.Opacity = 1;
+            if (BrandMark != null) BrandMark.Visibility = Visibility.Collapsed;
+            UpdateAlternateVideoControls();
+            _ = RunLiveTransitionAsync(transition, root, from, to, target);
+            return true;
+        }
+        catch
+        {
+            _liveTransition?.Dispose(); _liveTransition = null; _liveTransitionRunning = false;
+            return false;
+        }
+    }
+
+    private async Task RunLiveTransitionAsync(LiveWindowTransition transition, IntPtr root, Rect from, Rect to, double target)
+    {
+        var completed = false;
+        try
+        {
+            await transition.RunAsync(this, root, from, to, WebVideoSourceRect, () =>
+            {
+                _webDockProgress = target;
+                ApplyWebVideoBounds();
+                ApplyHwndHostBlackBackground();
+            });
+            completed = true;
+        }
+        catch { /* 镜像注册/运行失败：下面回退到纯 WPF 遮罩 */ }
+        finally
+        {
+            if (ReferenceEquals(_liveTransition, transition))
+            {
+                transition.Dispose(); _liveTransition = null; _liveTransitionRunning = false;
+            }
+            if (DockTransitionCover != null) { DockTransitionCover.Visibility = Visibility.Collapsed; DockTransitionCover.Opacity = 1; }
+            if (BrandMark != null) BrandMark.Visibility = Visibility.Visible;
+            if (!_closing && _webLayoutMounted)
+            {
+                if (completed || Math.Abs(_webDockProgress - target) < .001)
+                {
+                    _webDockProgress = target;
+                    ApplyWebVideoBounds();
+                    UpdateAlternateVideoControls();
+                }
+                else
+                {
+                    // 真回退：让 legacy 路径把几何和控件状态收尾。
+                    StartLegacyWebDockTarget(target);
+                }
+            }
+        }
+    }
+
     private void StartLegacyWebDockTarget(double target)
     {
         if (Math.Abs(target - _webAnimationTo) < 0.0001 && _webRendering) return;
@@ -301,11 +415,14 @@ public partial class PlayerWindow
         var now = Stopwatch.GetTimestamp();
         if (_webAnimationStarted != 0) _webAnimationElapsed += Math.Min(50, Stopwatch.GetElapsedTime(_webAnimationStarted, now).TotalMilliseconds);
         _webAnimationStarted = now;
-        var t = Math.Clamp(_webAnimationElapsed / 220, 0, 1);
-        var eased = 1 - Math.Pow(1 - t, 3);
+        // 380ms 弹簧（与 VideoFrameTransition.Spring 同款曲线）：观感对齐原来的截图过渡，
+        // 但只改纯 WPF 变换矩阵，不重采样位图、不隐藏原生窗口、不等 DWM。
+        var t = Math.Clamp(_webAnimationElapsed / 380, 0, 1);
+        var eased = 1 - Math.Exp(-7 * t) * (Math.Cos(11 * t) + .42 * Math.Sin(11 * t));
         _webDockProgress = _webAnimationFrom + (_webAnimationTo - _webAnimationFrom) * eased;
         UpdateWebCoverAnimation(_webDockProgress);
-        UpdateAlternateVideoControls();
+        // ★ 不再逐帧调 UpdateAlternateVideoControls()：moving 在整段动画里恒定，
+        //   StartLegacyWebDockTarget / StopWebVideoAnimation 各刷一次就够。
 
         if (t >= 1)
         {
@@ -313,6 +430,9 @@ public partial class PlayerWindow
             // 动画走完的这一帧才把原生窗口**一次性**移到目标几何。此刻它被遮罩完全盖住,
             // 用户看不到这次 SetWindowPos。
             ApplyWebVideoBounds();
+            // ★ 删除截图替身后，commit 的这一次原生 resize 会让 vout 宿主窗口重擦一遍
+            //   默认浅色底（屏幕采样能抓到 1 帧 ~236,237,228 的白闪）。立刻刷黑宿主类背景刷。
+            ApplyHwndHostBlackBackground();
             UpdateWebCoverAnimation(_webDockProgress);
             if (_webSurfaceSettledAt == 0) _webSurfaceSettledAt = now;
             // 原生 vout 的新表面需要几帧才能出画面, 遮罩再压一会儿(140ms)才撤。
@@ -342,8 +462,9 @@ public partial class PlayerWindow
         {
             var inverse = scale > 0.01 ? 1 / scale : 1;
             var brandScale = 1 + (inverse - 1) * 1.0;
-            if (BrandMark.RenderTransform is TranslateTransform) { /* 位移独立 */ }
-            BrandMark.LayoutTransform = new ScaleTransform(brandScale * 0.72, brandScale * 0.72);
+            // ★ 就地改缓存的缩放实例，不再每帧 `new ScaleTransform` 赋给 LayoutTransform：
+            //   后者会让整棵浮层每帧重新 measure/arrange，是过渡期间周期性掉帧的主因。
+            _webBrandLayoutScale.ScaleX = _webBrandLayoutScale.ScaleY = brandScale * 0.72;
             BrandMark.Opacity = 0.35 + 0.65 * (1 - p);
         }
         if (DockTransitionCover != null) DockTransitionCover.Opacity = 1 - 0.35 * p;
@@ -421,47 +542,22 @@ public partial class PlayerWindow
         return Math.Abs(current - target) <= 0.01;
     }
 
-    private async Task TryWebFrameTransitionAsync()
-    {
-        _webFramePending=true;var generation=++_webFrameGeneration;
-        UpdateAlternateVideoControls();
-        try{
-            var frame=await VideoFrameTransition.CaptureAsync(_mp);
-            if(generation!=_webFrameGeneration || _closing || !_webLayoutMounted)return;
-            if(frame==null){_webFramePending=false;StartLegacyWebDockTarget(_webAnimationTo);return;}
-            var target=_webAnimationTo;
-            var from=VideoSurface.TransformToAncestor(PlayerStage).TransformBounds(new Rect(VideoSurface.RenderSize));
-            PrepareWebDockAnchor(target);
-            var to=CalculateWebVideoBounds(target);
-            if(from.IsEmpty || to.IsEmpty){_webFramePending=false;StartLegacyWebDockTarget(target);return;}
-            var transition=_webFrameTransition=new VideoFrameTransition();_webFrameAnimating=true;_webFramePending=false;
-            await transition.RunAsync(this,PlayerStage,from,to,frame,
-                ()=>{VideoView.Visibility=Visibility.Hidden;VideoSurface.Background=Brushes.Transparent;},
-                ()=>{
-                    if(generation!=_webFrameGeneration || _closing)return;
-                    _webDockProgress=target;
-                    ApplyWebVideoBounds();
-                    VideoSurface.Background=Brushes.Black;
-                    // Move/resize the hidden HWND before showing it at the new location.
-                    VideoSurface.UpdateLayout();
-                    ApplyHwndHostBlackBackground();
-                    VideoView.Visibility=Visibility.Visible;
-                    VideoSurface.UpdateLayout();
-                    StartVideoBackdropFix();
-                });
-            if(generation==_webFrameGeneration && !_closing){_webFrameAnimating=false;_webFrameTransition=null;if(Math.Abs(_webAnimationTo-_webDockProgress)>.001)Dispatcher.BeginInvoke(new Action(()=>{if(!_closing && _webLayoutMounted)SetWebDockTarget(_webAnimationTo);}));}
-        }catch{if(!_closing && generation==_webFrameGeneration)StartLegacyWebDockTarget(_webAnimationTo);}
-        finally{if(generation==_webFrameGeneration){_webFramePending=false;_webFrameAnimating=false;if(!_closing){VideoView.Visibility=Visibility.Visible;VideoSurface.Background=Brushes.Black;UpdateAlternateVideoControls();}}}
-    }
+    // ★ 2026-11-09 删除「截图替身」过渡（原 TryWebFrameTransitionAsync + VideoFrameTransition）。
+    //   原因与实测见 docs/FPS-REGRESSION-2026-11-09.md：每次停靠/还原要写 1280px PNG、
+    //   开透明分层窗口、两次 DwmFlush、把 VideoView 隐藏 ~0.43s、commit 时重建 vout 交换链，
+    //   正常一轮 0.65~0.8s 画面被静态截图替代、弹幕与控制栏全隐藏，最坏 3s+。
+    //   现在优先走 LiveWindowTransition 的 DWM 实时镜像；原生调用失败时回退到
+    //   StartLegacyWebDockTarget 的纯 WPF 遮罩（只改变换矩阵，结束帧动一次原生窗口）。
     private void StopWebVideoAnimation()
     {
-        ++_webFrameGeneration;_webFramePending=false;_webFrameAnimating=false;_webFrameTransition?.Dispose();_webFrameTransition=null;
+        // 换片 / 卸载布局 / 起新过渡时，先把在飞的镜像收掉，避免留下孤儿顶层窗口。
+        _liveTransition?.Dispose(); _liveTransition = null; _liveTransitionRunning = false;
         if(!_closing){VideoView.Visibility=Visibility.Visible;VideoSurface.Background=Brushes.Black;}
         if (_webRendering) { CompositionTarget.Rendering -= OnWebVideoFrame; _webRendering = false; }
         if (DockTransitionCover != null) DockTransitionCover.Visibility = Visibility.Collapsed;
         // 收尾必须让原生窗口落在最终几何上: 过渡期间它一直没动, 只有这里会动。
-        if (_webLayoutMounted && !_closing) ApplyWebVideoBounds();
-        if (BrandMark != null) { BrandMark.Opacity = 1; BrandMark.LayoutTransform = Transform.Identity; }
+        if (_webLayoutMounted && !_closing) { ApplyWebVideoBounds(); ApplyHwndHostBlackBackground(); }
+        if (BrandMark != null) { BrandMark.Opacity = 1; _webBrandLayoutScale.ScaleX = _webBrandLayoutScale.ScaleY = 1; }
         if (DockTransitionCover != null) DockTransitionCover.Opacity = 1;
         UpdateAlternateVideoControls();
     }
@@ -471,7 +567,7 @@ public partial class PlayerWindow
         if (!_webInitialized || ControlBar == null || WebMiniControls == null) return;
         // Both bars belong to the stationary native overlay. Hide them before snapshot
         // capture/motion starts, and keep them hidden until the native surface settles.
-        var moving = _webLayoutMounted && (_webFramePending || _webFrameAnimating || _webRendering);
+        var moving = _webLayoutMounted && (_webRendering || _liveTransitionRunning);
         // The native overlay stays at its original coordinates during snapshot motion.
         // Hide danmaku before capture starts and restore only after the surface settles.
         DanmakuCanvas.Visibility = moving ? Visibility.Hidden : Visibility.Visible;

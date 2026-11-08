@@ -57,6 +57,7 @@ internal static class Program
             else if(args.Contains("--scroll-realization")) ScrollRealizationTests.Run(Check, args.Contains("--cost-only"));
             else if(args.Contains("--player-comments-scroll")) PlayerCommentsScrollTests.Run(Check);
             else if(args.Contains("--scroll-text-host-cost")) PlayerCommentsScrollTests.TextHostCost(Check);
+            else if(args.Contains("--player-video-load")) PlayerVideoLoadProbe.Run(Check);
             else if(args.Contains("--phantom-blade")) StarPartyTests.RunPhantom(Check, Artifacts);
             else if(args.Contains("--web-controls-unread")) WebControlsUnreadTests.Run(Check);
             else if(args.Contains("--release023-live")) Release023Tests.Live(Check,Artifacts);

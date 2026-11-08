@@ -362,10 +362,25 @@
                             <TextBlock Text="加载中…" Margin="8,0,0,0"
                                        VerticalAlignment="Center" Style="{StaticResource MetaTextStyle}" />
                         </StackPanel>
-                        <Button Content="加载更多" Style="{StaticResource SubtleButtonStyle}"
-                                Command="{Binding LoadMoreCommand}" />
-                        <TextBlock Text="已经到底啦" Style="{StaticResource MetaTextStyle}"
-                                   Visibility="{Binding Loading, Converter={StaticResource InvBoolToVis}}" />
+                        <!-- ★ 2026-11-08 修"三个提示同时出现"(与上游 1.6.5 同一个 bug，但修法更进一步)。
+                             这里原来有两条错，叠在一起就是底部同时挂着
+                             「加载中…」「加载更多」「已经到底啦」三行：
+                               ① 「加载更多」**没有任何 Visibility** —— 它就永久占着一行；
+                               ② 「已经到底啦」绑的是 `Loading` 的反值，而首页首屏一加载完
+                                  `Loading` 就是 false ⇒ 它从那一刻起永久显示。
+                             ★ 为什么是**删掉两个**而不是给它们补绑定：
+                               推荐流是**无限流** —— GetRecommendAsync 每次请求都返回新一批
+                               (`ps=30`，`fresh_type=4`)，接口层面没有"最后一页"这个概念。
+                               所以「已经到底啦」在这里恒为谎话：不是绑错属性，是这句文案
+                               不该出现在这个 tab；
+                               「加载更多」同理 —— 滚到底会自动补页(见
+                               HomePage.xaml.cs 的 TriggerAutoLoad)，手动按钮只是重复入口。
+                             ★ 这与本仓库既有的两处处理一致，别当成新发明：
+                               · 追番页页底那个「加载更多」早已删除(用户要求"移除加载更多, 保留下滑刷新")；
+                               · 0.2.11 又把动态页那个也删了(用户原话"底部莫名其妙的加载更多没啥用")。
+                             ★ 另外两个 tab 保持不动：热门走 PopularHasMore（它有真实的分页终点，
+                               接口 `items.Count < 20` 就是最后一页），直播干脆不显示到底提示。
+                               那两条是对的。 -->
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>

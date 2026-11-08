@@ -130,7 +130,10 @@ internal static class PlayerCommentsScrollTests
             var before=(long)typeof(TrackpadScroll).GetProperty("OffsetWrites",BindingFlags.Static|BindingFlags.NonPublic)!.GetValue(null)!;
             for(var i=0;i<30;i++)Wheel(comments,-5);
             var immediate=(long)typeof(TrackpadScroll).GetProperty("OffsetWrites",BindingFlags.Static|BindingFlags.NonPublic)!.GetValue(null)!;
-            Pump(400);check(immediate==before && Math.Abs(scroll.VerticalOffset-322.5)<2,"precision comment packets track the finger at the shared pixels-per-delta");
+            // ★ 2026-11-08: 精密包 0.15 → 0.45 px/单位, 期望落点 300 + 30×5×0.45 = 367.5。
+            //   `immediate == before`(事件当场一次 offset 都不写)依然成立 —— 精密包现在也是
+            //   "只记目标、下一帧才推进", 所以这条断言反而比改之前更严格了。
+            Pump(400);check(immediate==before && Math.Abs(scroll.VerticalOffset-367.5)<2,"precision comment packets track the finger at the shared pixels-per-delta");
             Wheel(comments,-120);Pump(25);scroll.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice,Environment.TickCount,MouseButton.Left){RoutedEvent=Mouse.PreviewMouseDownEvent,Source=scroll});
             var canceled=scroll.VerticalOffset;Pump(240);check(Math.Abs(scroll.VerticalOffset-canceled)<2,"clicking comments takes over without a delayed wheel drift");
             Trace(scroll,comments,"split comments",check);
@@ -139,7 +142,7 @@ internal static class PlayerCommentsScrollTests
             var web=(ScrollViewer)player.FindName("WebLeftScroll");
             Svc.Settings.SetTouchpadFeedSensitivity(100);
             check(ReferenceEquals(((ContentControl)player.FindName("WebCommentsHost")).Content,player.FindName("CommentsPanel"))
-                  && Math.Abs(TrackpadScroll.PixelsPerDelta-0.15)<0.001 && Math.Abs(TrackpadScroll.NotchPixels-45)<0.001,
+                  && Math.Abs(TrackpadScroll.PixelsPerDelta-0.45)<0.001 && Math.Abs(TrackpadScroll.NotchPixels-45)<0.001,
                   "browser layout keeps the same comments on the single global calibration");
             web.ScrollToVerticalOffset(650);Pump(750);
             Trace(web,comments,"web comments",check);

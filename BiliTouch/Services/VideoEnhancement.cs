@@ -10,7 +10,7 @@ public sealed record EnhancementProfile(bool Enabled,string Scaler,string Hdr,st
    return new(on,scaler,on && s.VideoEnhancementHdr && GraphicsAdapters.Selected?.VendorId==0x10de?"generate":"auto",s.EnhancementAdapterId);
   }
  }
- public string[] Options=>new[]{"--verbose=2","--vout=direct3d11","--d3d11-upscale-mode="+Scaler,"--d3d11-hdr-mode="+Hdr};
+ public string[] Options=>new[]{"--vout=direct3d11","--d3d11-upscale-mode="+Scaler,"--d3d11-hdr-mode="+Hdr};
 }
 public static class VideoEnhancement
 {
@@ -31,9 +31,12 @@ public static class VideoEnhancement
    else if(message.Contains("Using Super Resolution scaler"))state="厂商超分处理器已创建，等待画面放大";
    var relevant=state!=null || adapter!=null || message.Contains("scaler",StringComparison.OrdinalIgnoreCase) || message.Contains("VSR",StringComparison.OrdinalIgnoreCase);
    if(!relevant)return;
-   lock(Gate){var value=States[core];if(state!=null)value.State=state;if(adapter!=null)value.Adapter=adapter;}
-   try{File.AppendAllText(Path.Combine(AppPaths.DataDir,"video-enhancement.log"),$"{DateTimeOffset.Now:O} {profile.Key} {message}\n");}catch{}
-   Changed?.Invoke();
+   var logPath=Path.Combine(AppPaths.DataDir,"video-enhancement.log");
+   var line=$"{DateTimeOffset.Now:O} {profile.Key} {message}\n";
+   ThreadPool.QueueUserWorkItem(_=>{try{File.AppendAllText(logPath,line);}catch{}});
+   var changed=false;
+   lock(Gate){var value=States[core];if(state!=null && value.State!=state){value.State=state;changed=true;}if(adapter!=null && value.Adapter!=adapter){value.Adapter=adapter;changed=true;}}
+   if(changed)Changed?.Invoke();
   };
  }
 }

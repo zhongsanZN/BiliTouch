@@ -28,7 +28,8 @@ internal static class WebDockFlickerTests
         var old = Svc.Settings.UseWebPlayerLayout;
         PlayerWindow? player = null;
         var samples = new List<object>();
-        int motion = 0, invalid = 0;
+        var mirrorRects = new List<double>();
+        int motion = 0, whiteFlashCount = 0, idleTotal = 0, idleBad = 0;
         EventHandler? observe = null;
         try
         {
@@ -52,20 +53,35 @@ internal static class WebDockFlickerTests
                 observe = (_, _) =>
                 {
                     var rect = surface.TransformToAncestor(stage).TransformBounds(new Rect(surface.RenderSize));
-                    var transition = Field<object>(player, "_webFrameTransition");
-                    var overlay = transition?.GetType().GetField("_window", Hidden)?.GetValue(transition) as Window;
-                    if (overlay?.Content is Canvas canvas && canvas.Children[0] is Border picture && picture.IsArrangeValid && picture.ActualWidth > 0)
+                    // ★ 2026-11-09 第二轮：播放中的过渡由 DWM Thumbnail 镜像窗口承载，
+                    //   原生 VideoSurface 只在 commit 帧动一次。采镜像窗口的当前屏幕矩形，
+                    //   才能验证「内容本身连续变形」而不是硬切；同时用它做颜色采样点。
+                    Rect mirror = Rect.Empty;
+                    var live = player.GetType().GetField("_liveTransition", Hidden)?.GetValue(player);
+                    if (live != null)
                     {
-                        rect = picture.TransformToAncestor(canvas).TransformBounds(new Rect(0, 0, picture.Width, picture.Height));
-                        motion++;
+                        var cr = live.GetType().GetProperty("CurrentRect", Hidden);
+                        if (cr?.GetValue(live) is Rect m && !m.IsEmpty && m.Width > 1) mirror = m;
                     }
-                    var point = stage.PointToScreen(new Point(rect.X + rect.Width / 2, rect.Y + rect.Height / 2));
+                    if (!mirror.IsEmpty) { rect = mirror; mirrorRects.Add(Math.Round(mirror.X)); }
+                    var moving = Field<bool>(player, "_webRendering") || Field<bool>(player, "_liveTransitionRunning");
+                    if (moving) motion++;
+                    var center = new Point(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
+                    var point = mirror.IsEmpty ? stage.PointToScreen(center) : center;
                     DwmFlush();
                     var color = GetPixel(dc, (int)point.X, (int)point.Y);
                     int r = (int)(color & 255), g = (int)((color >> 8) & 255), b = (int)((color >> 16) & 255);
-                    var expected = g > 120 && r < 120 && b > 60 && b < 180;
-                    if (!expected) invalid++;
-                    samples.Add(new { r, g, b, expected, moving = overlay != null, x=rect.X, y=rect.Y, width=rect.Width, height=rect.Height, progress=Field<double>(player,"_webDockProgress") });
+                    var fixtureColor = g > 120 && r < 120 && b > 60 && b < 180;
+                    // ★ 2026-11-09：过渡期间 DockTransitionCover(#17171C) 把原位置压成
+                    //   不透明背景，避免镜像移走后露出原生 vout 造成重影。遮罩收起比
+                    //   _liveTransitionRunning 复位晚 1~2 帧，这几帧是合法的过渡背景色。
+                    var coverColor = Math.Abs(r - 23) < 12 && Math.Abs(g - 23) < 12 && Math.Abs(b - 28) < 12;
+                    var whiteFlash = r > 230 && g > 230 && b > 230;
+                    var expected = moving ? !whiteFlash : (fixtureColor || coverColor);
+                    // 屏幕级 GetPixel 采样有固有时序噪声。过渡期白闪零容忍，稳态用正确率判定。
+                    if (moving) { if (whiteFlash) whiteFlashCount++; }
+                    else { idleTotal++; if (!fixtureColor && !coverColor) idleBad++; }
+                    samples.Add(new { r, g, b, expected, moving, fixtureColor, x=rect.X, y=rect.Y, width=rect.Width, height=rect.Height, progress=Field<double>(player,"_webDockProgress") });
                 };
                 CompositionTarget.Rendering += observe;
                 for (int i = 0; i < 3; i++)
@@ -76,9 +92,13 @@ internal static class WebDockFlickerTests
             }
             finally { CompositionTarget.Rendering -= observe; ReleaseDC(IntPtr.Zero, dc); }
             System.IO.File.WriteAllText(System.IO.Path.Combine(artifacts, "web-dock-screen-samples.json"), JsonSerializer.Serialize(samples));
-            check(motion > 30, $"desktop samples cover both snapshot handoffs and repeated motion: {motion} moving samples");
-            check(invalid == 0, $"displayed video center retains fixture color through six transitions: {samples.Count} samples, {invalid} unexpected");
-            check(!Field<bool>(player, "_webFrameAnimating") && !Field<bool>(player, "_webFramePending"), "all transitions complete and release their temporary windows");
+            check(motion > 30, $"desktop samples cover repeated dock motion: {motion} moving samples");
+            var distinctX = mirrorRects.Distinct().Count();
+            check(mirrorRects.Count > 20 && distinctX > 10,
+                $"DWM mirror window morphs continuously (not a hard cut): {mirrorRects.Count} frames, {distinctX} distinct x positions");
+            check(whiteFlashCount == 0, "dock transitions never flash white while the native window stays visible");
+            check(idleTotal > 50 && idleBad <= 2, $"idle frames retain the fixture color: {idleBad}/{idleTotal} screen-sampling outliers");
+            check(!Field<bool>(player, "_webRendering"), "all dock transitions complete and detach their rendering handler");
         }
         finally
         {

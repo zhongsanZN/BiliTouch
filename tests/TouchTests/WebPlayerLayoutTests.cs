@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Reflection;
 using System.Text.Json;
 using System.Windows;
@@ -83,21 +83,20 @@ internal static class WebPlayerLayoutTests
    {
     player.PlayLocalFile(sample);mp.Mute=true;Pump(1200);
     Element<ItemsControl>(player,"CommentList").ItemsSource=rows;Pump(100);
-    // Start inline so this exercises the snapshot transition, not an already parked video.
+    // Start inline so this exercises the dock transition, not an already parked video.
     scroll.ScrollToTop();Pump(1000);
     var danmaku=Element<Canvas>(player,"DanmakuCanvas");
-    var time=mp.Time;Rect snapshotTarget=Rect.Empty;bool sawMotion=false,hiddenDuringMotion=true;
+    var nativeView=Element<LibVLCSharp.WPF.VideoView>(player,"VideoView");
+    // ★ 2026-11-09：截图替身过渡已删除，现在统一走纯 WPF 遮罩路径。
+    //   断言改为：过渡期间弹幕隐藏、原生 VideoView 全程可见（不再 Hidden），结束恢复弹幕。
+    var time=mp.Time;bool sawMotion=false,hiddenDuringMotion=true,nativeStayedVisible=true;
     EventHandler observe=(_,_)=>
     {
-     if(Field<bool>(player,"_webFramePending") || Field<bool>(player,"_webFrameAnimating"))
-      hiddenDuringMotion &= danmaku.Visibility==Visibility.Hidden;
-     if(Field<bool>(player,"_webFrameAnimating"))
+     if(Field<bool>(player,"_webRendering") || Field<bool>(player,"_liveTransitionRunning"))
      {
       sawMotion=true;
-      var transition=Field<object>(player,"_webFrameTransition");
-      var overlay=transition?.GetType().GetField("_window",Hidden)?.GetValue(transition) as Window;
-      if(Field<double>(player,"_webDockProgress")>=.99 && overlay?.Content is Canvas canvas && canvas.Children[0] is Border picture)
-       snapshotTarget=picture.TransformToAncestor(canvas).TransformBounds(new Rect(0,0,picture.Width,picture.Height));
+      hiddenDuringMotion &= danmaku.Visibility==Visibility.Hidden;
+      nativeStayedVisible &= nativeView.Visibility==Visibility.Visible;
      }
     };
     CompositionTarget.Rendering+=observe;
@@ -108,15 +107,16 @@ internal static class WebPlayerLayoutTests
     //   ⇒ 改成等它真的结束（8 秒上限兜住死循环）：卡死会因为超时失败，慢不会。
     var settleWatch=System.Diagnostics.Stopwatch.StartNew();
     try {scroll.ScrollToVerticalOffset(placeholder.ActualHeight+80);Pump(1200);
-     while((Field<bool>(player,"_webFrameAnimating")||Field<bool>(player,"_webFramePending")) && settleWatch.ElapsedMilliseconds<8000) Pump(120);}
+     while((Field<bool>(player,"_webRendering") || Field<bool>(player,"_liveTransitionRunning")) && settleWatch.ElapsedMilliseconds<8000) Pump(120);}
     finally {CompositionTarget.Rendering-=observe;}
     check(mp.IsPlaying && mp.Time>time && ReferenceEquals(video.MediaPlayer,mp),"native muted playback continues while the video moves into the right rail");
-    check(sawMotion && hiddenDuringMotion && danmaku.Visibility==Visibility.Visible,"playing snapshot transition hides danmaku from capture through settling and then restores it");
+    check(sawMotion && hiddenDuringMotion && danmaku.Visibility==Visibility.Visible,"playing dock transition hides danmaku through settling and then restores it");
+    check(nativeStayedVisible,"pure-WPF dock transition keeps the native VideoView visible throughout (no snapshot swap)");
     var landed=Bounds(surface,stage);Pump(250);var settled=Bounds(surface,stage);
-    check(!snapshotTarget.IsEmpty && Math.Abs(landed.Top-snapshotTarget.Top)<1 && Math.Abs(settled.Top-landed.Top)<1,
-     "snapshot destination matches the native landing position with no later downward jump");
+    check(Math.Abs(settled.Top-landed.Top)<1 && Math.Abs(settled.Left-landed.Left)<1,
+     "native surface lands once and does not jump after the transition");
     scroll.ScrollToTop();Settle(player);
-    check(danmaku.Visibility==Visibility.Visible && !Field<bool>(player,"_webFrameAnimating") && Math.Abs(Bounds(surface,stage).Top-initial.Top)<1,
+    check(danmaku.Visibility==Visibility.Visible && !Field<bool>(player,"_webRendering") && !Field<bool>(player,"_liveTransitionRunning") && Math.Abs(Bounds(surface,stage).Top-initial.Top)<1,
      "playing small-to-large transition restores the inline position and danmaku");
     scroll.ScrollToVerticalOffset(placeholder.ActualHeight+80);Settle(player);
    }
@@ -157,7 +157,7 @@ internal static class WebPlayerLayoutTests
     parked=Bounds(surface,stage);anchor=Bounds(dock,stage);
     if(Math.Abs(parked.Left-anchor.Left)<3 && Math.Abs(parked.Width-anchor.Width)<3) break;
    } while(dockWatch.ElapsedMilliseconds<8000);
-   check(Math.Abs(parked.Left-anchor.Left)<3 && Math.Abs(parked.Width-anchor.Width)<3,$"docking follows actual geometry when interface scaling changes (parked {parked.Left:0.#}x{parked.Width:0.#} vs anchor {anchor.Left:0.#}x{anchor.Width:0.#}, prog={Field<double>(player,"_webDockProgress"):0.##} target={Field<double>(player,"_webAnimationTo"):0.##} off={scroll.VerticalOffset:0.#}/{scroll.ScrollableHeight:0.#} vp={scroll.ViewportHeight:0.#} waited {dockWatch.ElapsedMilliseconds}ms pend={Field<bool>(player,"_webFramePending")} anim={Field<bool>(player,"_webFrameAnimating")} rend={Field<bool>(player,"_webRendering")} sw={surface.Width} sh={surface.Height})");
+   check(Math.Abs(parked.Left-anchor.Left)<3 && Math.Abs(parked.Width-anchor.Width)<3,$"docking follows actual geometry when interface scaling changes (parked {parked.Left:0.#}x{parked.Width:0.#} vs anchor {anchor.Left:0.#}x{anchor.Width:0.#}, prog={Field<double>(player,"_webDockProgress"):0.##} target={Field<double>(player,"_webAnimationTo"):0.##} off={scroll.VerticalOffset:0.#}/{scroll.ScrollableHeight:0.#} vp={scroll.ViewportHeight:0.#} waited {dockWatch.ElapsedMilliseconds}ms rend={Field<bool>(player,"_webRendering")} sw={surface.Width} sh={surface.Height})");
    check(parked.Bottom<=stage.ActualHeight+2,"docked player stays inside the viewport at enlarged UI scale");
    Save(player,Path.Combine(artifacts,"web-layout-docked-scaled.png"));
    player.Width=1920;player.Height=600;Pump(650);
@@ -173,7 +173,7 @@ internal static class WebPlayerLayoutTests
    check(!Field<bool>(player,"_webLayoutMounted") && ReferenceEquals(comments.Parent,Element<Grid>(player,"PageHost")),"switching back returns comments to the original right-side host");
    check(double.IsNaN(surface.Width) && double.IsNaN(surface.Height) && Grid.GetColumnSpan(surface)==1,"switching back restores normal video sizing without leftover dock geometry");
    check(ReferenceEquals(Element<Button>(player,"CommentFab").Parent,Element<Grid>(player,"InfoPanel")),"comment controls return to the correct rail when changing layout");
-   check(!Field<bool>(player,"_webRendering"),"layout animations detach their rendering handler once finished");
+   check(!Field<bool>(player,"_webRendering") && !Field<bool>(player,"_liveTransitionRunning"),"layout animations detach their rendering handler once finished");
   }
   finally
   {
@@ -187,7 +187,7 @@ internal static class WebPlayerLayoutTests
   var deadline=Environment.TickCount64+8000;
   do {
    Pump(50);
-   if(!Field<bool>(player,"_webFramePending") && !Field<bool>(player,"_webFrameAnimating") && !Field<bool>(player,"_webRendering"))return;
+   if(!Field<bool>(player,"_webRendering") && !Field<bool>(player,"_liveTransitionRunning"))return;
   } while(Environment.TickCount64<deadline);
   throw new TimeoutException("Video transition did not settle");
  }

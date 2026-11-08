@@ -165,9 +165,13 @@ internal static class PresentedScrollProbe
         private bool _beginTaken, _endTaken;
 
         /// <summary>
-        /// 每帧推进手势。★ 这里必须用 <c>PrecisionPixelsPerDeltaUnit</c>(0.15 px/单位)——
+        /// 每帧推进手势。★ 这里必须用 <c>PrecisionPixelsPerDeltaUnit</c>——
         /// 它就是 TrackpadScroll 里精密包的真实标定值; 曾经写成 <c>PixelsPerDeltaUnit</c>
         /// 是笔误(那个名字不存在), 会让探针根本编不过。
+        /// ★ 2026-11-08: 该常数 0.15 → 0.45。这里除以它是**故意的**: 探针要模拟的是
+        ///   "手指以固定像素速度移动", 所以 delta 的**单位数**要跟着常数反比缩放,
+        ///   保证每帧落地的**像素距离**与标定值无关 —— 改常数不该改变探针的手势强度,
+        ///   否则前后两组 PRESENT 数字就不能对比了。
         /// </summary>
         private void Drive(double seconds)
         {
