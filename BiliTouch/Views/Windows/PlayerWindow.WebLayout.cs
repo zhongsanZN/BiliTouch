@@ -316,6 +316,8 @@ public partial class PlayerWindow
     /// <summary>
     /// 过渡的每一帧: **只动纯 WPF 的遮罩**, 一次原生调用都不做。
     /// (CompositionTarget.Rendering 里做原生调用会直接把帧拖慢, 而且会造成 vout 重建。)
+    /// ★ 2026-11-09 第四轮真机实测：让原生 VideoSurface 跟着平移/分档缩放都会露伪影
+    ///   （WPF 黑底与 vout HWND 分离、纯白帧），已全部撤销，见 FPS-REGRESSION 报告。
     /// </summary>
     private void OnWebVideoFrame(object? sender, EventArgs e)
     {
@@ -328,6 +330,9 @@ public partial class PlayerWindow
         var eased = 1 - Math.Exp(-7 * t) * (Math.Cos(11 * t) + .42 * Math.Sin(11 * t));
         _webDockProgress = _webAnimationFrom + (_webAnimationTo - _webAnimationFrom) * eased;
         UpdateWebCoverAnimation(_webDockProgress);
+        // ★ 曾试过让原生 VideoSurface 跟着平移/分档缩放，真机截图证实 HwndHost 的
+        //   WPF 黑底与 vout HWND 会分离、露黑边白边，分档 resize 还会刷出纯白帧。
+        //   ⇒ 过渡期间原生窗口一律不动，只有纯 WPF 遮罩连续变形；结束帧才落位一次。
         // ★ 不再逐帧调 UpdateAlternateVideoControls()：moving 在整段动画里恒定，
         //   StartLegacyWebDockTarget / StopWebVideoAnimation 各刷一次就够。
 
