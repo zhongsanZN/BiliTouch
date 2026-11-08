@@ -37,6 +37,26 @@ public partial class ApiClient
     };
 
     private readonly HttpClient _http;
+
+    /// <summary>
+    /// 全局出站限速闸（见 <see cref="ApiRateLimiter"/>）。
+    ///
+    /// ★★★ 为什么它是**进程级单例**（2026-11-08）：
+    ///   B 站的 -412 是**按 IP 算总请求密度**的，不区分来源页面/实例。所以限速必须跨
+    ///   所有 ApiClient 实例共享 —— 每个实例一个桶的话，多开几个页面又各自满速，
+    ///   等于没限。这里用 static 就是为了"全进程只有一个桶"。
+    /// </summary>
+    private static readonly ApiRateLimiter RateLimiter = new();
+
+    /// <summary>
+    /// 每一次真正出站之前都要 await 它（见 <see cref="ApiRateLimiter"/> 里为什么需要）。
+    /// 单独抽成方法是为了让调用点长得一样，方便日后统一改。
+    /// </summary>
+    private static Task ThrottleAsync(CancellationToken token = default) => RateLimiter.WaitAsync(token);
+
+    /// <summary>当前可用令牌数（诊断/测试用）</summary>
+    internal static double RateTokensAvailable => RateLimiter.AvailableTokens;
+
     private (string img, string sub)? _wbiKeys;
     private string? _buvid3;
     private string? _buvid4;
@@ -92,6 +112,7 @@ public partial class ApiClient
             // Referer 逐请求设置: 部分接口(如空间)校验 Referer 域名
             req.Headers.TryAddWithoutValidation("Referer", referer ?? "https://www.bilibili.com/");
 
+            await ThrottleAsync();
             using var resp = await _http.SendAsync(req);
             text = await resp.Content.ReadAsStringAsync();
             int code;
@@ -141,8 +162,14 @@ public partial class ApiClient
             //   "隔一阵就随机过、隔一阵又随机不过": 同一 IP、同一个 URL、完全不带 cookie,
             //   连打 12 次里出现过 code=0 与 -412 **交替**。⇒ 一次退避不一定够,
             //   而多试几次也不会把请求堆上去(总共只多 2 次, 且都带等待)。
+            //
+            //   ★★★ 2026-11-08 补一环: 命中 -412 时**顺手把全局限速桶关一段时间**。
+            //     光靠"这一次退避重试"是正反馈 —— 每个被拦的请求都多打两次, 越限流越密。
+            //     现在全局桶也一起冷静, 这段时间内所有出站请求都在闸口排队,
+            //     客户端真的安静下来, 才可能等到服务端放宽(实测 45~180 秒恢复)。
             if (riskRetries > 0 && code == RiskRateLimitedCode)
             {
+                RateLimiter.Penalize(TimeSpan.FromMilliseconds(RiskBackoffMs * riskRetries * 2));
                 System.Diagnostics.Debug.WriteLine(
                     $"[Api] {url} 命中 -412(IP 限流), 退避 {RiskBackoffMs * riskRetries}ms 后重试");
                 await Task.Delay(RiskBackoffMs * riskRetries);
@@ -474,6 +501,7 @@ public partial class ApiClient
             {
                 ["payload"] = payload
             });
+            await ThrottleAsync();
             await _http.SendAsync(req);
         }
         catch
@@ -1444,6 +1472,7 @@ public partial class ApiClient
         {
             await EnsureWriteReadyAsync();
             using var request=BuildDynamicLikeRequest(id,liked,csrf,AppendFingerprint(SessionManager.Instance.BuildCookieHeader()));
+            await ThrottleAsync();
             using var response=await _http.SendAsync(request);
             using var json=JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var code=json.RootElement.TryGetProperty("code",out var codeNode)?codeNode.GetInt32():-999;
@@ -2632,6 +2661,7 @@ public partial class ApiClient
             request.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com/");
             request.Headers.TryAddWithoutValidation("User-Agent", Ua);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            await ThrottleAsync();
             using var response = await _http.SendAsync(request, timeout.Token).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             var xml = System.Xml.Linq.XDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false));
@@ -2662,6 +2692,7 @@ public partial class ApiClient
             req.Headers.TryAddWithoutValidation("User-Agent", Ua);
             req.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com/");
 
+            await ThrottleAsync();
             using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
 
             // 该时间段没有弹幕时, B 站返回 HTTP 304 + 头 "Bili-Status-Code: -304"
@@ -3446,6 +3477,7 @@ public partial class ApiClient
             //   读接口照样过, 写接口却会被当成"非浏览器客户端"直接判风控。
             req.Headers.TryAddWithoutValidation("Origin", OriginFor(referer));
             req.Content = new FormUrlEncodedContent(ps);
+            await ThrottleAsync();
             using var resp = await _http.SendAsync(req);
             var text = await resp.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(text);
@@ -4768,7 +4800,7 @@ public partial class ApiClient
             await EnsureBuvidAsync();
             var cookie = AppendFingerprint(SessionManager.Instance.BuildCookieHeader());
             if (cookie.Length > 0) req.Headers.TryAddWithoutValidation("Cookie", cookie);
-
+            await ThrottleAsync();
             using var resp = await _http.SendAsync(req);
             var text = await resp.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(text);

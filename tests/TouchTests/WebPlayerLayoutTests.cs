@@ -101,7 +101,14 @@ internal static class WebPlayerLayoutTests
      }
     };
     CompositionTarget.Rendering+=observe;
-    try {scroll.ScrollToVerticalOffset(placeholder.ActualHeight+80);Pump(1200);}
+    // ★★★ 2026-11-08 修一条"测的是机器快慢、不是行为"的断言：
+    //   这里原本只 Pump(1200) 就断言"弹幕已恢复"。而过渡要跑多久取决于机器负载 ——
+    //   实测同一份代码在 CPU 54% 时要 1.4 秒、空闲时 0.9 秒。于是这条断言实际在问
+    //   "你这台机器够快吗"，而不是"过渡有没有把弹幕藏起来再还回来"。
+    //   ⇒ 改成等它真的结束（8 秒上限兜住死循环）：卡死会因为超时失败，慢不会。
+    var settleWatch=System.Diagnostics.Stopwatch.StartNew();
+    try {scroll.ScrollToVerticalOffset(placeholder.ActualHeight+80);Pump(1200);
+     while((Field<bool>(player,"_webFrameAnimating")||Field<bool>(player,"_webFramePending")) && settleWatch.ElapsedMilliseconds<8000) Pump(120);}
     finally {CompositionTarget.Rendering-=observe;}
     check(mp.IsPlaying && mp.Time>time && ReferenceEquals(video.MediaPlayer,mp),"native muted playback continues while the video moves into the right rail");
     check(sawMotion && hiddenDuringMotion && danmaku.Visibility==Visibility.Visible,"playing snapshot transition hides danmaku from capture through settling and then restores it");
@@ -134,9 +141,23 @@ internal static class WebPlayerLayoutTests
    finally { surface.SizeChanged-=watchSize; video.SizeChanged-=watchSize; }
    check(zeroSizes.Count==0,"the native video surface never collapses to zero size while toggling fullscreen (a 0x0 resize makes libvlc destroy the vout and the picture stays black): "+string.Join(", ",zeroSizes));
    check(!Field<bool>(player,"_isFullscreen") && Field<bool>(player,"_webLayoutMounted") && scroll.VerticalOffset>0,"fullscreen exit restores the browser layout and comment reading position");
-   Svc.Settings.SetUiScalePercent(150);Pump(700);
-   parked=Bounds(surface,stage);anchor=Bounds(dock,stage);
-   check(Math.Abs(parked.Left-anchor.Left)<3 && Math.Abs(parked.Width-anchor.Width)<3,"docking follows actual geometry when interface scaling changes");
+   // ★★ 2026-11-08 同一类问题（“测的是机器快慢”）：
+   //   改界面缩放走 LayoutChanged → 排队 → 重新测量 → 重新摆原生窗口，是一条**异步链**。
+   //   原来固定 Pump(700) 就断言几何对齐，负载高时链还没跑完（实测 CPU 54% 时视频区仍停在内联几何）。
+   //   ⇒ 改成“等它对齐，最多 8 秒”（实测同一台机器上 0.5~5、不等，取决于当时负载）；
+   //     永远对不齐的真 bug 仍然会被抓住。
+   Svc.Settings.SetUiScalePercent(150);
+   // ★ 尺寸变了之后滚动位置会被重新夹一遍，可能从“已停靠”退回内联。
+   //   本条断言要验的是“**停靠状态下**视频区跟着锚点走”，所以得先把前提重新摆好，
+   //   而不是靠“刚好还没退回去”的瞬态过关。
+   scroll.ScrollToVerticalOffset(scroll.ScrollableHeight);
+   var dockWatch=System.Diagnostics.Stopwatch.StartNew();
+   do {
+    Pump(120);
+    parked=Bounds(surface,stage);anchor=Bounds(dock,stage);
+    if(Math.Abs(parked.Left-anchor.Left)<3 && Math.Abs(parked.Width-anchor.Width)<3) break;
+   } while(dockWatch.ElapsedMilliseconds<8000);
+   check(Math.Abs(parked.Left-anchor.Left)<3 && Math.Abs(parked.Width-anchor.Width)<3,$"docking follows actual geometry when interface scaling changes (parked {parked.Left:0.#}x{parked.Width:0.#} vs anchor {anchor.Left:0.#}x{anchor.Width:0.#}, prog={Field<double>(player,"_webDockProgress"):0.##} target={Field<double>(player,"_webAnimationTo"):0.##} off={scroll.VerticalOffset:0.#}/{scroll.ScrollableHeight:0.#} vp={scroll.ViewportHeight:0.#} waited {dockWatch.ElapsedMilliseconds}ms pend={Field<bool>(player,"_webFramePending")} anim={Field<bool>(player,"_webFrameAnimating")} rend={Field<bool>(player,"_webRendering")} sw={surface.Width} sh={surface.Height})");
    check(parked.Bottom<=stage.ActualHeight+2,"docked player stays inside the viewport at enlarged UI scale");
    Save(player,Path.Combine(artifacts,"web-layout-docked-scaled.png"));
    player.Width=1920;player.Height=600;Pump(650);

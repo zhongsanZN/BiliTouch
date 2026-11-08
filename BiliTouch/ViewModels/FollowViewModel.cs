@@ -20,6 +20,14 @@ public class FollowViewModel : ObservableObject
     private string _error = "";
     private long _selfMid;
     private bool _hasMoreUsers = true;
+
+    /// <summary>
+    /// 左栏 UP 列表还有没有下一页（页面滚动加载的闸门，见 FollowPage.UpListScroll_OnScrollChanged）。
+    /// ★ 2026-11-08 暴露成属性：之前它是私有字段，页面只能用"Users.Count>0"当判据，
+    ///   于是列表翻完之后每次滚动到底都会再打一次"下一页"的请求 —— 白打，且在限流
+    ///   敏感期里纯属添乱。
+    /// </summary>
+    public bool HasMoreUsers => _hasMoreUsers;
     private bool _loadingUsers;
     public bool LoadingUsers { get => _loadingUsers; private set => SetProperty(ref _loadingUsers, value); }
     private int _followingPage = 1;      // 左栏 UP 列表的翻页
@@ -660,10 +668,17 @@ public class FollowViewModel : ObservableObject
     ///   · 用户点提示条才真正刷新(见 ApplyNewDynamics)。
     ///
     /// ★ 失败静默: 这是锦上添花, 不该弹错误。
+    ///
+    /// ★★★ 2026-11-08 为"刷动态刷一会就限流"做了三处收敛(方法名不变, 行为按调用方区分):
+    ///   <paramref name="polling"/> = true 时走**省额度**模式(定时轮询每 45 秒一次):
+    ///     ① 未读快照只读第一页, 不翻完整个关注列表;
+    ///     ② feed 只拉第一页, 不再为"找新动态"往下翻最多 4 页(那是 4 倍的请求量);
+    ///     ③ 结论只需要"有没有新东西", 条数够提示条用就行 —— 精确条数由全量档给。
+    ///   进页面 / 手动刷新 / 标记已读后走 False(全量), 红点覆盖所有人。
     /// </summary>
     private long _lastUnreadScanTs;
     private bool _checkingNew;
-    public async Task CheckNewDynamicsAsync()
+    public async Task CheckNewDynamicsAsync(bool polling = false)
     {
         if (!Svc.Session.HasLogin || _checkingNew || Loading) return;
         _checkingNew = true;
@@ -671,7 +686,7 @@ public class FollowViewModel : ObservableObject
         var forUp = SelectedUp;
         try
         {
-            await RefreshServerUnreadAsync();
+            await RefreshServerUnreadAsync(includeOverflowPages: !polling);
             // Always scan the global feed, even while an individual UP is selected.
             var result = await Svc.Api.GetDynamicFeedFullAsync();
             if (generation != _selectionGeneration || !result.ok || result.items == null) return;
@@ -679,7 +694,7 @@ public class FollowViewModel : ObservableObject
             var ids = new HashSet<string>(all.Select(d => d.Id));
             var cursor = result.nextOffset;
             var cursors = new HashSet<string>();
-            while (cursors.Count < 4 && result.hasMore && !string.IsNullOrEmpty(cursor) && cursors.Add(cursor))
+            while (!polling && cursors.Count < 4 && result.hasMore && !string.IsNullOrEmpty(cursor) && cursors.Add(cursor))
             {
                 // Scan until reaching a previously seen page; first visit covers the last week.
                 if ((_lastUnreadScanTs > 0 && all.Any(d => d.PubTs < _lastUnreadScanTs)) ||
@@ -980,7 +995,7 @@ public class FollowViewModel : ObservableObject
     /// ★ 为什么不直接复用 LoadSelectionAsync: 那会清空 FeedItems 并弹整页 loading,
     ///   用户只是切回来瞄一眼红点, 不该被强制回到列表顶部; 这里单独拉第一页动态就够了。
     /// </summary>
-    public Task RefreshUnreadBadgesAsync() => CheckNewDynamicsAsync();
+    public Task RefreshUnreadBadgesAsync() => CheckNewDynamicsAsync(polling: true);
 
     /// <summary>Remember posting times for sorting; red dots come exclusively from the server snapshot.</summary>
     private void UpdateUnreadBadges() => UpdateUnreadBadges(Dynamics);
@@ -995,12 +1010,12 @@ public class FollowViewModel : ObservableObject
     private readonly Dictionary<long, bool> _serverUnread = new();
     private int _unreadRequestVersion;
 
-    internal async Task<bool> RefreshServerUnreadAsync()
+    internal async Task<bool> RefreshServerUnreadAsync(bool includeOverflowPages = true)
     {
         if (!Svc.Session.HasLogin) return false;
         var account = Svc.Session.Current.DedeUserID;
         var version = ++_unreadRequestVersion;
-        var state = await Svc.Api.GetDynamicUnreadStateAsync();
+        var state = await Svc.Api.GetDynamicUnreadStateAsync(includeOverflowPages);
         if (version != _unreadRequestVersion || account != Svc.Session.Current.DedeUserID || !state.ok) return false;
         _serverUnread.Clear();
         foreach (var pair in state.authors) _serverUnread[pair.Key] = pair.Value;

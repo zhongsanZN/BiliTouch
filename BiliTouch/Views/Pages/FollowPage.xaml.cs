@@ -125,11 +125,6 @@ public partial class FollowPage : UserControl
                win.WindowState != WindowState.Minimized;
     }
 
-    private async void OnLoadMoreFeed(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is FollowViewModel vm) await vm.LoadMoreFeedAsync();
-    }
-
     /// <summary>点「N 条新动态」: 把攒下的新动态插到列表最前面</summary>
     private void OnApplyNewDynamics(object sender, RoutedEventArgs e)
     {
@@ -213,13 +208,21 @@ public partial class FollowPage : UserControl
 
     // ------------------------------------------------------------ 滚动加载
 
-    /// <summary>右栏: 内容滚动到底自动补下一页(全部动态 = 游标; 单 UP = 页码)</summary>
+    /// <summary>
+    /// 右栏: 内容滚动到底自动补下一页(全部动态 = 游标; 单 UP = 页码)
+    ///
+    /// ★★ 2026-11-08: 页脚那个「加载更多」按钮已经删了(用户: "底部莫名其妙的加载更多没啥用")，
+    ///   所以**这里成了唯一的入口** —— 它出问题时不是"少个兜底", 而是"再也加载不了下一页"。
+    ///   因此把三道闸补全: 加载中/没有下一页/上一次出错都不再重复触发(否则滚动事件
+    ///   每帧都在打同一个请求，正是"求过于频繁"的来源之一)。
+    /// </summary>
     private void FeedScroll_OnScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (DataContext is not FollowViewModel vm) return;
         if (e.OriginalSource is not ScrollViewer sv || !sv.IsVisible) return;
         if (e.VerticalChange <= 0 && e.ExtentHeightChange <= 0) return;
         if (vm.Error.Length > 0) return;
+        if (vm.Loading || vm.LoadingMore || !vm.HasMore) return;
         var distanceToBottom = sv.ScrollableHeight - sv.VerticalOffset;
         if (distanceToBottom > AutoLoadThreshold) return;
         _ = vm.LoadMoreFeedAsync();
@@ -229,6 +232,9 @@ public partial class FollowPage : UserControl
     private void UpListScroll_OnScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (DataContext is not FollowViewModel vm) return;
+        // ★ 2026-11-08: 与右栏同样的闸 —— 滚动事件是按帧来的, 不加"在途/没有下一页"的判断
+        //   就会在触底的那几帧里连着发起多次翻页请求(每一帧一次)。
+        if (vm.LoadingUsers || !vm.HasMoreUsers) return;
         var sv = (ScrollViewer)sender;
         var distanceToBottom = sv.ScrollableHeight - sv.VerticalOffset;
         if (distanceToBottom > AutoLoadThreshold) return;

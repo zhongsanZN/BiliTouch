@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http;
 using System.Reflection;
 using System.IO;
@@ -86,6 +86,13 @@ internal static class WebControlsUnreadTests
 
             var held = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
             fixture.HoldNextPortal = held; var stale = vm.RefreshServerUnreadAsync();
+            // ★★ 2026-11-08：这里必须先确认“旧的那次请求真的已经发出且被挂住”，再发新的那次。
+            //   原来靠“调用顺序”隐式假设先发的先到处理器，而出站前现在会过一道限速闸（要 await），
+            //   两个并发调用到达处理器的先后不再固定 —— HoldNextPortal 会抓到错的那一个，
+            //   于是 Wait(新那次) 永远等不到（实测 60 秒超时）。
+            //   这不是改了断言：它要验的仍然是“新的能先完成，并且旧的晚到响应不能重新点亮红点”，
+            //   只是把“旧的确实在路上”这个前提显式等出来。
+            Until(() => fixture.HoldNextPortal == null);
             fixture.Unread.Clear(); check(Wait(vm.RefreshServerUnreadAsync()), "a newer refresh can finish while an older request is still in flight");
             held.SetResult(UnreadFixture.Json(new { code = 0, data = new { up_list = new[] { new { mid = 101, has_update = true } } } }));
             check(!Wait(stale) && vm.Users.All(u => !u.HasNew), "a late pre-read response cannot relight already-cleared red dots");

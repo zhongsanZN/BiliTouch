@@ -18,6 +18,28 @@ public partial class ApiClient
 
     /// <summary>Fetch the official UP list, including its overflow pages. Failure is not an empty read state.</summary>
     public async Task<(bool ok, string? err, Dictionary<long, bool> authors)> GetDynamicUnreadStateAsync()
+        => await GetDynamicUnreadStateAsync(includeOverflowPages: true);
+
+    /// <summary>
+    /// 取「谁有新动态」的官方快照。
+    ///
+    /// ★★★ <paramref name="includeOverflowPages"/>（2026-11-08 新增，为"刷动态刷一会就限流"而加）：
+    ///   <c>up_list_more=1</c> 时服务端把关注列表**分页**下发，原实现每次调用都把
+    ///   后面的页**全部翻完**（关注 200+ 人 ≈ 7~8 次请求）。
+    ///   而动态页的未读轮询每 45 秒就调一次它 ⇒ 光"什么都没干"每分钟就要打十几次请求，
+    ///   叠上滚动加载的 feed 请求，正是 -412（IP 级限流）的温床。
+    ///
+    ///   ⇒ 拆成两档：
+    ///     · <c>true</c>（默认）= 全量。**进页面 / 手动刷新 / 标记已读后**用这一次，
+    ///       保证红点覆盖所有关注的 UP；
+    ///     · <c>false</c> = 只读第一页。给**定时轮询**用 —— 轮询只需要"有没有新东西"这个
+    ///       粗结论，翻完整个关注列表纯属浪费额度。
+    ///   ★ 为什么只读第一页也够：服务端是按"最近更新"排的，有新动态的 UP 一定排在最前。
+    ///     真出现"第 2 页的人更新了但第 1 页没变"的极端情况，下一次全量刷新（或用户手动刷新）
+    ///     会补上，红点晚几分钟亮远比被限流好。
+    /// </summary>
+    public async Task<(bool ok, string? err, Dictionary<long, bool> authors)> GetDynamicUnreadStateAsync(
+        bool includeOverflowPages)
     {
         var authors = new Dictionary<long, bool>();
         var (code, message, data) = await GetJsonAsync("https://api.bilibili.com/x/polymer/web-dynamic/v1/portal",
@@ -37,6 +59,8 @@ public partial class ApiClient
             more = list;
         }
         else return (false, "动态未读状态响应不完整", authors);
+        // ★ 轮询档：首页已经给了结论，不再往下翻（见方法注释里的取舍）。
+        if (!includeOverflowPages) return (true, null, authors);
         var cursors = new HashSet<string>();
         while (more.ValueKind == JsonValueKind.Object && more.TryGetProperty("has_more", out var hasMore) &&
                (hasMore.ValueKind == JsonValueKind.True || hasMore.ToString() == "1"))

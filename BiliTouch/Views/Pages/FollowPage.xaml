@@ -468,6 +468,12 @@
                             </Border>
 
                             <!-- 底部状态 -->
+                            <!-- ★★★ 2026-11-08 删掉这里的「加载更多」按钮（用户："底部莫名其妙的加载更多没啥用"）：
+                                 往下滚到底已经会自动补下一页（见 FeedScroll_OnScrollChanged → LoadMoreFeedAsync），
+                                 那个按钮只是在页脚常驻一个能点但没有新增信息的东西 —— 而且它用的是 DockPanel.Dock=Bottom，
+                                 永远贴在窗口底边，跟"列表滚到哪"没有关系，看着就像个不知从哪冒出来的杂项。
+                                 现在底部只留两件事：正在自动加载的转圈、"已经到底啦"。
+                                 ★ 首页也走过同一条路（HomePage 的「加载更多」同样因为自动加载而删除），保持一致。 -->
                             <StackPanel DockPanel.Dock="Bottom" Margin="0,6,0,8" HorizontalAlignment="Center">
                                 <StackPanel Orientation="Horizontal"
                                             Visibility="{Binding LoadingMore, Converter={StaticResource BoolToVis}}">
@@ -475,9 +481,6 @@
                                     <TextBlock Text="加载中…" Margin="8,0,0,0"
                                                VerticalAlignment="Center" Style="{StaticResource MetaTextStyle}" />
                                 </StackPanel>
-                                <Button Content="加载更多" Style="{StaticResource SubtleButtonStyle}"
-                                        Click="OnLoadMoreFeed" MinHeight="36"
-                                        Visibility="{Binding HasMore, Converter={StaticResource BoolToVis}}" />
                                 <TextBlock Text="已经到底啦" Style="{StaticResource MetaTextStyle}"
                                            Visibility="{Binding HasMore, Converter={StaticResource InvBoolToVis}}" />
                             </StackPanel>

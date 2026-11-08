@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -188,6 +188,7 @@ public partial class ApiClient
             request.Headers.TryAddWithoutValidation("Origin", "https://t.bilibili.com");
             request.Content = form;
 
+            await ThrottleAsync();
             using var response = await _http.SendAsync(request);
             var text = await response.Content.ReadAsStringAsync();
             using var document = JsonDocument.Parse(text);
@@ -315,6 +316,7 @@ public partial class ApiClient
             if (!string.IsNullOrEmpty(referer)) request.Headers.TryAddWithoutValidation("Referer", referer);
             request.Headers.TryAddWithoutValidation("Origin", OriginFor(referer));
             request.Content = new FormUrlEncodedContent(ps);
+            await ThrottleAsync();
             using var response = await _http.SendAsync(request);
             var text = await response.Content.ReadAsStringAsync();
             using var document = JsonDocument.Parse(text);

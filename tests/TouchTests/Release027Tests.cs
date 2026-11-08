@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -45,8 +45,12 @@ internal static class Release027Tests
             check(items.Any(c => c.DataContext is VideoItem item && int.Parse(item.Bvid[2..]) > 200),
                 "actual home realizes middle rows through the page viewport");
             check(items.All(c => c.ActualWidth > 150 && c.ActualWidth < 600), "actual home card widths remain usable");
-            check(typeof(App).Assembly.GetName().Version!.ToString(3) == App.AppVersion && App.AppVersion == "0.2.9",
-                "application and assembly report 0.2.9");
+            // ★ 2026-11-08: 这里原来把 "0.2.9" 写死成断言的一部分，每发一版就得改一次。
+            //   版本一致性由 Program.cs 里那条「程序集 == App.AppVersion」负责；
+            //   这里只保证"它是个非空的三段版本号"，不再为发版制造无意义的改动点。
+            check(typeof(App).Assembly.GetName().Version!.ToString(3) == App.AppVersion
+                  && App.AppVersion.Split('.').Length == 3,
+                "application and assembly report the same released version");
         }
         finally { window.Close(); }
     }
