@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <img src="BiliTouch/Assets/app.png" width="104" alt="BiliTouch 图标">
 
@@ -80,7 +80,9 @@ BiliTouch 的改进重点，是触摸屏、触控板和日常浏览的操作体�
 | **portable.zip 便携包** | 解压即用，包含运行时；完整解压后运行，保留包内原生库和资源目录 |
 | **source.zip 源码包** | 对应版本源码；构建步骤见下方 |
 
-发行页同时提供校验值和验证记录。应用内更新仅指向 `zhongsanZN/BiliTouch`。
+发行页的下载附件只保留 `setup.exe`；便携包与源码包可由标签自行构建，校验值与验证记录随版本留在本机归档。
+应用内更新只指向 `zhongsanZN/BiliTouch`：检测到新版本后可以在程序内下载安装器、校验 SHA-256 并静默安装重启，
+失败时仍保留「前往 GitHub 下载」的退路。
 
 ## 快捷键
 
