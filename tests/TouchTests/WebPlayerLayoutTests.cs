@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Reflection;
 using System.Text.Json;
 using System.Windows;
@@ -114,9 +114,25 @@ internal static class WebPlayerLayoutTests
     scroll.ScrollToVerticalOffset(placeholder.ActualHeight+80);Settle(player);
    }
    var savedOffset=scroll.VerticalOffset;
-   Call(player,"ToggleFullscreen");Pump(500);
-   check(Field<bool>(player,"_isFullscreen") && !Field<bool>(player,"_webLayoutMounted"),"fullscreen temporarily restores a full-stage video surface");
-   Call(player,"ToggleFullscreen");Pump(700);
+   // ★★★ 2026-11-08 锁死「退出全屏后视频变黑」（用户报的第二个问题）：
+   //   挂/卸网页布局会改 VideoSurface 的 HorizontalAlignment/VerticalAlignment。
+   //   而 Width/Height 在原生布局下是 NaN（Stretch）。一旦变成 Left/Top + NaN，
+   //   元素改按内容量尺寸，内容是 HwndHost(VideoView)、没有期望尺寸 ⇒ **量成 0×0**。
+   //   0×0 会立刻给原生窗口发一次 SetWindowPos，libvlc 侧就是 `resize 0x0`
+   //   ⇒ d3d11 销毁 pool 与 vout（日志 `destroying useless vout`）⇒ **永久黑屏**，
+   //   之后尺寸再怎么变都不会重建。所以这一条必须在这里钉住：进出全屏的任何时刻，
+   //   视频区都不能出现 0 宽或 0 高。
+   var zeroSizes=new List<string>();
+   SizeChangedEventHandler watchSize=(_,e)=>{ if(e.NewSize.Width<0.5 || e.NewSize.Height<0.5) zeroSizes.Add($"{e.PreviousSize.Width:0.#}x{e.PreviousSize.Height:0.#}→{e.NewSize.Width:0.#}x{e.NewSize.Height:0.#}"); };
+   surface.SizeChanged+=watchSize; video.SizeChanged+=watchSize;
+   try
+   {
+    Call(player,"ToggleFullscreen");Pump(500);
+    check(Field<bool>(player,"_isFullscreen") && !Field<bool>(player,"_webLayoutMounted"),"fullscreen temporarily restores a full-stage video surface");
+    Call(player,"ToggleFullscreen");Pump(700);
+   }
+   finally { surface.SizeChanged-=watchSize; video.SizeChanged-=watchSize; }
+   check(zeroSizes.Count==0,"the native video surface never collapses to zero size while toggling fullscreen (a 0x0 resize makes libvlc destroy the vout and the picture stays black): "+string.Join(", ",zeroSizes));
    check(!Field<bool>(player,"_isFullscreen") && Field<bool>(player,"_webLayoutMounted") && scroll.VerticalOffset>0,"fullscreen exit restores the browser layout and comment reading position");
    Svc.Settings.SetUiScalePercent(150);Pump(700);
    parked=Bounds(surface,stage);anchor=Bounds(dock,stage);

@@ -140,6 +140,10 @@ public partial class PlayerWindow
 
     private void MountWebLayout()
     {
+        // ★★ 必须在**动任何子元素之前**抓尺寸(2026-11-08): 下面要摘挂一堆元素、改可见性,
+        //   一旦开始, VideoSurface 的 ActualWidth/ActualHeight 会在重排过程中变成 0,
+        //   那时再"钉"就晚了 —— 实测钉到的是 0, 于是 Left/Top + NaN 依旧量成 0×0。
+        PinVideoSurfaceSize();
         _webPreviousComments = TabComments.IsChecked == true; _webLegacyInfoScroll = InfoScroll.VerticalOffset;
         _webLayoutMounted = true;
         ResetWebPageAnimations();
@@ -152,6 +156,17 @@ public partial class PlayerWindow
         TabComments.Visibility = Visibility.Collapsed; TabIntro.IsChecked = true;
         IntroPanel.Visibility = CommentsPanel.Visibility = Visibility.Visible;
         UiScale.Register(WebCommentsScaleRoot); UiScale.Register(WebCommentChrome);
+        // ★★★ 2026-11-08 修「退出全屏后视频变黑」（用户报的第二个问题，与闪退同源）：
+        //   下面两行会把 VideoSurface 从 Stretch 改成 Left/Top，而它的 Width/Height 此时是
+        //   **NaN**（UnmountWebLayout 里被清成 NaN 了）。Left/Top + NaN ⇒ 元素按内容量尺寸，
+        //   而内容 VideoView 是 HwndHost、没有期望尺寸 ⇒ 量成 **0×0**。
+        //   0×0 会立刻下发一次 SetWindowPos，libvlc 侧就是 `VoutDisplayEvent 'resize' 0x0`
+        //   ⇒ d3d11 销毁 pool 与 vout（`destroying useless vout`）⇒ 之后再也不重建 ⇒ **永久黑屏**。
+        //   实测时间线（探针 surfaceSizes）：
+        //     1386.7x924.4 → **0x0** → 962.7x541.3 → 752x423.1
+        //   中间那个 0×0 就是黑屏的全部原因；后面的正确尺寸救不回来，因为 vout 已经没了。
+        //   ⇒ 改对齐方式**之前**先把当前实际尺寸钉住，让宽度高度永远不经过 0。
+        //     随后 UpdateWebMeasurements → ApplyWebVideoBounds 会把它改成真正该有的尺寸。
         Grid.SetColumnSpan(VideoSurface, 2); VideoSurface.HorizontalAlignment = HorizontalAlignment.Left; VideoSurface.VerticalAlignment = VerticalAlignment.Top; Panel.SetZIndex(VideoSurface, 10);
         _webDockProgress = _webAnimationFrom = _webAnimationTo = 0;
         DockTransitionCover.Visibility = Visibility.Collapsed;
@@ -180,8 +195,11 @@ public partial class PlayerWindow
         WebLeftPane.Visibility = WebHeaderHost.Visibility = WebDockAnchor.Visibility = Visibility.Collapsed;
         WebDockAnchor.Height = 0; TabComments.Visibility = Visibility.Visible;
         Grid.SetColumnSpan(VideoSurface, 1); Panel.SetZIndex(VideoSurface, 0);
-        VideoSurface.Width = VideoSurface.Height = double.NaN; VideoSurface.Margin = new Thickness(0);
+        // ★ 卸载这一侧同样会经过"Left/Top + NaN"：先把对齐方式改回 Stretch，再清 Width/Height。
+        //   反过来的话（先清成 NaN 再改对齐），中间那一刻就是 0×0 ⇒ 同样会把 vout 弄没。
+        //   Stretch + NaN 是正常的"按父级拉伸"，所以顺序只能是这一个。
         VideoSurface.HorizontalAlignment = HorizontalAlignment.Stretch; VideoSurface.VerticalAlignment = VerticalAlignment.Stretch;
+        VideoSurface.Width = VideoSurface.Height = double.NaN; VideoSurface.Margin = new Thickness(0);
         ResetWebPageAnimations();
         var comments = _webPreviousComments || IsCommentDetailOpen;
         IntroPanel.Visibility = comments ? Visibility.Collapsed : Visibility.Visible; CommentsPanel.Visibility = comments ? Visibility.Visible : Visibility.Collapsed;
@@ -189,6 +207,34 @@ public partial class PlayerWindow
         InfoScroll.ScrollToVerticalOffset(_webLegacyInfoScroll);
         UpdateCommentComposer(); UpdateAlternateVideoControls();
         UpdateCommentPicturePlacement();
+    }
+
+    /// <summary>
+    /// 把 <c>VideoSurface</c> 的当前实际尺寸钉成显式 Width/Height，避免切换对齐方式时被量成 0。
+    ///
+    /// ★ 为什么必须有这一步（2026-11-08，退出全屏黑屏的根因）：
+    ///   挂/卸网页布局都会改 <c>VideoSurface</c> 的 <c>HorizontalAlignment/VerticalAlignment</c>。
+    ///   而 <c>Width/Height</c> 在"原生布局"下是 <c>NaN</c>（Stretch 拉伸）。
+    ///   <c>Stretch + NaN</c> ⇒ 按父级拉伸，尺寸正常；
+    ///   一旦改成 <c>Left/Top + NaN</c> ⇒ 按**内容**量尺寸，而内容是 <c>VideoView</c>(HwndHost)，
+    ///   它没有期望尺寸 ⇒ **量成 0×0**。
+    ///   0×0 会立刻下发 <c>SetWindowPos(0,0)</c>，libvlc 侧就是
+    ///   <c>VoutDisplayEvent 'resize' 0x0</c> ⇒ d3d11 销毁 pool 与 vout
+    ///   （日志里 <c>destroying useless vout</c> + <c>Win32VoutCloseWindow</c>）⇒ **永久黑屏**。
+    ///   之后即便尺寸又变回正确值也不会重建 —— 这就是"退出全屏后视频变黑、怎么等都不恢复"。
+    ///   ⇒ 先钉住当前实际尺寸，让宽度/高度永远不经过 0。
+    ///
+    /// ★ 钉的是 <c>ActualWidth/ActualHeight</c>（已经排过版的真实值），不是 RenderSize 也不是 NaN：
+    ///   窗口刚建好还没排过版时两者都可能是 0，那时**不钉**（保持 NaN 让 Stretch 生效），
+    ///   否则会把 0 永久写进去 —— 那比原来的 bug 更难查。
+    /// </summary>
+    private void PinVideoSurfaceSize()
+    {
+        var width = VideoSurface.ActualWidth;
+        var height = VideoSurface.ActualHeight;
+        if (width <= 0 || height <= 0 || double.IsNaN(width) || double.IsNaN(height)) return;
+        VideoSurface.Width = width;
+        VideoSurface.Height = height;
     }
 
     private void UpdateWebMeasurements()

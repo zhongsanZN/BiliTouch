@@ -47,7 +47,9 @@ internal static class FullscreenVerification
             ["version"] = App.AppVersion,
             ["baseDirectory"] = AppContext.BaseDirectory,
             ["roundsRequested"] = rounds,
-            ["steps"] = new System.Collections.Generic.List<string>()
+            ["steps"] = new System.Collections.Generic.List<string>(),
+            ["vlcLog"] = new System.Collections.Generic.List<string>(),
+            ["surfaceSizes"] = new System.Collections.Generic.List<string>()
         };
         var steps = (System.Collections.Generic.List<string>)results["steps"]!;
 
@@ -90,14 +92,21 @@ internal static class FullscreenVerification
             }
 
             // ★ 网页布局必须**开**：用户实测只有这条路径会崩，关掉它去验等于换了个场景。
-            // ★ 画质增强也必须**开**：崩溃只在 d3d11 的 processor / super 下发生
+            // ★ 画质增强默认**开**：崩溃只在 d3d11 的 processor / super 下发生
             //   （linear/point 根本不调用 D3D11_UpscalerUpdate，也就撞不上那句 idiv）。
+            //   --no-enhancement 对照实验用：分离"守卫拦"与"黑屏"是不是同一条路径。
+            var enhancement = !args.Contains("--no-enhancement");
+            // ★ 网页布局可关：分离"黑屏是网页布局挂/卸造成的"还是"退出全屏本身造成的"。
+            var webLayout = !args.Contains("--no-weblayout");
+            // ★ 缩放模式可切换：super 与 processor 共用同一个 D3D11_UpscalerUpdate 调用点，
+            //   但两者对 pool 的生命周期处理不一定一样 —— 黑屏到底跟哪个模式绑，得实测。
+            var mode = ArgValue(args, "--enhancement-mode=") ?? "自动厂商增强";
             File.WriteAllText(Path.Combine(root, "settings.json"),
-                """
+                $$"""
                 {"PlayerVolume":0,"DanmakuEnabled":false,"AutoCheckUpdate":false,
-                 "UseWebPlayerLayout":true,
-                 "ExperimentalVideoEnhancement":true,"VideoEnhancementActive":true,
-                 "VideoEnhancementMode":"自动厂商增强"}
+                 "UseWebPlayerLayout":{{(webLayout ? "true" : "false")}},
+                 "ExperimentalVideoEnhancement":{{(enhancement ? "true" : "false")}},"VideoEnhancementActive":{{(enhancement ? "true" : "false")}},
+                 "VideoEnhancementMode":"{{mode}}"}
                 """);
             Svc.Settings.Load();
             Svc.Settings.SetPlayerVolume(0);
@@ -105,6 +114,22 @@ internal static class FullscreenVerification
             results["enhancementProfile"] = EnhancementProfile.Current.Key;
             results["enhancementScaler"] = EnhancementProfile.Current.Scaler;
             Step("设置就绪 scaler=" + EnhancementProfile.Current.Scaler);
+
+            // ★ 订阅 libvlc 日志（2026-11-08 排查"退出全屏后黑屏"加的）：
+            //   --verbose=2 的日志本来走 stderr, 但 WPF 应用没有控制台句柄, 丢了。
+            //   黑屏问题十有八九会在这里留下 d3d11/scaler/pool 的抱怨, 值得随结果落盘。
+            var core = VlcCore.Get();
+            core.Log += (_, e) =>
+            {
+                var line = $"[{e.Level}] {e.Message}";
+                // 只收 vout/d3d11 相关的, 全量太吵
+                if (line.Contains("d3d11", StringComparison.OrdinalIgnoreCase)
+                    || line.Contains("scaler", StringComparison.OrdinalIgnoreCase)
+                    || line.Contains("vout", StringComparison.OrdinalIgnoreCase)
+                    || line.Contains("pool", StringComparison.OrdinalIgnoreCase)
+                    || line.Contains("swapchain", StringComparison.OrdinalIgnoreCase))
+                    lock (results) ((System.Collections.Generic.List<string>)results["vlcLog"]!).Add(line);
+            };
 
             // ① 守卫必须挂上。这一步失败就没有继续的意义：后面"跑通"也只是运气好。
             if (!VlcPlacePictureGuard.IsInstalled)
@@ -159,6 +184,41 @@ internal static class FullscreenVerification
 
             var toggle = typeof(PlayerWindow).GetMethod("ToggleFullscreen",
                 BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var surface = (FrameworkElement)window.FindName("VideoSurface");
+
+            // ★ 临时诊断：把 VideoSurface 的每一次尺寸变化记下来。
+            //   vlc 日志里出现 `VoutDisplayEvent 'resize' 0x0`，说明有人把原生窗口按到 0×0，
+            //   而那正是 d3d11 销毁 pool 的条件。这里要看是谁、什么时候按的。
+            surface.SizeChanged += (_, e) =>
+            {
+                lock (results) ((System.Collections.Generic.List<string>)results["surfaceSizes"]!)
+                    .Add($"{DateTime.Now:HH:mm:ss.fff} {e.PreviousSize.Width:0.#}x{e.PreviousSize.Height:0.#} → {e.NewSize.Width:0.#}x{e.NewSize.Height:0.#}");
+            };
+            var videoView = window.FindName("VideoView") as FrameworkElement;
+            if (videoView != null)
+                videoView.SizeChanged += (_, e) =>
+                {
+                    lock (results) ((System.Collections.Generic.List<string>)results["surfaceSizes"]!)
+                        .Add($"{DateTime.Now:HH:mm:ss.fff} VideoView {e.PreviousSize.Width:0.#}x{e.PreviousSize.Height:0.#} → {e.NewSize.Width:0.#}x{e.NewSize.Height:0.#}");
+                };
+
+            // ★★★ 黑屏基线（2026-11-08 用户报"不闪退了但视频变黑"）：
+            //   进全屏**之前**先量一次视频区的屏幕亮度，作为"正常画面长什么样"的基准。
+            //   ★ 为什么必须抓屏幕而不是 TakeSnapshot：TakeSnapshot 取的是解码器吐的帧，
+            //     解码正常、时间推进、快照也有图，但 vout 那一路什么都不画时它照样"通过"。
+            //     这正是 0.2.9 探针 14 轮全过却漏掉黑屏的原因。
+            await Task.Delay(700);
+            var baseline = SampleSurface(surface);
+            results["baselineLuminance"] = baseline.Luminance;
+            results["baselineBrightRatio"] = baseline.BrightRatio;
+            results["baselineSize"] = $"{baseline.Width}x{baseline.Height}";
+            ScreenSampler.SavePng(baseline.Image, Path.Combine(Path.GetDirectoryName(output)!, "fullscreen-baseline.png"));
+            Step($"基线亮度={baseline.Luminance:0.0} 亮像素={baseline.BrightRatio:P1} 尺寸={baseline.Width}x{baseline.Height}");
+            if (!baseline.IsValid)
+                throw new InvalidOperationException("取不到视频区的屏幕像素，黑屏判定不可信");
+            if (baseline.Luminance < 4)
+                throw new InvalidOperationException(
+                    $"基线本身就是黑的（{baseline.Luminance:0.0}），换一段有画面的视频再验（--media=）");
 
             for (var round = 0; round < rounds; round++)
             {
@@ -178,9 +238,22 @@ internal static class FullscreenVerification
                     throw new InvalidOperationException(
                         $"第 {round + 1} 轮退出全屏后画面停住（{before} → {after}）");
 
+                // ★ 时间推进**不等于**有画面：黑屏时解码器照样在跑。这里必须看屏幕。
+                var sample = SampleSurface(surface);
+                var ratio = baseline.Luminance > 0.5 ? sample.Luminance / baseline.Luminance : 1;
+                results[$"round{round + 1}Luminance"] = sample.Luminance;
+                results[$"round{round + 1}Ratio"] = Math.Round(ratio, 3);
+                ScreenSampler.SavePng(sample.Image,
+                    Path.Combine(Path.GetDirectoryName(output)!, $"fullscreen-round{round + 1}.png"));
+                if (!sample.IsValid)
+                    throw new InvalidOperationException($"第 {round + 1} 轮取不到视频区像素");
+                if (ratio < BlackScreenRatio)
+                    throw new InvalidOperationException(
+                        $"第 {round + 1} 轮退出全屏后视频区变黑（亮度 {sample.Luminance:0.0} / 基线 {baseline.Luminance:0.0} = {ratio:P0}）");
+
                 completed = round + 1;
                 results["roundsCompleted"] = completed;
-                Step($"第 {round + 1} 轮通过 time={after}");
+                Step($"第 {round + 1} 轮通过 time={after} 亮度={sample.Luminance:0.0}（基线 {baseline.Luminance:0.0}）");
             }
 
             results["roundsCompleted"] = completed;
@@ -211,6 +284,23 @@ internal static class FullscreenVerification
 
     private static string? ArgValue(string[] args, string prefix)
         => Array.Find(args, a => a.StartsWith(prefix, StringComparison.Ordinal))?[prefix.Length..];
+
+    /// <summary>
+    /// 判定"变黑"的阈值：退出全屏后的亮度 / 基线亮度。
+    ///
+    /// ★ 为什么是 0.35 而不是 0.8：画面在停靠/内联两种几何下**尺寸不同**，
+    ///   同一帧被缩放到不同大小、加上窗口底色与遮罩边缘，亮度本身就会浮动。
+    ///   但"有画面"与"全黑"之间差的是数量级（实测基线 ~40-90，黑屏 &lt; 2），
+    ///   取 0.35 足以区分，又不会因为视频恰好切到暗场景就误报。
+    /// </summary>
+    private const double BlackScreenRatio = 0.35;
+
+    /// <summary>量一次视频区（<c>VideoSurface</c>）在屏幕上的亮度。</summary>
+    private static ScreenSampler.Sample SampleSurface(FrameworkElement surface)
+    {
+        var rect = ScreenSampler.ScreenRect(surface);
+        return ScreenSampler.Capture(rect.X, rect.Y, rect.W, rect.H);
+    }
 
     private static async Task<bool> WaitPlayingAsync(LibVLCSharp.Shared.MediaPlayer player, TimeSpan timeout)
     {
