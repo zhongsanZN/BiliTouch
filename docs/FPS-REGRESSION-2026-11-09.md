@@ -376,3 +376,69 @@ private void StopDanmakuClock()
 |---|---|
 | `artifacts/dwm-thumb-probe/` | 验证 DWM Thumbnail 在本机 LibVLC vout 上的可用性、源 HWND 层级要求、逐帧 `rcDestination`/`opacity` 更新；截图在 `shots/thumb-srcForm-*.png` |
 | `BiliTouch/Helpers/LiveWindowTransition.cs` | 实时镜像 + 连续变形 + 临界阻尼 spring + 无缝交接（产品代码） |
+
+---
+
+## 第三轮（同日）：真机「问题很大」——撤销 DWM 镜像，止损并修根因
+
+用户试机反馈「继续磨，问题很大」。这次不靠猜，先在**用户同款配置**下把过渡画面逐帧截下来看。
+
+### 复现环境（从 `%LocalAppData%\BiliTouch\settings.json` 读到的真实值）
+
+- `UseWebPlayerLayout = true`、`UiScalePercent = 110`、画质增强开着（VSR 每 1~2 秒 ON/OFF）
+- **系统 DPI = 225%**（`VisualTreeHelper.GetDpi` 返回 2.250）
+
+新增探针 `--web-morph-capture`（`tests/TouchTests/WebMorphCapture.cs`）：用纯 P/Invoke
+`BitBlt/GetDIBits` + WPF `BitmapSource` 截整窗口物理像素，复刻上述配置、播带图案片源，
+每 55ms 存一帧到 `artifacts/touch-tests/web-morph/`。
+
+### 抓到的三个真问题（都有截图/日志证据）
+
+1. **物理像素 / DIP 双重缩放 → 镜像窗口飞出屏幕**
+   `fromPx = 21,172,2061,1159`，而 WPF `Window.Width/Left` 是 **DIP**。把物理像素直接赋进去，
+   WPF 又乘 2.25 ⇒ 窗口放大 2.25 倍；`mirror` 最终 `x=2152` 远超屏幕。
+   截图 f00 是一个巨大的、被裁到屏外的彩色画面盖住整个播放器，连窗口标题栏都被镜像进去。
+2. **DWM `rcSource` 裁切在 WPF `WindowChrome` 源上不可靠**
+   `DwmRegisterThumbnail` 成功、`DwmUpdateThumbnailProperties` 返回 `0x00000000`，
+   但画面是**纯黑方块**；去掉 `RECTSOURCE` 后变成「整个播放器窗口缩小版」（含标题栏和右栏）；
+   补 `DWM_TNP_SOURCECLIENTAREAONLY` 标志位又变回黑。
+   ⇒ 结论：这套 WPF 窗口 + 225% DPI + WindowChrome 组合下拿不到稳定的「只镜像视频区」。
+3. **首帧延迟 505ms → 整段连续变形被跳过**
+   日志 `registered 03:33:06.488` → `firstFrame 03:33:06.993`，而动画时长只有 430ms。
+   第一次 `CompositionTarget.Rendering` 回调时 `t` 已经 = 1，用户只看到终点一闪。
+   根因是 `ScrollChanged` 那一串同步布局占住了 Dispatcher。
+
+另外之前所有回归都跑在 **100% DPI + UiScale 100 + 纯色夹具**下，纯色画面看不出裁切偏移，
+所以这三个问题一个都没被测出来。
+
+### 决策：撤销 DWM 镜像，回到稳妥路径，但把隐藏 bug 修掉
+
+`LiveWindowTransition.cs` 已删除，`SetWebDockTarget` 回到 `StartLegacyWebDockTarget`。
+
+| 改动 | 文件 |
+|---|---|
+| 修隐藏 bug：`coverElement` 就是 `BrandMark`，旧代码挂好 `TransformGroup` 后又被 `brand.RenderTransform` 覆盖 ⇒ `_webCoverScale/_webCoverMove` **从来没生效**。现在三个变换并进一个 `RenderTransform` group（纯渲染变换，不触发布局） | `PlayerWindow.WebLayout.cs` |
+| 遮罩从 `Background="#17171C"` 不透明深灰板改成 `#26000000` 半透明 + 圆角 + 白色描边 ⇒ **视频全程可见，不冻结、不重影** | `PlayerWindow.xaml:853` |
+| 过渡期间隐藏 `BrandMark`（原来正好压在视频中心，测试里是灰色方块） | `WebLayout.cs` |
+| 动画时长改用**绝对墙钟**，不再「每帧累加且 clamp 50ms」——后者在 Dispatcher 被占住时把 380ms 拖到 1.5 秒（捕获实测 1541ms，改后 ~794ms） | `WebLayout.cs` |
+| 收尾复位 `_webCoverScale/_webCoverMove/_webBrandLayoutScale` | `WebLayout.cs` |
+
+### 验证（用户同款配置）
+
+| 指标 | 结果 |
+|---|---|
+| 七项回归 | **145 项全绿** |
+| 遮罩缩放真的生效（回归保护） | **39 个不同 scale 值** |
+| 稳态颜色离群 | **0/137** |
+| 视频播放中评论滚动 | 111.5fps vs 无视频 117.1fps |
+| 逐帧截图 | `web-morph/f00..f19`：无黑方块、无错位窗口、无深灰板；f06 最终态小窗视频/控制栏/评论全部正常 |
+
+### 仍未解决 / 下一轮
+
+- commit 那一瞬（`f03`）左侧会露出一块纯黑（原生 `VideoSurface` 移到右栏后原位底色），
+  属既有布局表现，非致命，但视觉上仍不够干净。
+- **跟手**（滚动直接驱动 progress）与**柔和投影**仍未做；「内容本体连续变形」在
+  `HwndHost` 不参与 WPF 合成、DWM 镜像又不可靠的前提下，需要换一条完全不同的路
+  （例如让 vout 只平移不 resize 的几何实验），不能靠继续调 `rcSource` 赌。
+- VSR 每 1~2 秒 ON/OFF 是用户开着「自动厂商增强」时 vout 反复 resize 触发的驱动重协商，
+  与本次小窗动效独立，可单独评估。

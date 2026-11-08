@@ -28,7 +28,7 @@ internal static class WebDockFlickerTests
         var old = Svc.Settings.UseWebPlayerLayout;
         PlayerWindow? player = null;
         var samples = new List<object>();
-        var mirrorRects = new List<double>();
+        var coverScales = new List<double>();
         int motion = 0, whiteFlashCount = 0, idleTotal = 0, idleBad = 0;
         EventHandler? observe = null;
         try
@@ -53,32 +53,23 @@ internal static class WebDockFlickerTests
                 observe = (_, _) =>
                 {
                     var rect = surface.TransformToAncestor(stage).TransformBounds(new Rect(surface.RenderSize));
-                    // ★ 2026-11-09 第二轮：播放中的过渡由 DWM Thumbnail 镜像窗口承载，
-                    //   原生 VideoSurface 只在 commit 帧动一次。采镜像窗口的当前屏幕矩形，
-                    //   才能验证「内容本身连续变形」而不是硬切；同时用它做颜色采样点。
-                    Rect mirror = Rect.Empty;
-                    var live = player.GetType().GetField("_liveTransition", Hidden)?.GetValue(player);
-                    if (live != null)
-                    {
-                        var cr = live.GetType().GetProperty("CurrentRect", Hidden);
-                        if (cr?.GetValue(live) is Rect m && !m.IsEmpty && m.Width > 1) mirror = m;
-                    }
-                    if (!mirror.IsEmpty) { rect = mirror; mirrorRects.Add(Math.Round(mirror.X)); }
-                    var moving = Field<bool>(player, "_webRendering") || Field<bool>(player, "_liveTransitionRunning");
+                    // ★ 2026-11-09 第三轮：DWM 镜像已撤销。遮罩改成半透明，
+                    //   原生 VideoView 全程可见，直接采视频区中心的屏幕颜色。
+                    //   同时记录 _webCoverScale，锁死"TransformGroup 被覆盖导致缩放从来不生效"那个 bug。
+                    var cover = player.GetType().GetField("_webCoverScale", Hidden)?.GetValue(player) as System.Windows.Media.ScaleTransform;
+                    if (cover != null) coverScales.Add(Math.Round(cover.ScaleX, 3));
+                    var moving = Field<bool>(player, "_webRendering");
                     if (moving) motion++;
-                    var center = new Point(rect.X + rect.Width / 2, rect.Y + rect.Height / 2);
-                    var point = mirror.IsEmpty ? stage.PointToScreen(center) : center;
+                    var point = stage.PointToScreen(new Point(rect.X + rect.Width / 2, rect.Y + rect.Height / 2));
                     DwmFlush();
                     var color = GetPixel(dc, (int)point.X, (int)point.Y);
                     int r = (int)(color & 255), g = (int)((color >> 8) & 255), b = (int)((color >> 16) & 255);
                     var fixtureColor = g > 120 && r < 120 && b > 60 && b < 180;
-                    // ★ 2026-11-09：过渡期间 DockTransitionCover(#17171C) 把原位置压成
-                    //   不透明背景，避免镜像移走后露出原生 vout 造成重影。遮罩收起比
-                    //   _liveTransitionRunning 复位晚 1~2 帧，这几帧是合法的过渡背景色。
+                    // 半透明遮罩只压暗 15%，压暗后仍在 fixtureColor 范围内；
+                    // 少数帧落在描边/品牌块/收尾渲染延迟上，按合法过渡背景色放行。
                     var coverColor = Math.Abs(r - 23) < 12 && Math.Abs(g - 23) < 12 && Math.Abs(b - 28) < 12;
                     var whiteFlash = r > 230 && g > 230 && b > 230;
                     var expected = moving ? !whiteFlash : (fixtureColor || coverColor);
-                    // 屏幕级 GetPixel 采样有固有时序噪声。过渡期白闪零容忍，稳态用正确率判定。
                     if (moving) { if (whiteFlash) whiteFlashCount++; }
                     else { idleTotal++; if (!fixtureColor && !coverColor) idleBad++; }
                     samples.Add(new { r, g, b, expected, moving, fixtureColor, x=rect.X, y=rect.Y, width=rect.Width, height=rect.Height, progress=Field<double>(player,"_webDockProgress") });
@@ -93,9 +84,8 @@ internal static class WebDockFlickerTests
             finally { CompositionTarget.Rendering -= observe; ReleaseDC(IntPtr.Zero, dc); }
             System.IO.File.WriteAllText(System.IO.Path.Combine(artifacts, "web-dock-screen-samples.json"), JsonSerializer.Serialize(samples));
             check(motion > 30, $"desktop samples cover repeated dock motion: {motion} moving samples");
-            var distinctX = mirrorRects.Distinct().Count();
-            check(mirrorRects.Count > 20 && distinctX > 10,
-                $"DWM mirror window morphs continuously (not a hard cut): {mirrorRects.Count} frames, {distinctX} distinct x positions");
+            var distinctScales = coverScales.Distinct().Count();
+            check(distinctScales > 5, $"dock cover actually scales during the transition (TransformGroup regression): {distinctScales} distinct scales");
             check(whiteFlashCount == 0, "dock transitions never flash white while the native window stays visible");
             check(idleTotal > 50 && idleBad <= 2, $"idle frames retain the fixture color: {idleBad}/{idleTotal} screen-sampling outliers");
             check(!Field<bool>(player, "_webRendering"), "all dock transitions complete and detach their rendering handler");

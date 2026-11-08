@@ -92,7 +92,7 @@ internal static class WebPlayerLayoutTests
     var time=mp.Time;bool sawMotion=false,hiddenDuringMotion=true,nativeStayedVisible=true;
     EventHandler observe=(_,_)=>
     {
-     if(Field<bool>(player,"_webRendering") || Field<bool>(player,"_liveTransitionRunning"))
+     if(Field<bool>(player,"_webRendering"))
      {
       sawMotion=true;
       hiddenDuringMotion &= danmaku.Visibility==Visibility.Hidden;
@@ -107,7 +107,7 @@ internal static class WebPlayerLayoutTests
     //   ⇒ 改成等它真的结束（8 秒上限兜住死循环）：卡死会因为超时失败，慢不会。
     var settleWatch=System.Diagnostics.Stopwatch.StartNew();
     try {scroll.ScrollToVerticalOffset(placeholder.ActualHeight+80);Pump(1200);
-     while((Field<bool>(player,"_webRendering") || Field<bool>(player,"_liveTransitionRunning")) && settleWatch.ElapsedMilliseconds<8000) Pump(120);}
+     while(Field<bool>(player,"_webRendering") && settleWatch.ElapsedMilliseconds<8000) Pump(120);}
     finally {CompositionTarget.Rendering-=observe;}
     check(mp.IsPlaying && mp.Time>time && ReferenceEquals(video.MediaPlayer,mp),"native muted playback continues while the video moves into the right rail");
     check(sawMotion && hiddenDuringMotion && danmaku.Visibility==Visibility.Visible,"playing dock transition hides danmaku through settling and then restores it");
@@ -116,7 +116,7 @@ internal static class WebPlayerLayoutTests
     check(Math.Abs(settled.Top-landed.Top)<1 && Math.Abs(settled.Left-landed.Left)<1,
      "native surface lands once and does not jump after the transition");
     scroll.ScrollToTop();Settle(player);
-    check(danmaku.Visibility==Visibility.Visible && !Field<bool>(player,"_webRendering") && !Field<bool>(player,"_liveTransitionRunning") && Math.Abs(Bounds(surface,stage).Top-initial.Top)<1,
+    check(danmaku.Visibility==Visibility.Visible && !Field<bool>(player,"_webRendering") && Math.Abs(Bounds(surface,stage).Top-initial.Top)<1,
      "playing small-to-large transition restores the inline position and danmaku");
     scroll.ScrollToVerticalOffset(placeholder.ActualHeight+80);Settle(player);
    }
@@ -173,7 +173,7 @@ internal static class WebPlayerLayoutTests
    check(!Field<bool>(player,"_webLayoutMounted") && ReferenceEquals(comments.Parent,Element<Grid>(player,"PageHost")),"switching back returns comments to the original right-side host");
    check(double.IsNaN(surface.Width) && double.IsNaN(surface.Height) && Grid.GetColumnSpan(surface)==1,"switching back restores normal video sizing without leftover dock geometry");
    check(ReferenceEquals(Element<Button>(player,"CommentFab").Parent,Element<Grid>(player,"InfoPanel")),"comment controls return to the correct rail when changing layout");
-   check(!Field<bool>(player,"_webRendering") && !Field<bool>(player,"_liveTransitionRunning"),"layout animations detach their rendering handler once finished");
+   check(!Field<bool>(player,"_webRendering"),"layout animations detach their rendering handler once finished");
   }
   finally
   {
@@ -187,7 +187,7 @@ internal static class WebPlayerLayoutTests
   var deadline=Environment.TickCount64+8000;
   do {
    Pump(50);
-   if(!Field<bool>(player,"_webRendering") && !Field<bool>(player,"_liveTransitionRunning"))return;
+   if(!Field<bool>(player,"_webRendering"))return;
   } while(Environment.TickCount64<deadline);
   throw new TimeoutException("Video transition did not settle");
  }
