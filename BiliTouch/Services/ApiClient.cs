@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -5982,6 +5982,55 @@ public partial class ApiClient
             // status: 2/13 = 已播; 0 = 预告未播
             IsAired = GetInt(ep, "status") is 2 or 13
         };
+    }
+
+    /// <summary>
+    /// 搜索关键词联想匹配(B 站搜索建议接口)。
+    /// 接口: <c>https://s.search.bilibili.com/main/suggest?func=suggest&amp;suggest_type=accurate&amp;sub_type=tag&amp;main_ver=v1&amp;term=...</c>
+    /// </summary>
+    public async Task<List<string>> GetSearchSuggestionsAsync(string term, System.Threading.CancellationToken ct = default)
+    {
+        var list = new List<string>();
+        var q = (term ?? "").Trim();
+        if (q.Length == 0) return list;
+
+        try
+        {
+            var url = "https://s.search.bilibili.com/main/suggest?func=suggest&suggest_type=accurate&sub_type=tag&main_ver=v1&term="
+                      + Uri.EscapeDataString(q);
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com/");
+            using var resp = await _http.SendAsync(req, ct);
+            if (!resp.IsSuccessStatusCode) return list;
+
+            var json = await resp.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("result", out var result)
+                && result.ValueKind == JsonValueKind.Object
+                && result.TryGetProperty("tag", out var tagArr)
+                && tagArr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in tagArr.EnumerateArray())
+                {
+                    var val = GetStr(item, "value");
+                    if (string.IsNullOrWhiteSpace(val)) val = GetStr(item, "name").StripHtml();
+                    val = val.Trim();
+                    if (val.Length > 0 && !list.Contains(val, StringComparer.OrdinalIgnoreCase))
+                    {
+                        list.Add(val);
+                        if (list.Count >= 8) break;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // 联想词失败静默降级, 不打断输入体验
+        }
+
+        return list;
     }
 }
 

@@ -61,7 +61,16 @@ internal static class Release023Tests
   check(button.IsDescendantOf(section),"multipart toggle belongs to its section instead of the intro/comment tab row");
   Call(player,"OnPagesToggleClick",button,new RoutedEventArgs());check(body.Visibility==Visibility.Collapsed && section.Visibility==Visibility.Visible,"collapsing multipart keeps its header available to reopen");
   Call(player,"OnPagesToggleClick",button,new RoutedEventArgs());check(body.Visibility==Visibility.Visible,"multipart header reopens the list");
-  Call(player,"ApplyPages",new List<VideoPage>{new(){Cid=11,Page=1}});check(section.Visibility==Visibility.Collapsed,"a single-part video clears the entire multipart section");player.Close();Pump(100);
+  Call(player,"ApplyPages",new List<VideoPage>{new(){Cid=11,Page=1}});check(section.Visibility==Visibility.Collapsed,"a single-part video clears the entire multipart section");
+  Set(player,"_currentBvid","BV1season1");
+  Call(player,"ApplySeason",new SeasonInfo{SeasonId=99,Title="测试合集",Episodes=new List<SeasonEpisode>{new(){Bvid="BV1season1",Title="第一集",Index=1},new(){Bvid="BV1season2",Title="第二集",Index=2}}});Pump(80);
+  var seasonList=(ListBox)player.FindName("SeasonList");var btnSeasonToggle=(Button)player.FindName("BtnSeasonToggle");
+  check(season.Visibility==Visibility.Visible && seasonList.Visibility==Visibility.Visible && Equals(btnSeasonToggle.Content,"收起合集"),"season collection starts expanded with 收起合集 button");
+  Call(player,"OnSeasonCloseClick",btnSeasonToggle,new RoutedEventArgs());
+  check(season.Visibility==Visibility.Visible && seasonList.Visibility==Visibility.Collapsed && Equals(btnSeasonToggle.Content,"展开合集"),"clicking 收起合集 collapses the episode list while keeping the header available");
+  Call(player,"OnSeasonCloseClick",btnSeasonToggle,new RoutedEventArgs());
+  check(seasonList.Visibility==Visibility.Visible && Equals(btnSeasonToggle.Content,"收起合集"),"clicking 展开合集 re-expands the episode list");
+  player.Close();Pump(100);
   var build=typeof(ApiClient).GetMethod("BuildDynamicLikeRequest",BindingFlags.NonPublic|BindingFlags.Static)!;
   foreach(var liked in new[]{true,false})
   {

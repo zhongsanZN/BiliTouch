@@ -130,6 +130,13 @@ public static class DwmInterop
     public static void SetRoundCorners(Window window)
         => SetAttr(GetHwnd(window), DwmwaWindowCornerPreference, DwmWcpRound);
 
+    /// <summary>
+    /// 启用或禁用 DWM 系统窗口过渡动画（DWMWA_TRANSITIONS_FORCEDISABLED = 3）。
+    /// 在一镜到底跨窗口展开/收起期间禁用系统自带的屏幕中心缩放动画，避免与自定义物理弹簧冲突。
+    /// </summary>
+    public static bool SetTransitionsDisabled(Window window, bool disabled)
+        => SetAttr(GetHwnd(window), 3, disabled ? 1 : 0);
+
     /// <summary>关闭云母背景(深色模式下使用, 避免 Mica 透出系统浅色云母)。
     /// 返回 true 表示成功关闭。</summary>
     public static bool DisableMica(Window window)

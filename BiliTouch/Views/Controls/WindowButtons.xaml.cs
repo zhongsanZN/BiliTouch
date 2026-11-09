@@ -83,5 +83,9 @@ public partial class WindowButtons : UserControl
         UpdateMaxGlyph();
     }
 
-    private void OnCloseClick(object sender, RoutedEventArgs e) => _win?.Close();
+    private void OnCloseClick(object sender, RoutedEventArgs e)
+    {
+        if (_win is PlayerWindow pw && pw.TryBeginSeamlessClose()) return;
+        _win?.Close();
+    }
 }

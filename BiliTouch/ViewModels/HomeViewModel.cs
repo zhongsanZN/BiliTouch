@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
@@ -71,9 +71,17 @@ public class HomeViewModel : ObservableObject
             Svc.Navigate?.OpenWebViewWindow(
                 "https://www.bilibili.com/v/popular/rank/all", "排行榜 - 网页版"));
 
-        // 搜索卡: 回车 / 点历史词条 / 点热搜条目, 三个入口都汇到 RequestSearch 这一个出口
+        // 搜索卡: 回车 / 点历史词条 / 点热搜条目 / 点联想词条, 汇到 RequestSearch 这一个出口
         RunSearchCommand = new RelayCommand(() => RequestSearch(SearchKeyword));
         UseSearchHistoryCommand = new RelayCommand(p => RequestSearch(p as string));
+        UseSuggestionCommand = new RelayCommand(p =>
+        {
+            if (p is string s && !string.IsNullOrWhiteSpace(s))
+            {
+                SearchKeyword = s;
+                RequestSearch(s);
+            }
+        });
         ClearSearchHistoryCommand = new RelayCommand(() => Svc.SearchHistory.Clear());
         ToggleHistoryExpandCommand = new RelayCommand(() =>
         {
@@ -736,16 +744,63 @@ public class HomeViewModel : ObservableObject
     // 输入框和卡片是同一个元素, 所以这里没有"打开/关闭"这种状态, 那些属于视图。
 
     private string _searchKeyword = "";
+    private System.Threading.CancellationTokenSource? _suggestCts;
+
+    /// <summary>搜索关键词联想建议列表</summary>
+    public ObservableCollection<string> Suggestions { get; } = new();
+
+    public bool HasSuggestions => Suggestions.Count > 0;
 
     /// <summary>搜索卡输入框里的词</summary>
     public string SearchKeyword
     {
         get => _searchKeyword;
-        set => SetProperty(ref _searchKeyword, value);
+        set
+        {
+            if (SetProperty(ref _searchKeyword, value))
+            {
+                _ = DebounceSuggestionsAsync(value);
+            }
+        }
+    }
+
+    private async Task DebounceSuggestionsAsync(string? raw)
+    {
+        _suggestCts?.Cancel();
+        var kw = (raw ?? "").Trim();
+        if (kw.Length == 0)
+        {
+            if (Suggestions.Count > 0)
+            {
+                Suggestions.Clear();
+                OnPropertyChanged(nameof(HasSuggestions));
+            }
+            return;
+        }
+
+        var cts = new System.Threading.CancellationTokenSource();
+        _suggestCts = cts;
+        try
+        {
+            await Task.Delay(150, cts.Token);
+            var list = await Svc.Api.GetSearchSuggestionsAsync(kw, cts.Token);
+            if (cts.IsCancellationRequested) return;
+            await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                if (cts.IsCancellationRequested) return;
+                Suggestions.Clear();
+                foreach (var s in list) Suggestions.Add(s);
+                OnPropertyChanged(nameof(HasSuggestions));
+            });
+        }
+        catch
+        {
+            // ignore cancellation
+        }
     }
 
     /// <summary>
-    /// 用户选定了要搜的词(回车 / 点历史词条 / 点热搜条目)。
+    /// 用户选定了要搜的词(回车 / 点历史词条 / 点热搜条目 / 点联想建议)。
     /// 由 HomePage 接管: 收起卡片 + 跳到搜索页搜一次 —— 导航是窗口的事, VM 不碰窗口。
     /// </summary>
     public event Action<string>? SearchRequested;
@@ -754,11 +809,18 @@ public class HomeViewModel : ObservableObject
     {
         var kw = (keyword ?? "").Trim();
         if (kw.Length == 0) return;
+        _suggestCts?.Cancel();
+        if (Suggestions.Count > 0)
+        {
+            Suggestions.Clear();
+            OnPropertyChanged(nameof(HasSuggestions));
+        }
         SearchRequested?.Invoke(kw);
     }
 
     public ICommand RunSearchCommand { get; }
     public ICommand UseSearchHistoryCommand { get; }
+    public ICommand UseSuggestionCommand { get; }
     public ICommand ClearSearchHistoryCommand { get; }
     public ICommand ToggleHistoryExpandCommand { get; }
     public ICommand UseHotSearchCommand { get; }

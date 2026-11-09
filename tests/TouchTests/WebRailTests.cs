@@ -185,13 +185,14 @@ internal static class WebRailTests
                     var dmCanvas = Part<Canvas>(player, "DanmakuCanvas");
                     var areaRoot = Part<Grid>(player, "VideoAreaRoot");
                     check(dmCanvas.ClipToBounds && areaRoot.ClipToBounds && surface.ClipToBounds, mode + ": danmaku canvas and video containers enforce ClipToBounds so rolling danmaku never overflows into the right rail");
+                    check(Part<TextBlock>(player, "RelatedHeading").Visibility == Visibility.Collapsed, mode + ": duplicate 推荐 heading inside RelatedPanel is collapsed in web layout");
                     introTab.IsChecked = true; Pump(100);
                     var infoPanel = Part<Grid>(player, "InfoPanel");
-                    Call(player, "InfoDown", new Point(220, 260), infoPanel);
-                    Call(player, "InfoMove", new Point(120, 260));
+                    Call(player, "InfoDown", new Point(300, 260), infoPanel);
+                    Call(player, "InfoMove", new Point(60, 260));
                     check(intro.Visibility == Visibility.Visible && recommendations.Visibility == Visibility.Visible, mode + ": web layout right rail touch drag displays both 简介 and 推荐 side-by-side in an intermediate state");
                     Call(player, "InfoUp"); Pump(350);
-                    check(tab.IsChecked == true, mode + ": web layout right rail touch drag completes switch to 推荐");
+                    check(tab.IsChecked == true, mode + ": web layout right rail touch drag completes switch to 推荐 when naturally crossing half width");
                     Call(player, "SwitchInfoPageByWheelForTest", -1); Pump(350);
                     check(introTab.IsChecked == true, mode + ": web layout right rail wheel switches back to 简介");
                     tab.IsChecked = true; Pump(100);

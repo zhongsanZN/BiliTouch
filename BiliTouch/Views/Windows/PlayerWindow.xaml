@@ -1956,7 +1956,7 @@
                                                 </StackPanel>
                                                 <StackPanel Grid.Column="1" Orientation="Vertical" Margin="8,0,0,0">
 <Button x:Name="SeasonSubscribeButton" Content="订阅合集" Style="{StaticResource SubtleButtonStyle}" Click="OnSeasonSubscribeClick"/>
-<Button Content="收起合集" Style="{StaticResource SubtleButtonStyle}" Click="OnSeasonCloseClick"/>
+<Button x:Name="BtnSeasonToggle" Content="收起合集" Style="{StaticResource SubtleButtonStyle}" Click="OnSeasonCloseClick"/>
 </StackPanel>
 <!-- 关闭按钮: 用显式 Style(项目硬规定, Button 不许裸写),
                                                      图标字形必须写进显式 TextBlock —— 全局隐式 TextBlock 样式带 Foreground
@@ -2092,7 +2092,7 @@
                                         </ListBox>
 
                                         <!-- 底部: 加载中/错误提示。放在底部而不是顶部, 免得加载时列表区域高度跳一下 -->
-                                        <Border Grid.Row="2" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0"
+                                        <Border x:Name="SeasonFooterBorder" Grid.Row="2" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0"
                                                 Padding="20,10,20,14">
                                             <StackPanel Orientation="Horizontal">
                                                 <controls:LoadingRing x:Name="SeasonLoadingRing" Width="14" Height="14"
@@ -2112,7 +2112,7 @@
                                          ★ 一行一个视频(用户指定): 卡片横排会挤在 400px 的信息栏里,
                                            标题会被压成两三行, 反而看不清"这是哪个视频"。 -->
                                     <StackPanel x:Name="RelatedPanel" Visibility="Collapsed" Margin="0,16,0,0">
-                                        <Border BorderBrush="{DynamicResource DividerBrush}"
+                                        <Border x:Name="RelatedHeaderBorder" BorderBrush="{DynamicResource DividerBrush}"
                                                 BorderThickness="0,1,0,0" Padding="0,12,0,0">
                                             <DockPanel>
                                                 <StackPanel DockPanel.Dock="Right"
@@ -2606,7 +2606,8 @@
              展开时由单一 CompositionTarget.Rendering 临界阻尼弹簧驱动几何、圆角与背景阻尼渐显。 -->
         <Grid x:Name="SeamlessMorphOverlay" Grid.RowSpan="2" Panel.ZIndex="120"
               Visibility="Collapsed" IsHitTestVisible="False" ClipToBounds="True">
-            <Border x:Name="SeamlessBackdrop" Background="#40000000" Opacity="0" />
+            <Border x:Name="SeamlessWindowSnapshot" Opacity="0" />
+            <Border x:Name="SeamlessBackdrop" Background="#CC0A0C10" Opacity="0" />
             <Border x:Name="SeamlessHeroCard" HorizontalAlignment="Left" VerticalAlignment="Top"
                     RenderTransformOrigin="0,0" Background="{DynamicResource PlaceholderBrush}">
                 <Border x:Name="SeamlessHeroShade" Background="#26000000" Opacity="0" />

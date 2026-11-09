@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -56,9 +56,12 @@ public partial class SearchPage : UserControl
 
     private SearchViewModel? Vm => DataContext as SearchViewModel;
 
+    internal TabNavigationGestures ModuleGestures { get; }
+
     public SearchPage()
     {
         InitializeComponent();
+        ModuleGestures = new TabNavigationGestures(this, ResultArea, SearchKindTabs);
         SearchCard.SizeChanged+=(_,_) => (Window.GetWindow(this) as BiliTouch.MainWindow)?.RepaintHeader();
 
         // 历史增删(自己搜一次 / 点掉一条 / 清空)都会改变展开高度, 也可能让历史变空。
@@ -69,8 +72,14 @@ public partial class SearchPage : UserControl
         DataContextChanged += (_, e) =>
         {
             ResetCard();
+            if (e.OldValue is SearchViewModel oldVm)
+                oldVm.Suggestions.CollectionChanged -= OnSuggestionsChanged;
             // 搜索结果也纳入全局屏蔽。以前只挂了首页/收藏/历史, 在搜索页怎么屏蔽都不生效。
-            if (e.NewValue is SearchViewModel vm) FilterService.Instance.Attach(vm.Results);
+            if (e.NewValue is SearchViewModel vm)
+            {
+                FilterService.Instance.Attach(vm.Results);
+                vm.Suggestions.CollectionChanged += OnSuggestionsChanged;
+            }
         };
         // 屏蔽筛掉一批结果后, 结果区可能不够一屏: 主动补下一页(滚动事件不会因此触发)
         FilterService.Instance.Changed += OnFilterApplied;
@@ -405,6 +414,9 @@ public partial class SearchPage : UserControl
     /// 点「展开更多」后立刻量, 卡片长得不够、底部溢出 62px)。
     /// 展开动画还没跑完就先记账, 由 OnOpened 收尾补一次 —— 动画中间插一脚会把动画截断。
     /// </summary>
+    private void OnSuggestionsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleHeightSync();
+
     private void ScheduleHeightSync()
     {
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>

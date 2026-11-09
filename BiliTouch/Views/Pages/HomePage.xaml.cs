@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -699,7 +699,7 @@ public partial class HomePage : UserControl
     /// </summary>
     private void OnSearchVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is not ("HasHot" or "HistoryExpanded" or "HasSearchHistory" or "HotError" or "HotLoading"))
+        if (e.PropertyName is not ("HasHot" or "HistoryExpanded" or "HasSearchHistory" or "HotError" or "HotLoading" or "HasSuggestions"))
             return;
         if (!_searchOpen) return;
         ScheduleOpenHeightSync();
@@ -754,12 +754,14 @@ public partial class HomePage : UserControl
             {
                 _searchHookedVm.SearchRequested -= OnSearchRequested;
                 _searchHookedVm.PropertyChanged -= OnSearchVmPropertyChanged;
+                _searchHookedVm.Suggestions.CollectionChanged -= OnSearchSuggestionsChanged;
             }
             _searchHookedVm = vm;
             if (_searchHookedVm != null)
             {
                 _searchHookedVm.SearchRequested += OnSearchRequested;
                 _searchHookedVm.PropertyChanged += OnSearchVmPropertyChanged;
+                _searchHookedVm.Suggestions.CollectionChanged += OnSearchSuggestionsChanged;
             }
         }
 
@@ -768,6 +770,11 @@ public partial class HomePage : UserControl
         // 顺手把热搜拉起来(有 10 分钟缓存, 每次回首页再调也只是读缓存):
         // 这样首次点开搜索卡时榜单已经就位, 不会先冒出一行"正在获取热搜…"、等数据到了再把卡片撑高一下。
         if (vm != null) _ = vm.EnsureHotSearchAsync();
+    }
+
+    private void OnSearchSuggestionsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (_searchOpen) ScheduleOpenHeightSync();
     }
 
     private void OnSearchRequested(string keyword)

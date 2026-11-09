@@ -97,30 +97,17 @@ public partial class MainWindow : FluentWindow
     protected override void OnHorizontalWheel(int delta)
     {
         if (delta == 0) return;
-        if (_vm.Current is not (PageKey.Home or PageKey.Mine or PageKey.Settings or PageKey.Messages)) return;
-
-        // ★★★ 2026-11-04 第四次修触控板横滑。这一版把"限位"的判据彻底换掉。
-        //
-        //   前三版的错误(全记在这里, 别再犯):
-        //     ① 方向: 两版都写 `-dir` ⇒ 你两次都说反。已经改成 +dir。
-        //     ② 限位: 用"时间冷却(450/900ms)" ⇒ 划得快时后面的手势落在冷却期里
-        //        完全不响应(你说的"后几下根本没反应"), 而冷却一过又会连跳。
-        //     ③ 后来又用"间隔 > 220ms 才算新手势" ⇒ 同样的问题: **划得快时每次间隔都小
-        //        于 220ms**, 于是被判成同一次手势, 第二次起全部被 `_hWheelConsumed` 吞掉。
-        //
-        //   ★ 正确的判据是**"滚动流是否中断"**, 而不是"间隔有多长":
-        //     触控板一次连续滚动是高频连续事件(间隔通常 5~30ms);
-        //     两次**独立**的划动之间, 系统会有一个明确的空档(手指离开再落下)。
-        //     所以: 用一个 **短定时器(90ms)** 检测"滚动流结束" —— 每收到一个 delta
-        //     就重置它, 定时器真触发(即 90ms 内没有新 delta)才解锁下一次切页。
-        //     这样"划得快"只是事件间隔更短, 流一旦停顿超过 90ms 立刻解锁,
-        //     下一个手势必定有反应; 而同一次流里无论多少 delta 都只切一页。
-
+        if (_vm.Current is not (PageKey.Home or PageKey.Mine or PageKey.Follow or PageKey.Search or PageKey.Settings or PageKey.Messages)) return;
 
         // 反向时清掉余量(与纵向滚轮同款约定)
-        if (Math.Sign(delta) != Math.Sign(_hWheelAccum)) _hWheelAccum = 0;
+        if (_hWheelAccum != 0 && Math.Sign(delta) != Math.Sign(_hWheelAccum))
+        {
+            _hWheelAccum = 0;
+            _hWheelPacketCount = 0;
+        }
         if (_hWheelConsumed && Math.Sign(delta) != _hWheelConsumedDir) _hWheelConsumed = false;
         _hWheelAccum += delta;
+        _hWheelPacketCount++;
 
         // 只要还有 delta 进来, 就把"滚动流结束"的判定往后推
         RestartWheelIdleTimer();
@@ -128,35 +115,23 @@ public partial class MainWindow : FluentWindow
         // 本滚动流已经切过一页 ⇒ 剩余 delta 只累计不切(等定时器解锁)
         if (_hWheelConsumed) { return; }
 
-        if (Math.Abs(_hWheelAccum) < Notch)
-        {
-            var signedRatio = (_hWheelInvert ? -_hWheelAccum : _hWheelAccum) / (double)Notch;
-            if (CurrentModuleGestures is { } previewGestures) previewGestures.PreviewHorizontalWheel(signedRatio);
-            else if (_vm.Current == PageKey.Mine && PageOf(PageKey.Mine) is MinePage previewMine)
-                previewMine.PreviewHorizontalWheel(signedRatio);
-            else if (PageOf(PageKey.Home) is HomePage previewHome)
-                previewHome.PreviewHorizontalWheel(signedRatio);
-            return;
-        }
-
-        var dir = Math.Sign(_hWheelAccum);
-        _hWheelAccum = 0;
-        _hWheelConsumed = true;
-        _hWheelConsumedDir = dir;
-
-        // ★ 方向: delta > 0 ⇒ 手指向左滑 ⇒ 内容向左跟手 ⇒ 露出**右**边那页 ⇒ +1
-        if(CurrentModuleGestures is {} gestures) gestures.Step(_hWheelInvert?-dir:dir);
-        else if(_vm.Current==PageKey.Mine && PageOf(PageKey.Mine) is MinePage mine)
-            mine.HandleHorizontalWheel(_hWheelInvert?-dir:dir);
-        else if (PageOf(PageKey.Home) is HomePage home)
-            home.HandleHorizontalWheel(_hWheelInvert ? -dir : dir);
+        // 连续双页跟手中间态:
+        // 精确触控板一次完整横划累计约 360~520 delta, 映射到 [-1, 1] 整页宽度跟手预览,
+        // 让相邻两个子页面并排跟手滑动, 直到松手(90ms 空档)按自然过半(>= 0.50)判定切页或回弹。
+        var signedAccum = _hWheelInvert ? -_hWheelAccum : _hWheelAccum;
+        var progress = Math.Clamp(signedAccum / TouchpadSwipeFullDelta, -1.0, 1.0);
+        if (CurrentModuleGestures is { } previewGestures) previewGestures.PreviewHorizontalWheel(progress);
+        else if (_vm.Current == PageKey.Mine && PageOf(PageKey.Mine) is MinePage previewMine)
+            previewMine.PreviewHorizontalWheel(progress);
+        else if (_vm.Current == PageKey.Follow && PageOf(PageKey.Follow) is FollowPage previewFollow)
+            previewFollow.PreviewHorizontalWheel(progress);
+        else if (PageOf(PageKey.Home) is HomePage previewHome)
+            previewHome.PreviewHorizontalWheel(progress);
     }
 
     /// <summary>
     /// 重置"滚动流结束"定时器。90ms 内没有新的横向 delta ⇒ 认定这次滚动流结束,
-    /// 解锁下一次切页。
-    /// ★ 90ms 的取法: 精确触控板连续滚动的 delta 间隔实测 5~30ms, 90ms 是它的三倍以上,
-    ///   足够可靠地判断"手停了"; 又远小于人类连续划两下的间隔(通常 200ms+)。
+    /// 按是否自然过半(>= 0.50)或单次鼠标侧滚轮(120)决定提交切页还是回弹。
     /// </summary>
     private void RestartWheelIdleTimer()
     {
@@ -171,16 +146,22 @@ public partial class MainWindow : FluentWindow
                 // 滚动流结束: 停表 + 解锁下一次切页
                 _hWheelIdleTimer!.Stop();
                 var accum = _hWheelAccum;
+                var packets = _hWheelPacketCount;
                 var consumed = _hWheelConsumed;
                 _hWheelConsumed = false;
                 _hWheelConsumedDir = 0;
                 _hWheelAccum = 0;
+                _hWheelPacketCount = 0;
                 if (!consumed && accum != 0)
                 {
-                    var commit = Math.Abs(accum) >= Notch * 0.58;
+                    var progress = Math.Abs(accum) / TouchpadSwipeFullDelta;
+                    var isDiscreteMouseTilt = packets == 1 && Math.Abs(accum) >= Notch;
+                    var commit = progress >= 0.50 || isDiscreteMouseTilt;
                     if (CurrentModuleGestures is { } settleGestures) settleGestures.SettleHorizontalWheelPreview(commit);
                     else if (_vm.Current == PageKey.Mine && PageOf(PageKey.Mine) is MinePage settleMine)
                         settleMine.SettleHorizontalWheelPreview(commit);
+                    else if (_vm.Current == PageKey.Follow && PageOf(PageKey.Follow) is FollowPage settleFollow)
+                        settleFollow.SettleHorizontalWheelPreview(commit);
                     else if (PageOf(PageKey.Home) is HomePage settleHome)
                         settleHome.SettleHorizontalWheelPreview(commit);
                 }
@@ -194,6 +175,9 @@ public partial class MainWindow : FluentWindow
 
     /// <summary>一格滚轮的标准 delta</summary>
     private const int Notch = 120;
+
+    /// <summary>触控板横滑映射整页宽度的累计 delta 基准(过半即 >= 210)</summary>
+    private const double TouchpadSwipeFullDelta = 420.0;
 
     /// <summary>判定"滚动流已结束"的空闲时长(ms)。见 RestartWheelIdleTimer 的说明。</summary>
     private const int HandWheelIdleMs = 90;
@@ -209,8 +193,9 @@ public partial class MainWindow : FluentWindow
     private bool _hWheelConsumed;
     private int _hWheelConsumedDir;
 
-    /// <summary>本次滚动流累计的 delta 余量</summary>
+    /// <summary>本次滚动流累计的 delta 余量与包数</summary>
     private int _hWheelAccum;
+    private int _hWheelPacketCount;
 
     private FrameworkElement PageOf(PageKey key)
     {
@@ -254,6 +239,7 @@ public partial class MainWindow : FluentWindow
     {
         PageKey.Settings => (PageOf(PageKey.Settings) as SettingsPage)?.ModuleGestures,
         PageKey.Messages => (PageOf(PageKey.Messages) as MessagesPage)?.ModuleGestures,
+        PageKey.Search => (PageOf(PageKey.Search) as SearchPage)?.ModuleGestures,
         _ => null
     };
     private void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)

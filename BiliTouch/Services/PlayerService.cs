@@ -169,7 +169,7 @@ public class PlayerService
         // 关闭流程是"先隐藏窗口 -> 后台拆解原生资源 -> 最后才真正 Close()"。
         // 这段窗口期内 IsLoaded 仍为 true, 如果直接复用, 拆解结束时的 Close() 会把
         // 刚打开的新视频一起关掉 —— 表现为"点了视频又立刻自动退出"。
-        if (_window is { IsLoaded: true } reuse && !reuse.IsClosing)
+        if (_window is { } reuse && !reuse.IsClosing)
         {
             // ★★★ 2026-11-04 修"一直以来根本没有默认最大化"的**根因**:
             //
@@ -182,6 +182,7 @@ public class PlayerService
             //   Show 之后再改会先按 Normal 布局一帧再跳, 那一下闪动正好落在起播画面上)。
             if (!reuse.IsVisible)
             {
+                reuse.PrepareSeamlessPreShow();
                 reuse.WindowState = WindowState.Maximized;   // ★ 先定状态
                 reuse.Show();                                 // ★ 再显示
             }
@@ -230,6 +231,7 @@ public class PlayerService
         //   这是**窗口最大化**, 不是视频全屏 —— 右栏、控制栏都还在, 用户随时可以还原。
         //   ★ 必须放在 Show() 之前: Show 之后再改 WindowState 会先按 1280×760 布局一帧再跳,
         //     那一下闪动正好落在视频起播的画面上。
+        win.PrepareSeamlessPreShow();
         win.WindowState = WindowState.Maximized;
         win.Show();
         return win;

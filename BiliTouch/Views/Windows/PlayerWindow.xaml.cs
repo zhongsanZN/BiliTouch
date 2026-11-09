@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -7373,21 +7373,25 @@ public partial class PlayerWindow : FluentWindow
             // 从全屏态直接关闭时, 先摘掉"无边框 + 最大化"这个组合。
             // 该状态下窗口句柄的清理容易不干净(参见 Esc 分支里的同款处理),
             // 反复"全屏打开 -> 直接关闭"会累积成残留窗口/句柄, 也是原生访问违例的温床。
-            if (WindowStyle == WindowStyle.None)
+            // 先禁用系统窗口过渡动画并立刻隐藏，绝不在可见状态下切 WindowStyle/WindowState（消除关闭时闪标题栏与还原抖动）
+            try { DwmInterop.SetTransitionsDisabled(this, true); } catch { }
+            Hide();
+            if (_isFullscreen && WindowStyle == WindowStyle.None)
             {
                 try
                 {
                     // 进全屏时 WS_CAPTION 被摘掉了(盖任务栏用, 见 ApplyFullscreenLayout):
                     // 这里要切成 SingleBorderWindow, 必须先把样式位补回来, 否则系统标题栏缺失。
                     DwmInterop.RestoreCaption(this);
-                    WindowStyle = WindowStyle.SingleBorderWindow;
+                    DwmInterop.RestoreCaption(this);
+                    WindowState = WindowState.Normal;
                     WindowState = WindowState.Normal;
                 }
                 catch { /* 已经处于不可切换状态, 忽略 */ }
             }
 
             // 立刻隐藏, 感知上就是"秒关"; 拆解过程在后台继续
-            Hide();
+            // 已在上方提前执行 Hide()
 
             _ = TeardownAndCloseAsync();
             return;

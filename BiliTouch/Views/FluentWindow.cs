@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -646,7 +646,8 @@ public class FluentWindow : Window
             var delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
             // 物理鼠标侧滚轮(IMDT_MOUSE=0x02)向前/上滚发 +120、向后/下滚发 -120,
             // 与精确触控板自然滚动(左滑发正 delta → 切向右侧页)符号相反, 按输入源自动校准方向。
-            if (IsPhysicalMouseInput()) delta = (short)(-delta);
+            // Windows 精确触控板双指横向自然滚动通过伪造 IMDT_MOUSE (0x02) 发送 WM_MOUSEHWHEEL，
+            // 左滑发正 delta (+1 切向右侧页)、右滑发负 delta (-1 切向左侧页)，必须保持原始符号，不可按 IMDT_MOUSE 取反。
             OnHorizontalWheel(delta);
         }
         else if (msg == WM_MOUSEWHEEL && (wParam.ToInt64() & MK_SHIFT) != 0)

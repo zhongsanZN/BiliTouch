@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using BiliTouch.Models;
@@ -160,6 +160,7 @@ public partial class DynamicFeedCard : UserControl
     {
         if (!IsClick(e) || sender is not FrameworkElement { DataContext: VideoItem video }) return;
         e.Handled = true;
+        BiliTouch.Helpers.SeamlessTransitionDirector.Capture(sender as FrameworkElement, video.Bvid, 8.0);
         Svc.Player.PlayVideo(video.Bvid, video.Title);
     }
 
@@ -169,7 +170,10 @@ public partial class DynamicFeedCard : UserControl
         if (DataContext is not DynamicItem d) return;
         switch (d.Kind)
         {
-            case DynamicKind.Video: DynamicActions.OpenVideo(d); break;
+            case DynamicKind.Video:
+                if (d.Video != null) BiliTouch.Helpers.SeamlessTransitionDirector.Capture(sender as FrameworkElement ?? this, d.Video.Bvid, 8.0);
+                DynamicActions.OpenVideo(d);
+                break;
             case DynamicKind.Article: if(!IsDetail)DynamicActions.OpenArticle(d); break;
             case DynamicKind.Live: DynamicActions.OpenLive(d); break;
             case DynamicKind.Forward:

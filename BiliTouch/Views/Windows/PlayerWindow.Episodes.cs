@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -86,7 +86,12 @@ public partial class PlayerWindow
         finally { if (!_closing) SeasonSubscribeButton.IsEnabled = true; }
     }
 
-    private void OnSeasonCloseClick(object sender, RoutedEventArgs e) => CloseSeasonPanel();
+    private void OnSeasonCloseClick(object sender, RoutedEventArgs e)
+    {
+        if (_closing || SeasonPanel == null) return;
+        if (_seasonOpen) CloseSeasonPanel();
+        else OpenSeasonPanel();
+    }
 
     private void OpenSeasonPanel()
     {
@@ -117,7 +122,7 @@ public partial class PlayerWindow
     private void CloseSeasonPanel()
     {
         _seasonOpen = false;
-        if (SeasonPanel != null) SeasonPanel.Visibility = Visibility.Collapsed;
+        // SeasonPanel 保留头部可见，由 UpdateSeasonButtonState 收起列表内容
         UpdateSeasonButtonState();
     }
 
@@ -137,6 +142,18 @@ public partial class PlayerWindow
         if (SeasonPanel == null) return;
         // 合集面板现在长在简介页里(不再有 tab 行按钮): 有合集、或正在换集加载时显示。
         SeasonPanel.Visibility = (_hasSeason || _seasonOpen) ? Visibility.Visible : Visibility.Collapsed;
+        if (SeasonList != null)
+            SeasonList.Visibility = (_hasSeason && _seasonOpen) ? Visibility.Visible : Visibility.Collapsed;
+        if (SeasonFooterBorder != null)
+        {
+            bool hasFooter = SeasonLoadingRing?.Visibility == Visibility.Visible
+                             || !string.IsNullOrEmpty(SeasonHint?.Text);
+            SeasonFooterBorder.Visibility = (_hasSeason && _seasonOpen && hasFooter)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+        if (BtnSeasonToggle != null)
+            BtnSeasonToggle.Content = _seasonOpen ? "收起合集" : "展开合集";
     }
 
     /// <summary>详情加载完之后灌合集数据</summary>

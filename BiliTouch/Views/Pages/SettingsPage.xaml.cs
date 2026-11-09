@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -16,7 +16,7 @@ public partial class SettingsPage : UserControl
     public SettingsPage()
     {
         InitializeComponent();
-        ModuleGestures = new TabNavigationGestures(this,ModuleContent,ModuleTabs);
+        ModuleGestures = new TabNavigationGestures(this, ModuleContent, ModuleTabs, CreatePeerPreview);
         Loaded += OnLoaded;
     }
 
@@ -117,6 +117,39 @@ public partial class SettingsPage : UserControl
         brush.Freeze();
         box2.Background = brush;
         if (fallback2 != null) fallback2.Visibility = Visibility.Collapsed;
+    }
+
+    private UIElement? CreatePeerPreview(int targetIndex)
+    {
+        var key = targetIndex switch
+        {
+            1 => "PlaybackTabTemplate",
+            2 => "DataTabTemplate",
+            3 => "AboutTabTemplate",
+            _ => "GeneralTabTemplate"
+        };
+        if (SettingsTabContent?.TryFindResource(key) is not DataTemplate template) return null;
+        return new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
+            IsHitTestVisible = false,
+            Focusable = false,
+            Content = new StackPanel
+            {
+                Margin = new Thickness(36, 12, 36, 32),
+                Children =
+                {
+                    new ContentControl
+                    {
+                        Margin = new Thickness(0, 4, 0, 0),
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        Focusable = false,
+                        Content = DataContext,
+                        ContentTemplate = template
+                    }
+                }
+            }
+        };
     }
 
     private (Border? box, TextBlock? fallback) FindAvatarElements()

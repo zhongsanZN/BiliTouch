@@ -92,6 +92,15 @@ internal static class MotionPerformanceTests
 
             check(!player.IsSeamlessMorphRunning && overlay.Visibility == Visibility.Collapsed,
                 "settled seamless morph hides the overlay and detaches its composition clock");
+
+            // Reverse close morph ("一镜到底" close back into source card):
+            SeamlessTransitionDirector.Prime("BV1seamless4", new Rect(80, 140, 240, 135), 8.0, cardCover, sourceButton);
+            player.GetType().GetField("_currentBvid", Hidden)!.SetValue(player, "BV1seamless4");
+            check(player.TryBeginSeamlessClose(), "seamless close morph begins when closing from a primed card");
+            player.StepSeamlessMorph(0.05);
+            var shrinkRect = player.SeamlessCurrentRect;
+            check(player.IsSeamlessMorphRunning && shrinkRect.Width < 880 && shrinkRect.X > 0,
+                $"seamless close morph smoothly shrinks back toward source card (w={shrinkRect.Width:F1}, x={shrinkRect.X:F1})");
         }
         finally
         {

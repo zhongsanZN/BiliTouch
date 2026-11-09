@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using System.Windows.Input;
@@ -44,7 +44,51 @@ public class SearchViewModel : ObservableObject
         get => _keyword;
         set
         {
-            if (SetProperty(ref _keyword, value)) OnPropertyChanged(nameof(ShowHistoryStrip));
+            if (SetProperty(ref _keyword, value))
+            {
+                OnPropertyChanged(nameof(ShowHistoryStrip));
+                _ = DebounceSuggestionsAsync(value);
+            }
+        }
+    }
+
+    public ObservableCollection<string> Suggestions { get; } = new();
+    public bool HasSuggestions => Suggestions.Count > 0;
+    public ICommand UseSuggestionCommand { get; }
+    private System.Threading.CancellationTokenSource? _suggestCts;
+
+    private async Task DebounceSuggestionsAsync(string? raw)
+    {
+        _suggestCts?.Cancel();
+        var kw = (raw ?? "").Trim();
+        if (kw.Length == 0)
+        {
+            if (Suggestions.Count > 0)
+            {
+                Suggestions.Clear();
+                OnPropertyChanged(nameof(HasSuggestions));
+            }
+            return;
+        }
+
+        var cts = new System.Threading.CancellationTokenSource();
+        _suggestCts = cts;
+        try
+        {
+            await Task.Delay(150, cts.Token);
+            var list = await Svc.Api.GetSearchSuggestionsAsync(kw, cts.Token);
+            if (cts.IsCancellationRequested) return;
+            await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+            {
+                if (cts.IsCancellationRequested) return;
+                Suggestions.Clear();
+                foreach (var s in list) Suggestions.Add(s);
+                OnPropertyChanged(nameof(HasSuggestions));
+            });
+        }
+        catch
+        {
+            // ignore cancellation
         }
     }
 
@@ -261,6 +305,15 @@ public class SearchViewModel : ObservableObject
         {
             if (p is not string kw || kw.Trim().Length == 0) return;
             Keyword = kw; // setter 里会把历史条收起来
+            _ = SearchAsync();
+        });
+        UseSuggestionCommand = new RelayCommand(p =>
+        {
+            if (p is not string kw || kw.Trim().Length == 0) return;
+            _suggestCts?.Cancel();
+            Suggestions.Clear();
+            OnPropertyChanged(nameof(HasSuggestions));
+            Keyword = kw;
             _ = SearchAsync();
         });
         RemoveHistoryCommand = new RelayCommand(p => { if (p is string kw) Svc.SearchHistory.Remove(kw); });

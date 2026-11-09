@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -193,6 +193,12 @@ public partial class PlayerWindow
         DetachWebElement(RelatedPanel); WebRecommendationsPanel.Children.Add(RelatedPanel);
         RelatedPanel.Margin = new Thickness(0);
         RelatedHeading.Text = "推荐";
+        RelatedHeading.Visibility = Visibility.Collapsed;
+        if (RelatedHeaderBorder != null)
+        {
+            RelatedHeaderBorder.BorderThickness = new Thickness(0);
+            RelatedHeaderBorder.Padding = new Thickness(0);
+        }
         foreach (var control in new FrameworkElement[] { BtnBackToComments, CommentFab, CommentComposerPanel })
         { DetachWebElement(control); WebCommentChrome.Children.Add(control); }
         InfoContentStack.Margin = new Thickness(20, 0, 20, 24);
@@ -237,6 +243,12 @@ public partial class PlayerWindow
         IntroPanel.Children.Insert(Math.Clamp(_webRelatedIndex, 0, IntroPanel.Children.Count), RelatedPanel);
         RelatedPanel.Margin = _webRelatedMargin;
         RelatedHeading.Text = "相关视频";
+        RelatedHeading.Visibility = Visibility.Visible;
+        if (RelatedHeaderBorder != null)
+        {
+            RelatedHeaderBorder.BorderThickness = new Thickness(0, 1, 0, 0);
+            RelatedHeaderBorder.Padding = new Thickness(0, 12, 0, 0);
+        }
         WebRecommendationsPanel.Visibility = TabRecommended.Visibility = Visibility.Collapsed;
         for (int i = 0; i < _webHeaderParts.Length; i++) { DetachWebElement(_webHeaderParts[i]); InfoContentStack.Children.Insert(i, _webHeaderParts[i]); }
         foreach (var control in new FrameworkElement[] { BtnBackToComments, CommentFab, CommentComposerPanel })

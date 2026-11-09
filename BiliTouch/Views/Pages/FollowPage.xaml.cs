@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
@@ -32,6 +32,7 @@ public partial class FollowPage : UserControl
     {
         InitializeComponent();
         ContactSelection.Install(ContactsScroll,item=>{if(DataContext is FollowViewModel vm){if(item is FollowUser user)_=vm.SelectUpAsync(user);else if(item is FollowViewModel)_=vm.SelectAllAsync();}});
+        HookFeedSwipe();
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         // 屏蔽把动态流筛空后补下一页(否则会停在一片空白上)
@@ -289,5 +290,240 @@ public partial class FollowPage : UserControl
         {
             await MediaActions.SaveImageAsync(u.Face, u.Name + "_头像");
         }
+    }
+
+    // ------------------------------------------------------------ 综合 / 视频 双页并排横滑与触控板跟手
+
+    private const double FeedSwipeRatio = 0.50;
+    private const double FeedSwipeFlingVelocity = 2.2;
+    private const double FeedEdgeResist = 0.35;
+
+    private Point _feedSwipeStart;
+    private long _feedSwipeStartTick;
+    private double _feedSwipeDx;
+    private bool _feedSwipeArmed, _feedSwipeDecided, _feedSwipeHorizontal, _feedSuppressClick;
+    private ScrollViewer? _feedFrozenScroll;
+    private PanningMode _feedSavedPanning;
+    private double _feedFrozenOffset;
+    private Action? _feedActiveSettle;
+
+    private void HookFeedSwipe()
+    {
+        if (FollowFeedHost == null) return;
+        FollowFeedHost.PreviewTouchDown += (_, e) => FeedSwipeDown(e.GetTouchPoint(null).Position, e.OriginalSource as DependencyObject);
+        FollowFeedHost.PreviewTouchMove += (_, e) => { if (FeedSwipeMove(e.GetTouchPoint(null).Position)) e.Handled = true; };
+        FollowFeedHost.PreviewTouchUp += (_, e) => { if (FeedSwipeUp()) e.Handled = true; };
+        FollowFeedHost.PreviewMouseLeftButtonUp += (_, e) => { if (_feedSuppressClick) { e.Handled = true; _feedSuppressClick = false; } };
+    }
+
+    private static System.Windows.Media.TranslateTransform FeedTransform(UIElement element)
+    {
+        if (element.RenderTransform is System.Windows.Media.TranslateTransform t) return t;
+        t = new System.Windows.Media.TranslateTransform();
+        element.RenderTransform = t;
+        return t;
+    }
+
+    private void CompleteFeedSettle()
+    {
+        if (_feedActiveSettle == null) return;
+        var finish = _feedActiveSettle;
+        _feedActiveSettle = null;
+        finish();
+    }
+
+    internal void FeedSwipeDown(Point p, DependencyObject? source)
+    {
+        CompleteFeedSettle();
+        RestoreFeedPanning();
+        _feedSuppressClick = false;
+        _feedSwipeStart = p;
+        _feedSwipeStartTick = Environment.TickCount64;
+        _feedSwipeDx = 0;
+        _feedSwipeDecided = false;
+        _feedSwipeHorizontal = false;
+        _feedSwipeArmed = DataContext is FollowViewModel;
+        for (var d = source; d != null && d != FollowFeedHost; d = d is ContentElement c ? LogicalTreeHelper.GetParent(c) : System.Windows.Media.VisualTreeHelper.GetParent(d))
+        {
+            if (d is System.Windows.Controls.Primitives.TextBoxBase or Slider or PasswordBox or System.Windows.Documents.Hyperlink)
+            {
+                _feedSwipeArmed = false;
+                break;
+            }
+        }
+    }
+
+    internal bool FeedSwipeMove(Point p)
+    {
+        if (!_feedSwipeArmed || DataContext is not FollowViewModel vm) return false;
+        _feedSwipeDx = p.X - _feedSwipeStart.X;
+        var dy = p.Y - _feedSwipeStart.Y;
+        if (!_feedSwipeDecided)
+        {
+            if (Math.Max(Math.Abs(_feedSwipeDx), Math.Abs(dy)) < 12) return false;
+            _feedSwipeDecided = true;
+            _feedSwipeHorizontal = Math.Abs(_feedSwipeDx) > Math.Abs(dy) * 1.3;
+        }
+        if (!_feedSwipeHorizontal) return false;
+
+        TouchSupport.CancelPendingTap();
+        if (_feedFrozenScroll == null)
+        {
+            _feedFrozenScroll = vm.VideoOnly ? VideoFeedScroll : FindScrollViewer(DynamicList);
+            if (_feedFrozenScroll != null)
+            {
+                _feedSavedPanning = _feedFrozenScroll.PanningMode;
+                _feedFrozenOffset = _feedFrozenScroll.VerticalOffset;
+                _feedFrozenScroll.PanningMode = PanningMode.None;
+                TrackpadScroll.Cancel(_feedFrozenScroll);
+            }
+        }
+        if (_feedFrozenScroll != null && Math.Abs(_feedFrozenScroll.VerticalOffset - _feedFrozenOffset) > 0.5)
+            _feedFrozenScroll.ScrollToVerticalOffset(_feedFrozenOffset);
+
+        ApplyFeedDrag(vm, _feedSwipeDx);
+        return true;
+    }
+
+    internal bool FeedSwipeUp()
+    {
+        if (!_feedSwipeArmed) return false;
+        _feedSwipeArmed = false;
+        RestoreFeedPanning();
+        if (!_feedSwipeHorizontal || DataContext is not FollowViewModel vm) return false;
+
+        _feedSuppressClick = true;
+        var elapsed = Math.Max(1, Environment.TickCount64 - _feedSwipeStartTick);
+        var width = Math.Max(1, FollowFeedHost.ActualWidth);
+        var velocity = Math.Abs(_feedSwipeDx) / elapsed;
+        var currentIndex = vm.VideoOnly ? 1 : 0;
+        var target = currentIndex + (_feedSwipeDx < 0 ? 1 : -1);
+        var commit = (target is 0 or 1) &&
+            (Math.Abs(_feedSwipeDx) >= width * FeedSwipeRatio || (Math.Abs(_feedSwipeDx) >= 80 && velocity >= FeedSwipeFlingVelocity));
+        FinishFeedDrag(vm, commit, target);
+        return true;
+    }
+
+    internal void PreviewHorizontalWheel(double progress)
+    {
+        if (_feedSwipeHorizontal || DataContext is not FollowViewModel vm || FollowFeedHost == null) return;
+        CompleteFeedSettle();
+        var width = Math.Max(1, FollowFeedHost.ActualWidth);
+        _feedSwipeDx = -progress * width;
+        ApplyFeedDrag(vm, _feedSwipeDx);
+    }
+
+    internal void SettleHorizontalWheelPreview(bool commit)
+    {
+        if (_feedSwipeHorizontal || DataContext is not FollowViewModel vm || FollowFeedHost == null) return;
+        var current = vm.VideoOnly ? (FrameworkElement)VideoFeedScroll : DynamicList;
+        var other = vm.VideoOnly ? (FrameworkElement)DynamicList : VideoFeedScroll;
+        if (Math.Abs(FeedTransform(current).X) < 0.5 && other.Visibility != Visibility.Visible) return;
+        var currentIndex = vm.VideoOnly ? 1 : 0;
+        var target = currentIndex + (_feedSwipeDx < 0 ? 1 : -1);
+        FinishFeedDrag(vm, commit && (target is 0 or 1), target);
+    }
+
+    internal void HandleHorizontalWheel(int direction)
+    {
+        if (direction == 0 || DataContext is not FollowViewModel vm || FollowFeedHost == null) return;
+        CompleteFeedSettle();
+        var currentIndex = vm.VideoOnly ? 1 : 0;
+        var target = currentIndex + Math.Sign(direction);
+        var width = Math.Max(1, FollowFeedHost.ActualWidth);
+        if (target is not (0 or 1))
+        {
+            FinishFeedDrag(vm, false, currentIndex);
+            return;
+        }
+        if (Math.Abs(_feedSwipeDx) < 1)
+        {
+            _feedSwipeDx = direction > 0 ? -Math.Min(width * 0.25, 96) : Math.Min(width * 0.25, 96);
+            ApplyFeedDrag(vm, _feedSwipeDx);
+        }
+        FinishFeedDrag(vm, true, target);
+    }
+
+    private void ApplyFeedDrag(FollowViewModel vm, double dx)
+    {
+        var width = Math.Max(1, FollowFeedHost.ActualWidth);
+        var current = vm.VideoOnly ? (FrameworkElement)VideoFeedScroll : DynamicList;
+        var other = vm.VideoOnly ? (FrameworkElement)DynamicList : VideoFeedScroll;
+        var currentIndex = vm.VideoOnly ? 1 : 0;
+        var target = currentIndex + (dx < 0 ? 1 : -1);
+        var c = FeedTransform(current);
+        var o = FeedTransform(other);
+        c.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
+        o.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
+
+        if (target is not (0 or 1))
+        {
+            c.X = dx * FeedEdgeResist;
+            System.Windows.Data.BindingOperations.GetBindingExpression(other, VisibilityProperty)?.UpdateTarget();
+            return;
+        }
+
+        other.SetCurrentValue(VisibilityProperty, Visibility.Visible);
+        c.X = dx;
+        o.X = dx + (dx < 0 ? width : -width);
+    }
+
+    private void FinishFeedDrag(FollowViewModel vm, bool switchPage, int target)
+    {
+        var width = Math.Max(1, FollowFeedHost.ActualWidth);
+        var current = vm.VideoOnly ? (FrameworkElement)VideoFeedScroll : DynamicList;
+        var other = vm.VideoOnly ? (FrameworkElement)DynamicList : VideoFeedScroll;
+        var c = FeedTransform(current);
+        var o = FeedTransform(other);
+        var ease = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut };
+        var dur = TimeSpan.FromMilliseconds(160);
+
+        var done = false;
+        void Complete()
+        {
+            if (done) return;
+            done = true;
+            _feedActiveSettle = null;
+            c.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
+            o.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
+            c.X = 0;
+            o.X = 0;
+            if (switchPage)
+            {
+                if (target == 1) vm.ShowVideoFeedCommand.Execute(null);
+                else vm.ShowAllFeedCommand.Execute(null);
+            }
+            System.Windows.Data.BindingOperations.GetBindingExpression(DynamicList, VisibilityProperty)?.UpdateTarget();
+            System.Windows.Data.BindingOperations.GetBindingExpression(VideoFeedScroll, VisibilityProperty)?.UpdateTarget();
+            _feedSwipeDx = 0;
+        }
+        _feedActiveSettle = Complete;
+
+        if (switchPage)
+        {
+            other.SetCurrentValue(VisibilityProperty, Visibility.Visible);
+            var outX = target > (vm.VideoOnly ? 1 : 0) ? -width : width;
+            var animOut = new System.Windows.Media.Animation.DoubleAnimation(c.X, outX, dur) { EasingFunction = ease };
+            var animIn = new System.Windows.Media.Animation.DoubleAnimation(o.X, 0, dur) { EasingFunction = ease };
+            animIn.Completed += (_, _) => Complete();
+            c.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, animOut);
+            o.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, animIn);
+        }
+        else
+        {
+            var animBack = new System.Windows.Media.Animation.DoubleAnimation(c.X, 0, dur) { EasingFunction = ease };
+            var sideOut = o.X >= 0 ? width : -width;
+            var animSide = new System.Windows.Media.Animation.DoubleAnimation(o.X, sideOut, dur) { EasingFunction = ease };
+            animBack.Completed += (_, _) => Complete();
+            c.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, animBack);
+            o.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, animSide);
+        }
+    }
+
+    private void RestoreFeedPanning()
+    {
+        if (_feedFrozenScroll != null)
+            _feedFrozenScroll.PanningMode = _feedSavedPanning;
+        _feedFrozenScroll = null;
     }
 }
