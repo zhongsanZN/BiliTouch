@@ -45,7 +45,12 @@ internal static class Program
         var exit = 0;
         try
         {
-            if(args.Contains("--rate-limit")) RateLimitTests.Run(Check);
+            if(args.Contains("--player-lifecycle")) PlayerLifecycleTests.Run(Check);
+            else if(args.Contains("--popup-pointer-review")) PopupLifetimeTests.PointerReview(Artifacts);
+            else if(args.Contains("--danmaku-filtering")) DanmakuFilteringTests.Run(Check);
+            else if(args.Contains("--popup-lifetime")) PopupLifetimeTests.Run(Check);
+            else if(args.Contains("--motion-performance")) MotionPerformanceTests.Run(Check);
+            else if(args.Contains("--rate-limit")) RateLimitTests.Run(Check);
             else if(args.Contains("--web-dock-flicker")) WebDockFlickerTests.Run(Check, Artifacts);
             else if(args.Contains("--home-cover-reuse")) HomeCoverReuseTests.Run(Check);
             else if(args.Contains("--scroll-boundaries")) ScrollBoundaryTests.Run(Check);
@@ -61,7 +66,8 @@ internal static class Program
             else if(args.Contains("--comment-gallery")) CommentGalleryTests.Run(Check);
             else if(args.Contains("--vmem-morph")) VmemMorphTests.Run(Check, Artifacts);
             else if(args.Contains("--vmem-player")) VmemPlayerTests.Run(Check, Artifacts);
-            else if(args.Contains("--vmem-view")) VmemViewTests.Run(Check, Artifacts);
+            else if(args.Contains("--vmem-view")) VmemViewTests.Run(Check, Artifacts,
+                args.FirstOrDefault(a => a.StartsWith("--clip="))?[7..], args.Contains("--source60") ? 60 : 0);
             else if(args.Contains("--web-morph-motion")) WebMorphMotionTests.Run(Check, Artifacts);
             else if(args.Contains("--web-morph-capture")) WebMorphCapture.Run(Artifacts);
             else if(args.Contains("--player-comments-scroll")) PlayerCommentsScrollTests.Run(Check);

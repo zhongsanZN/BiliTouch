@@ -40,7 +40,11 @@ internal static class ContinuationTests
             Svc.Theme.SetMode(AppTheme.Light);SkinService.Instance.Configure(SkinService.StarParty,true,true);Svc.Settings.SetWebPlayerLayout(false);
             var surface=new SkinSurface{Width=1800,Height=124};surface.Measure(new Size(1800,124));surface.Arrange(new Rect(0,0,1800,124));surface.UpdateLayout();
             var bitmap=new RenderTargetBitmap(1800,124,96,96,PixelFormats.Pbgra32);bitmap.Render(surface);var pixels=new byte[1800*124*4];bitmap.CopyPixels(pixels,1800*4,0);
-            check(Enumerable.Range(0,1800).All(x=>pixels[x*4+2]>245 && pixels[x*4+1]>140),"one continuous yellow rim spans the original image and the whole extension");
+            // The shared-header redesign already uses a fading foundation/rim rather
+            // than a solid yellow top row. Verify the artwork-to-extension coverage.
+            byte AlphaAt(int x) => pixels[(60 * 1800 + x) * 4 + 3];
+            check(AlphaAt(100)>200 && AlphaAt(900)>0 && AlphaAt(1799)<AlphaAt(900),
+                "theme artwork extends into the header and fades without a hard background cutoff");
             Save(surface,Path.Combine(artifacts,"continuation-header-seam.png"));
 
             player=new PlayerWindow{Width=1320,Height=860};player.Show();Pump(180);
@@ -56,7 +60,9 @@ internal static class ContinuationTests
             check(Field<bool>(player,"_commentsLoaded"),"successful hidden-tab preload is retained");
             Wait((Task)Call(player,"LoadCommentsAsync",false)!);check(handler.Comments==1,"returning to a preloaded comment tab does not refetch");
             Wait(load);
-            var setting=(Button)player.FindName("BtnDanmakuArea");check(setting.Content is TextBlock{Text:"弹幕设置"},"danmaku settings entry uses the requested four-character label");
+            var setting=(Button)player.FindName("BtnDanmakuArea");
+            check(System.Windows.Automation.AutomationProperties.GetName(setting)=="弹幕设置" && (string)setting.ToolTip=="弹幕设置",
+                "the themed danmaku settings entry retains its accessible four-character label");
             check(player.FindName("DanmakuAreaText")==null && player.FindName("DanmakuBtnText")==null,"old percentage entry and text-based danmaku toggle are removed");
             Call(player,"ToggleDanmaku");check(((System.Windows.Shapes.Path)player.FindName("DanmakuOffSlash")).Visibility==Visibility.Visible,"disabled danmaku is represented by a slashed icon");Call(player,"ToggleDanmaku");
             var input=(TextBox)player.FindName("DanmakuInput");input.Text="发送测试（仅本地夹具）";
@@ -110,7 +116,7 @@ internal static class ContinuationTests
                         // ★ 2026-11-05: 整格滚轮现在也吃"信息流灵敏度"(与触控板共用同一把尺子)。
             //   旧断言写死 450 = 5 格 × 90px, 那是"整格不被接管"时的语义。
             //   现在按默认灵敏度 75% 算: 5 × 90 × 0.75 = 337.5px。断言改成按设置算, 不再写死数字。
-            var notchStep=90.0*Svc.Settings.TouchpadFeedSensitivity/100.0;
+            var notchStep=TrackpadScroll.NotchPixels;
             var expectedDistance=5*notchStep;
             check(Math.Abs(viewer.VerticalOffset-expectedDistance)<3,
                 $"a burst of five mouse notches retains all accumulated scroll distance (offset={viewer.VerticalOffset:F1}, expected={expectedDistance:F1})");

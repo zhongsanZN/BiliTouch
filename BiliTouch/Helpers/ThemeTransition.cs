@@ -40,6 +40,7 @@ public static class ThemeTransition
     private static Image? _active;
     private static Panel? _activeRoot;
     private static DispatcherTimer? _safety;
+    private static EventHandler? _waitingFrame;
 
     /// <summary>在浅色 / 深色之间切换, 并以 origin 为圆心播扩散动画。
     /// origin 为 null(例如键盘触发)时用窗口中心。</summary>
@@ -186,13 +187,22 @@ public static class ThemeTransition
     /// </summary>
     private static void WaitFrames(int count, Action action)
     {
+        if (_waitingFrame != null) CompositionTarget.Rendering -= _waitingFrame;
         EventHandler? handler = null;
-        handler = (_, _) =>
+        var lastFrame = TimeSpan.MinValue;
+        handler = (_, e) =>
         {
+            if (e is RenderingEventArgs frame)
+            {
+                if (lastFrame == frame.RenderingTime) return;
+                lastFrame = frame.RenderingTime;
+            }
             if (--count > 0) return;
             CompositionTarget.Rendering -= handler;
+            if (ReferenceEquals(_waitingFrame, handler)) _waitingFrame = null;
             action();
         };
+        _waitingFrame = handler;
         CompositionTarget.Rendering += handler;
     }
 
@@ -204,6 +214,8 @@ public static class ThemeTransition
     /// </summary>
     private static void DetachActive()
     {
+        if (_waitingFrame != null) CompositionTarget.Rendering -= _waitingFrame;
+        _waitingFrame = null;
         _safety?.Stop();
         _safety = null;
 

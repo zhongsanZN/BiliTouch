@@ -584,8 +584,18 @@ public partial class PlayerWindow : FluentWindow
         // 查找断链), PlacementTarget 为空 → 弹层跑到了浮层左上角(真机截图实证)。
         // 同时右缘对齐: Placement=Top 默认左缘对齐, 这两个弹层在控制栏右段, 左对齐偏丑;
         // Opened 时量出宽度差做负偏移, 弹层右缘与按钮右缘平齐。
+        VolumePopup.Child.MouseEnter += OnVolumeHoverEnter;
         VolumePopup.Child.MouseLeave += OnVolumeHoverLeave;
+        VolumePopup.Child.LostMouseCapture += (_, _) => HideVolumePopupSoon();
+        VolumePopup.Closed += (_, _) =>
+        {
+            _volumeCloseTimer?.Stop();
+            _volumeHover = _volumePinned = false;
+            if (!_closing) StartControlsHideCountdown();
+        };
         SpeedPopup.PlacementTarget = SpeedBtn;
+        SpeedPopup.Opened += (_, _) => _controlsHideTimer?.Stop();
+        SpeedPopup.Closed += (_, _) => { if (!_closing) StartControlsHideCountdown(); };
         RightAlignPopup(QualityPopup, BtnQuality);
         RightAlignPopup(DanmakuAreaPopup, BtnDanmakuArea);
         RightAlignPopup(SpeedPopup, SpeedBtn);
@@ -1421,6 +1431,7 @@ public partial class PlayerWindow : FluentWindow
         // 音量弹层的两个交互态(2026-11-05): 悬停/点开都是**当前这一次操作**的状态,
         // 窗口级瞬态, 与片源无关 —— 换片时鼠标还压在喇叭上反而应该保持展开。
         nameof(_volumeHover), nameof(_volumePinned),
+        nameof(_danmakuFilterRevision), // Monotonic async-work revision, invalidated on media change.
         nameof(_danmakuOn),          // 弹幕总开关是设置项
         nameof(_danmakuColorful),    // 彩色弹幕是设置项
         nameof(_danmakuAreaRatio),   // 弹幕显示区域是设置项
@@ -3597,6 +3608,7 @@ public partial class PlayerWindow : FluentWindow
         // 滑块是用户拖动时的入口, 程序化赋值(SetVolume)也会走到这 —— 同值回写, 无副作用。
         // 必须同步权威值: 否则拖完滑块再滚轮, 基数还是旧缓存(见 _volumeCache 的说明)。
         _volumeCache = v;
+        UpdateVolumeChrome(v);
         // ★ 音量继承: 拖滑块这条路也要落盘(2026-11-12)。
         //   SetVolume 里已经存过一次, 这里是**直接拖滑块**的路径 —— 那条路不经过 SetVolume。
         //   两个入口都存, 才不会出现"滚轮调的继承了、拖滑块调的没继承"。
@@ -3649,6 +3661,8 @@ public partial class PlayerWindow : FluentWindow
     private void ShowVolumePopup()
     {
         if (_closing || VolumePopup == null || VolumeSlider == null) return;
+        _volumeCloseTimer?.Stop();
+        ShowControls();
         VolumePopup.PlacementTarget = BtnVolume;
         VolumePopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Top;
         if (VolumePopupText != null) VolumePopupText.Text = _volumeCache + "%";
@@ -3661,19 +3675,28 @@ public partial class PlayerWindow : FluentWindow
     /// 延迟一轮再决定收不收: 从喇叭挪到弹层的那一瞬间两者都不在 IsMouseOver,
     /// 立刻收会把"想拖滑杆"的用户挡在门外。
     /// </summary>
-    private async void HideVolumePopupSoon()
+    private void HideVolumePopupSoon()
     {
         if (_closing || _volumePinned || _volumeHover) return;
-        await Task.Delay(350);
-        await Dispatcher.InvokeAsync(() => {
-            if (_closing || _volumeHover || _volumePinned || VolumePopup.IsMouseOver || BtnVolume.IsMouseOver) return;
-            VolumePopup.IsOpen = false;
-        });
+        _volumeCloseTimer ??= new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(350) };
+        _volumeCloseTimer.Tick -= OnVolumeCloseTick;
+        _volumeCloseTimer.Tick += OnVolumeCloseTick;
+        _volumeCloseTimer.Stop();
+        _volumeCloseTimer.Start();
+    }
+
+    private void OnVolumeCloseTick(object? sender, EventArgs e)
+    {
+        _volumeCloseTimer?.Stop();
+        if (_closing || _volumeHover || _volumePinned || BtnVolume.IsMouseOver ||
+            VolumePopup.Child is { IsMouseOver: true } or { IsMouseCaptureWithin: true }) return;
+        VolumePopup.IsOpen = false;
     }
 
     private void CloseVolumePopup()
     {
         _volumeHover = false; _volumePinned = false;
+        _volumeCloseTimer?.Stop();
         if (VolumePopup != null) VolumePopup.IsOpen = false;
     }
 
@@ -3693,6 +3716,7 @@ public partial class PlayerWindow : FluentWindow
     private bool _volumeHover;
     /// <summary>用户主动点开过弹层(触屏没有 hover, 只能靠点击), 点开后在点别处前不自动收</summary>
     private bool _volumePinned;
+    private DispatcherTimer? _volumeCloseTimer;
 
     /// <summary>倍速提示的淡出计时器(松手后"已恢复 1.0x"亮一下就靠它收场)</summary>
     private DispatcherTimer? _speedOsdTimer;
@@ -3799,6 +3823,7 @@ public partial class PlayerWindow : FluentWindow
         var v = Math.Max(0, Math.Min(100, volume));
         // 权威值先落账: 之后所有路径(滚轮/键盘)都以它为基数, 不依赖原生读回(见 _volumeCache 的说明)
         _volumeCache = v;
+        UpdateVolumeChrome(v);
         // ★ 音量继承: 用户每调一次就落盘, 下一个视频/下一次打开都用它。
         //   放在这里而不是各处调用点 —— SetVolume 是滚轮/键盘/滑块的唯一入口。
         //   SetPlayerVolume 内部有"值没变就不写"的短路, 连滚到同一值不会反复写盘。
@@ -3815,7 +3840,6 @@ public partial class PlayerWindow : FluentWindow
         }
         try { _mp.Volume = v; } catch { return; }
         if (VolumeSlider != null) VolumeSlider.Value = v;
-        UpdateVolumeChrome(v);
         if (showHint) ShowVolumeHint(v);
     }
 
@@ -4256,7 +4280,9 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private bool AnyPlayerPopupOpen
         => (QualityPopup != null && QualityPopup.IsOpen)
-        || (DanmakuAreaPopup != null && DanmakuAreaPopup.IsOpen);
+        || (DanmakuAreaPopup != null && DanmakuAreaPopup.IsOpen)
+        || (SpeedPopup != null && SpeedPopup.IsOpen)
+        || (VolumePopup != null && VolumePopup.IsOpen);
 
     /// <summary>
     /// 视频区手势是否已经由一次 **Down** 正式起步。
@@ -4896,6 +4922,13 @@ public partial class PlayerWindow : FluentWindow
         RestoreKeyboardFocus();
         // 点击控制栏(播放/清晰度/弹幕区域等)不作为视频区手势, 否则会误触发"单击暂停"
         if (ControlBar != null && ControlBar.IsMouseOver) return;
+        if (VolumePopup.IsOpen)
+        {
+            CloseVolumePopup();
+            _videoGestureActive = false;
+            e.Handled = true;
+            return;
+        }
         // 跳过提示条上的点击(「撤回」按钮)同样不算视频区手势 ——
         // 它是覆盖层里除了控制栏之外唯一会吃掉左键的自绘元素, 不挡住就会"点撤回顺带切一次播放/暂停"。
         if (SkipNoticeBorder != null && SkipNoticeBorder.IsMouseOver) return;
@@ -5133,6 +5166,8 @@ public partial class PlayerWindow : FluentWindow
         if (_closing || _mp == null || !_mp.IsPlaying) return false;
         if (QualityPopup != null && QualityPopup.IsOpen) return false;
         if (DanmakuAreaPopup != null && DanmakuAreaPopup.IsOpen) return false;
+        if (VolumePopup != null && VolumePopup.IsOpen) return false;
+        if (SpeedPopup != null && SpeedPopup.IsOpen) return false;
         if (DanmakuInput?.IsKeyboardFocusWithin == true) return false;
         if (_isSeeking) return false;                       // 拖进度条时别藏
         if (!_lastPlayerInputWasTouch && ControlBar.IsMouseOver) return false;
@@ -5523,25 +5558,28 @@ public partial class PlayerWindow : FluentWindow
                 ? durationHintSec
                 : _totalMs > 0 ? (int)(_totalMs / 1000) : 0;
             var list = await Svc.Api.GetDanmakuAsync(cid, durationSec, 60000, cancellation.Token);
-            await Dispatcher.InvokeAsync(() =>
+            var ordered = await Task.Run(() => list.OrderBy(d => d.Time).ToArray(), cancellation.Token);
+            var filtering = await Dispatcher.InvokeAsync(() =>
             {
-                if (_closing) return;
+                if (_closing || cancellation.IsCancellationRequested) return Task.CompletedTask;
                 // ★ 取回来时这条弹幕还必须属于**当前这一段**: 预加载提前之后, 它和"换下一个视频"
                 //   之间的窗口从几百毫秒拉长到了整段取流时间, 旧 cid 的结果会把新视频的弹幕盖掉
                 //   (表现: 新视频弹幕全灭, 或者满屏上一条视频的弹幕)。
-                if (_currentCid != cid || generation != _loadGen) return;
+                if (_currentCid != cid || generation != _loadGen) return Task.CompletedTask;
                 // 原始列表按时间排好序存下来, 供后续"改屏蔽词立即重算"使用
                 _danmakuRaw.Clear();
-                _danmakuRaw.AddRange(list.OrderBy(d => d.Time));
-
-                _danmaku.Clear();
-                _danmaku.AddRange(ApplyDanmakuFilter(_danmakuRaw));
-                WriteLibVLCDebug($"[Danmaku] cid={cid} fetched={_danmakuRaw.Count} visible={_danmaku.Count} enabled={_danmakuOn} types={Svc.Settings.HasVisibleDanmakuTypes}\n");
-                _indexInLib = LowerBound(_danmaku, Math.Max(0, _mp.Time / 1000d));
-                ResetLanes();
+                _danmakuRaw.AddRange(ordered);
+                return RefilterDanmakuAsync(force: true);
             });
+            await filtering;
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex) { WriteLibVLCDebug($"[Danmaku] cid={cid} load failed: {ex.GetType().Name}\n"); }
+        finally
+        {
+            if (ReferenceEquals(_danmakuLoadCancellation, cancellation)) _danmakuLoadCancellation = null;
+            cancellation.Dispose();
+        }
     }
 
     /// <summary>
@@ -5551,18 +5589,7 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void RefilterDanmaku()
     {
-        if (_closing || _danmakuRaw.Count == 0) return;
-
-        var currentSeconds = _mp != null ? _mp.Time / 1000.0 : 0;
-
-        _danmaku.Clear();
-        _danmaku.AddRange(ApplyDanmakuFilter(_danmakuRaw));
-
-        // 重算索引: 让游标落在"当前时间之后的第一条", 这样接下来的弹幕会正常滚出来,
-        // 而不是把已经播过的部分再补一遍。
-        _indexInLib = LowerBound(_danmaku, currentSeconds);
-        ResetLanes();
-        DanmakuCanvas.Children.Clear();
+        _ = RefilterDanmakuAsync();
     }
 
     /// <summary>
@@ -5573,22 +5600,24 @@ public partial class PlayerWindow : FluentWindow
     /// (用户明确写了"不想看到"的词, 优先级高于"要不要自动净化"这个总开关)。
     /// </summary>
     private static IEnumerable<RawDanmaku> ApplyDanmakuFilter(IEnumerable<RawDanmaku> list)
+        => FilterDanmakuSnapshot(list, CaptureDanmakuFilter());
+
+    private static IEnumerable<RawDanmaku> FilterDanmakuSnapshot(IEnumerable<RawDanmaku> list,
+        DanmakuFilterSnapshot options, CancellationToken cancellation = default)
     {
-        var s = Svc.Settings;
-        var smart = s.DanmakuSmartFilter;
-        var rules = DanmakuKeywordFilter.Build(s.DanmakuBlockKeywords);
+        cancellation.ThrowIfCancellationRequested();
+        var smart = options.Smart;
+        var rules = DanmakuKeywordFilter.Build(options.Keywords);
 
         // 类型过滤(滚动/固定/彩色/高级): 四项全开 = 不过滤。
         // ★ 用"是否全开"而不是"是否有任一项关闭"来判断能不能跳过 —— 后者写反过一次,
         //   表现是默认状态下弹幕全没了。
-        var typeFilter = !(s.DanmakuFilterScroll && s.DanmakuFilterFixed
-                           && s.DanmakuFilterColorful && s.DanmakuFilterAdvanced);
+        var typeFilter = !(options.Scroll && options.Fixed && options.Colorful && options.Advanced);
 
         // 三件事都没开就原样返回, 省掉一次完整遍历
         if (!smart && rules == null && !typeFilter) return list;
         return FilterCore(list, smart, rules, typeFilter,
-            s.DanmakuFilterScroll, s.DanmakuFilterFixed,
-            s.DanmakuFilterColorful, s.DanmakuFilterAdvanced);
+            options.Scroll, options.Fixed, options.Colorful, options.Advanced, cancellation);
 
         static IEnumerable<RawDanmaku> FilterCore(
             IEnumerable<RawDanmaku> src,
@@ -5598,11 +5627,12 @@ public partial class PlayerWindow : FluentWindow
             bool allowScroll,
             bool allowFixed,
             bool allowColorful,
-            bool allowAdvanced)
+            bool allowAdvanced, CancellationToken cancellation)
         {
             var seen = new Dictionary<string, int>();
             foreach (var d in src)
             {
+                cancellation.ThrowIfCancellationRequested();
                 if (string.IsNullOrWhiteSpace(d.Text)) continue;
 
                 // 类型过滤: 用户没勾的类型直接丢弃(与智能屏蔽/关键词都解耦)
@@ -5673,11 +5703,20 @@ public partial class PlayerWindow : FluentWindow
             ResetLanes();
         }
 
+        // Bound the work a dense timestamp can put on the UI thread. Retain the full
+        // timeline for seeking, but never replay an old burst over later video frames.
+        var dispatchStart = Stopwatch.GetTimestamp();
+        var dispatched = 0;
         while (_indexInLib < _danmaku.Count && _danmaku[_indexInLib].Time <= currentSeconds)
         {
             var item = _danmaku[_indexInLib];
             AddDanmaku(item.Text, item.Mode, item.Time, item.Color);
             _indexInLib++;
+            if (++dispatched >= 128 || Stopwatch.GetElapsedTime(dispatchStart).TotalMilliseconds >= 2)
+            {
+                _indexInLib = LowerBound(_danmaku, Math.BitIncrement(currentSeconds));
+                break;
+            }
         }
     }
 
@@ -5850,6 +5889,21 @@ public partial class PlayerWindow : FluentWindow
         var currentSeconds = DanmakuClock();
         if (currentSeconds <= 0) currentSeconds = time;   // 还没起播(极少见): 退回这条弹幕自带的时间
 
+        // Reject full lanes before constructing/measuring visual objects. The old path
+        // allocated and measured thousands of elements that were immediately removed.
+        var lane = -1;
+        if (mode is 4 or 5)
+        {
+            var slots = Math.Max(1, (int)(DanmakuCanvas.ActualHeight * _danmakuAreaRatio / _laneHeight));
+            var table = mode == 5 ? _topSlots : _bottomSlots;
+            if (table.Count(x => x.until > currentSeconds) >= slots) return;
+        }
+        else
+        {
+            lane = AllocateRollingLane(1, currentSeconds);
+            if (lane < 0) return;
+        }
+
         // ★★★ 只留文字, 不要长方形底衬(2026-10-07 用户要求"弹幕文字有长方形背景阴影, 移除它")。
         //   原先这里给了 Background = 60% 黑 + CornerRadius=3, 屏幕上每条弹幕都压着一块
         //   深色小方块 —— 用户看到的就是"文字后面有个长方形阴影"。
@@ -5887,7 +5941,7 @@ public partial class PlayerWindow : FluentWindow
         }
         else
         {
-            RenderRolling(border, width, currentSeconds);
+            RenderRolling(border, width, currentSeconds, lane);
         }
     }
 
@@ -5939,9 +5993,8 @@ public partial class PlayerWindow : FluentWindow
     /// ★ 这里**不起任何 WPF 动画**, 只把这条弹幕登记进 <see cref="_flying"/>,
     ///   位置由 <see cref="OnDanmakuRendering"/> 按视频时钟每帧算。理由见 _flying 的说明。
     /// </summary>
-    private void RenderRolling(Border border, double width, double currentSeconds)
+    private void RenderRolling(Border border, double width, double currentSeconds, int lane)
     {
-        var lane = AllocateRollingLane(width, currentSeconds);
         if (lane < 0)
         {
             // 没有可用泳道 —— 宁可丢弃也不叠在一起(这正是"大量重叠"的根治点)
@@ -6004,7 +6057,7 @@ public partial class PlayerWindow : FluentWindow
         // 横向不需要位移, 但 TranslateTransform 仍要挂一个: 逐帧代码按同一套逻辑处理两种弹幕
         var translate = new TranslateTransform(0, 0);
         border.RenderTransform = translate;
-        border.Opacity = 1;
+        border.Opacity = _danmakuOpacity;
 
         TrackFlying(new FlyingDanmaku
         {
@@ -6036,11 +6089,13 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private System.Windows.Threading.DispatcherTimer? _danmakuWatchdog;
     private long _lastDanmakuRenderTicks;
+    private TimeSpan _lastDanmakuRenderingTime = TimeSpan.MinValue;
     private void StartDanmakuClock()
     {
         if (_danmakuClockAttached || _closing) return;
         _danmakuClockAttached = true;
         _lastDanmakuRenderTicks = Stopwatch.GetTimestamp();
+        _lastDanmakuRenderingTime = TimeSpan.MinValue;
         CompositionTarget.Rendering += OnDanmakuRendering;
         StartDanmakuWatchdog();
     }
@@ -6086,6 +6141,11 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void OnDanmakuRendering(object? sender, EventArgs e)
     {
+        if (e is RenderingEventArgs frame)
+        {
+            if (_lastDanmakuRenderingTime == frame.RenderingTime) return;
+            _lastDanmakuRenderingTime = frame.RenderingTime;
+        }
         _lastDanmakuRenderTicks = Stopwatch.GetTimestamp();
         if (_flying.Count == 0)
         {
@@ -6182,6 +6242,9 @@ public partial class PlayerWindow : FluentWindow
     private void OnDanmakuSettingsChanged()
     {
         if (_closing) return;
+        var wasEnabled = _danmakuOn;
+        var previousColorful = _danmakuColorful;
+        var previousArea = _danmakuAreaRatio;
         _danmakuOn = Svc.Settings.DanmakuEnabled;
         // 彩色弹幕开关: 它不影响"哪些弹幕该显示", 只影响颜色 —— 但已上屏的那些是带着
         // 旧颜色的, 所以下面照样要走一遍 RefilterDanmaku 把画布清掉重画。
@@ -6197,7 +6260,8 @@ public partial class PlayerWindow : FluentWindow
         UpdateDanmakuLookTexts();
 
         // 区域占比变了 => 可用泳道数变了, 必须重建泳道, 否则弹幕会溢出到区域外
-        ResetLanes();
+        if (wasEnabled != _danmakuOn || previousColorful != _danmakuColorful ||
+            Math.Abs(previousArea - _danmakuAreaRatio) > .001) ResetLanes();
         if (!_danmakuOn)
         {
             DanmakuCanvas.Children.Clear();
@@ -6253,6 +6317,9 @@ public partial class PlayerWindow : FluentWindow
 
         // 不透明度不需要清屏: 基线字段改完, 在飞的弹幕在下一帧自然按新基线渲染
         // (固定弹幕的 Opacity 每帧被"基线 × 淡出系数"覆写, 所以只改基线就够)。
+        if (opacityChanged && !fontChanged && !speedChanged)
+            foreach (var flying in _flying)
+                if (!flying.IsFixed) flying.Element.Opacity = _danmakuOpacity;
 
         if (fontChanged || speedChanged)
         {
@@ -10183,6 +10250,7 @@ public partial class PlayerWindow : FluentWindow
     {
         _pinchWheelIdle?.Stop();
         _closing = true;
+        CancelDanmakuFiltering();
         DisposeAlternatePlayerLayout();
         // 直播弹幕: 关窗必须断开 WebSocket, 否则后台线程会一直重连
         StopLiveDanmaku();

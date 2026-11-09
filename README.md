@@ -8,9 +8,9 @@
 
 面向 Windows 平板、二合一电脑和触控板用户的哔哩哔哩第三方客户端。用横滑切页、手势调节进度与音量、长按加速和捏合全屏，把浏览与播放串起来；也保留鼠标、键盘的完整操作方式。
 
-作者：**中三** · 公开发布版本：**0.2.12**
+作者：**中三** · 公开发布版本：**0.2.15**
 
-[下载安装](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.2.12/BiliTouch-0.2.12-setup.exe) · [触控与手势](#触控与手势) · [功能改进](#功能改进) · [版本记录](docs/RELEASES.md) · [上游鸣谢](docs/ACKNOWLEDGEMENTS.md)
+[下载安装](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.2.15/BiliTouch-0.2.15-setup.exe) · [触控与手势](#触控与手势) · [功能改进](#功能改进) · [版本记录](docs/RELEASES.md) · [上游鸣谢](docs/ACKNOWLEDGEMENTS.md)
 
 *WPF · .NET 10 · LibVLC · Windows 10 / 11 x64*
 

@@ -41,6 +41,7 @@ public sealed class LiveOverlayRenderer : IDisposable
     private readonly DispatcherTimer _watchdog;
     private long _lastRenderTicks;
     private bool _clockAttached, _disposed;
+    private TimeSpan _lastRenderingTime = TimeSpan.MinValue;
     private double _fontSize = 20, _area = .35, _opacity = .8, _speed = 150;
 
     public LiveOverlayRenderer(Canvas canvas)
@@ -121,6 +122,11 @@ public sealed class LiveOverlayRenderer : IDisposable
 
     private void Tick(object? sender, EventArgs e)
     {
+        if (e is RenderingEventArgs frame)
+        {
+            if (_lastRenderingTime == frame.RenderingTime) return;
+            _lastRenderingTime = frame.RenderingTime;
+        }
         _lastRenderTicks = Stopwatch.GetTimestamp();
         if (_disposed) { StopClock(); return; }
         // 先补预加载队列: 画布一有尺寸就把攒着的弹幕铺上去。
@@ -155,6 +161,7 @@ public sealed class LiveOverlayRenderer : IDisposable
     {
         if (_disposed || _clockAttached) return;
         _clockAttached = true;
+        _lastRenderingTime = TimeSpan.MinValue;
         _lastRenderTicks = Stopwatch.GetTimestamp();
         CompositionTarget.Rendering += Tick;
         _watchdog.Start();

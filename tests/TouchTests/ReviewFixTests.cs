@@ -26,9 +26,13 @@ internal static class ReviewFixTests
             Pump(450); check(!volume.IsOpen, "unhovered volume popup closes after the grace period");
             Call(win,"ApplyPages",new List<VideoPage>{new(){Cid=1,Page=1,Part="第一P"},new(){Cid=2,Page=2,Part="第二P"}});
             var pages = (FrameworkElement)win.FindName("PagesPanel"); var season = (FrameworkElement)win.FindName("SeasonPanel");
-            check(pages.Visibility == Visibility.Visible && VisualTreeHelper.GetParent(pages) == VisualTreeHelper.GetParent(season), "parts are inline beside the season list in the introduction");
-            var parent = (Panel)VisualTreeHelper.GetParent(pages);
-            check(parent.Children.IndexOf(pages) < parent.Children.IndexOf(season), "parts appear above the collection");
+            var section = (FrameworkElement)win.FindName("PagesSection");
+            var intro = (Panel)win.FindName("IntroPanel");
+            check(pages.Visibility == Visibility.Visible && section.Visibility == Visibility.Visible &&
+                pages.IsDescendantOf(section) && section.IsDescendantOf(intro) && season.IsDescendantOf(intro),
+                "parts and collection remain inline in the introduction with the existing collapsible parts section");
+            check(intro.Children.IndexOf(section) >= 0 && intro.Children.IndexOf(section) < intro.Children.IndexOf(season),
+                "the complete parts section appears above the collection");
             Call(win,"CalibrateDanmakuClock",0d); Call(win,"SetDanmakuClockRunning",true);
             Call(win,"AddDanmaku","点播弹幕移动验证",1,0d,(uint)0xffffff); Pump(80);
             var canvas = (Canvas)win.FindName("DanmakuCanvas");

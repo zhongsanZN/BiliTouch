@@ -1,5 +1,6 @@
 using System.Windows;
 using BiliTouch.Views;
+using BiliTouch.Helpers;
 
 /// <summary>
 /// 锁死小窗停靠动画的**手感参数**：
@@ -21,19 +22,20 @@ internal static class WebMorphMotionTests
         var monotonic = true;
         for (var ms = 0.0; ms <= dur; ms += 4)
         {
-            var v = PlayerWindow.WebMorphEase(ms, dur);
+            var v = SpringMotion.Advance(0, 0, 1, ms / 1000, PlayerWindow.WebMorphOmega).Position;
             if (v > max) max = v;
             if (v < prev - 1e-9) monotonic = false;
             prev = v;
         }
         check(max <= 1.0 + 1e-6, $"morph curve never overshoots (max={max:F4}, old curve hit 1.089)");
         check(monotonic, "morph curve is monotonic (no visible bounce)");
-        check(Math.Abs(PlayerWindow.WebMorphEase(0, dur)) < 1e-9, "morph curve starts at 0");
-        check(Math.Abs(PlayerWindow.WebMorphEase(dur, dur) - 1) < 1e-9, "morph curve ends exactly at 1");
+        check(SpringMotion.Advance(0, 0, 1, 0, PlayerWindow.WebMorphOmega).Position == 0, "morph curve starts at 0");
+        check(Math.Abs(SpringMotion.Advance(0, 0, 1, dur / 1000, PlayerWindow.WebMorphOmega).Position - 1) < .00075,
+            "morph reaches the landing tolerance without a forced endpoint jump");
 
         // 收敛性：一半时长时应该已经走完大半（不能"最后一下窜进去"）
-        var half = PlayerWindow.WebMorphEase(dur / 2, dur);
-        check(half > 0.72 && half < 0.95, $"morph curve front-loads naturally: {half:F3} at half time");
+        var half = SpringMotion.Advance(0, 0, 1, dur / 2000, PlayerWindow.WebMorphOmega).Position;
+        check(half > 0.9 && half < 0.98, $"morph curve responds promptly: {half:F3} at half time");
 
         // ---- 2. 反向打断更短 ----
         check(PlayerWindow.WebMorphReverseDurationMs < dur,

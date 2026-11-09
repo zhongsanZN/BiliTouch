@@ -89,6 +89,13 @@ public static class MemoryTrim
     {
         try
         {
+            // Recheck when the delayed trim actually runs: another player may have
+            // opened since the request. Never compact LOH or evict its working set.
+            if (heavy && BiliTouch.Services.VlcCore.HasActivePlayers)
+            {
+                CollectBackground();
+                return;
+            }
             if (heavy) CollectBlocking(releaseWorkingSet);
             else CollectBackground();
         }

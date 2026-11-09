@@ -48,6 +48,7 @@ public partial class LiveRoomWindow : FluentWindow
     private bool _fillWindow;
     private bool _controlsHidden;
     private bool _volumePinned, _volumeHover;
+    private DispatcherTimer? _volumeCloseTimer;
     private DanmakuKeywordFilter? _keywordFilter;
     private int _unread;
     private DateTimeOffset _nextRetry, _startedAt, _metadataAt;
@@ -96,7 +97,15 @@ public partial class LiveRoomWindow : FluentWindow
         InitializeLiveEnhancement();
         Loaded += (_, _) => { StartLiveBackdropGuard(); VideoOverlay.Focus(); };
         SizeChanged += (_, _) => StartLiveBackdropGuard();
+        VolumePopup.Child.MouseEnter += VolumeHoverEnter;
         VolumePopup.Child.MouseLeave += VolumeHoverLeave;
+        VolumePopup.Child.LostMouseCapture += (_, _) => ScheduleVolumeClose();
+        VolumePopup.Closed += (_, _) =>
+        {
+            _volumeCloseTimer?.Stop();
+            _volumeHover = _volumePinned = false;
+            if (!IsClosing) StartControlsCountdown();
+        };
         QualityPopup.PlacementTarget = QualityButton;
         QualityPopup.Opened += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(RightAlignQualityPopup));
     }
@@ -444,18 +453,31 @@ public partial class LiveRoomWindow : FluentWindow
     {
         if (TouchSupport.IsTouchMouse(e)) return;   // 触屏由点击处理, 不要被合成鼠标事件抢
         _volumeHover = true;
+        _volumeCloseTimer?.Stop();
+        ShowControls();
         EnsureVolumePopupAnchor();
         VolumePopup.IsOpen = true;
     }
-    private async void VolumeHoverLeave(object sender, MouseEventArgs e)
+    private void VolumeHoverLeave(object sender, MouseEventArgs e)
     {
         _volumeHover = false;
+        ScheduleVolumeClose();
+    }
+    private void ScheduleVolumeClose()
+    {
         if (IsClosing || _volumePinned || _volumeHover) return;
-        await Task.Delay(350);
-        await Dispatcher.InvokeAsync(() => {
-            if (IsClosing || _volumeHover || _volumePinned || VolumePopup.IsMouseOver || MuteButton.IsMouseOver) return;
-            VolumePopup.IsOpen = false;
-        });
+        _volumeCloseTimer ??= new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(350) };
+        _volumeCloseTimer.Tick -= VolumeCloseTick;
+        _volumeCloseTimer.Tick += VolumeCloseTick;
+        _volumeCloseTimer.Stop();
+        _volumeCloseTimer.Start();
+    }
+    private void VolumeCloseTick(object? sender, EventArgs e)
+    {
+        _volumeCloseTimer?.Stop();
+        if (IsClosing || _volumeHover || _volumePinned || MuteButton.IsMouseOver ||
+            VolumePopup.Child is { IsMouseOver: true } or { IsMouseCaptureWithin: true }) return;
+        VolumePopup.IsOpen = false;
     }
 
     private void EnsureVolumePopupAnchor()
@@ -467,6 +489,7 @@ public partial class LiveRoomWindow : FluentWindow
     private void CloseVolumePopup()
     {
         _volumeHover = false; _volumePinned = false;
+        _volumeCloseTimer?.Stop();
         VolumePopup.IsOpen = false;
     }
 
@@ -495,7 +518,7 @@ public partial class LiveRoomWindow : FluentWindow
         if (hidden) CloseVolumePopup();
         LiveControls.IsHitTestVisible = !hidden;
         VideoOverlay.Cursor = hidden ? Cursors.None : Cursors.Arrow;
-        var fade = new System.Windows.Media.Animation.DoubleAnimation(hidden ? 1 : 0, hidden ? 0 : 1, TimeSpan.FromMilliseconds(hidden ? 180 : 140))
+        var fade = new System.Windows.Media.Animation.DoubleAnimation(LiveControls.Opacity, hidden ? 0 : 1, TimeSpan.FromMilliseconds(hidden ? 180 : 140))
         { FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop };
         LiveControls.BeginAnimation(OpacityProperty, fade);
         LiveControls.Opacity = hidden ? 0 : 1;
@@ -656,6 +679,7 @@ public partial class LiveRoomWindow : FluentWindow
             if (!IsClosing)
             {
                 IsClosing = true; ++_request; ++_streamRequest; _health.Stop(); _controlsTimer.Stop();
+                _volumeCloseTimer?.Stop();
                 _liveBackdropGuard?.Stop();
                 UnhookLiveTrackpad();
                 if (_liveOverlayWindow != null) { UnhookLiveTrackpad(); _liveOverlayWindow.PreviewKeyDown -= OnKeyDown; }

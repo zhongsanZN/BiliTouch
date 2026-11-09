@@ -20,8 +20,8 @@ internal static class BiliTouchTests
     public static void Run(Action<bool, string> check, string artifacts)
     {
         check(UpdateChecker.IsConfigured && UpdateChecker.RepoOwner=="zhongsanZN" && UpdateChecker.RepoName=="BiliTouch", "upstream packages are never offered as BiliTouch updates");
-        try { UpdateChecker.CheckAsync().GetAwaiter().GetResult(); check(false, "unconfigured updater rejects checks"); }
-        catch (InvalidOperationException) { check(true, "unconfigured updater rejects checks without network"); }
+        check(UpdateChecker.ParseVersion("v"+App.AppVersion)==new Version(App.AppVersion),
+            "the configured release tag maps to the application version without an external network dependency");
 
         var filter = FilterService.Instance;
         filter.Clear();

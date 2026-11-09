@@ -146,7 +146,8 @@
                              ★ 面板是独立 Popup(Runtime 侧控制 IsOpen): 不能用 Visibility ——
                                它要浮在视频 HWND 之上, Popup 是唯一的可靠办法。 -->
                         <Popup x:Name="VolumePopup" Placement="Top" StaysOpen="True" AllowsTransparency="True"
-                               PopupAnimation="Fade" VerticalOffset="-8">
+                               PopupAnimation="Fade">
+                            <Border Background="Transparent" Padding="0,0,0,8">
                             <Border Background="#F0202226" CornerRadius="10" Padding="12,10"
                                     BorderBrush="#33FFFFFF" BorderThickness="1" Width="196">
                                 <StackPanel>
@@ -159,6 +160,7 @@
                                             Minimum="0" Maximum="100" ValueChanged="VolumeChanged"
                                             ToolTip="音量" IsMoveToPointEnabled="True" Focusable="False"/>
                                 </StackPanel>
+                            </Border>
                             </Border>
                         </Popup>
 

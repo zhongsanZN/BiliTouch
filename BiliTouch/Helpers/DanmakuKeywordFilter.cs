@@ -23,11 +23,13 @@ public sealed class DanmakuKeywordFilter
 {
     private readonly List<string> _plain;
     private readonly List<Regex> _regex;
+    private readonly int[] _timedOut;
 
     private DanmakuKeywordFilter(List<string> plain, List<Regex> regex)
     {
         _plain = plain;
         _regex = regex;
+        _timedOut = new int[regex.Count];
     }
 
     /// <summary>规则条数(供界面显示"已启用 N 条屏蔽规则")</summary>
@@ -57,10 +59,10 @@ public sealed class DanmakuKeywordFilter
                 if (pattern.Length == 0) continue;
                 try
                 {
-                    // 编译 + 1 秒超时: 防止用户写出灾难性回溯的正则把播放线程卡死
+                    // 单条规则限时；一次超时后，本组规则不再对后续每条弹幕重试。
                     regex.Add(new Regex(pattern,
                         RegexOptions.Compiled | RegexOptions.IgnoreCase,
-                        TimeSpan.FromSeconds(1)));
+                        TimeSpan.FromMilliseconds(50)));
                 }
                 catch (ArgumentException)
                 {
@@ -89,12 +91,16 @@ public sealed class DanmakuKeywordFilter
 
         for (var i = 0; i < _regex.Count; i++)
         {
+            if (Volatile.Read(ref _timedOut[i]) != 0) continue;
             try
             {
                 if (_regex[i].IsMatch(text)) return true;
             }
             catch (RegexMatchTimeoutException)
             {
+                // A pathological rule must not consume the timeout again for every
+                // item in a 60,000-comment timeline. Retry only when rules are rebuilt.
+                Volatile.Write(ref _timedOut[i], 1);
                 // 超时当作不匹配: 宁可漏掉一条弹幕, 也不能让播放卡住
             }
         }

@@ -166,6 +166,8 @@ public static class VlcCore
     /// <summary>注销一个窗口级 MediaPlayer(PlayerWindow 关闭时调用)</summary>
     public static void UnregisterPlayer() => Interlocked.Decrement(ref _livePlayers);
 
+    internal static bool HasActivePlayers => Volatile.Read(ref _livePlayers) > 0;
+
     /// <summary>
     /// 进程退出时释放共享实例。
     /// 只有在"没有任何窗口级 MediaPlayer 存活"时才真正 Dispose:

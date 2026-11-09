@@ -72,6 +72,7 @@ internal static class VmemMorphTests
             var placeholder = (Border)player.FindName("WebVideoPlaceholder");
             var cover = (FrameworkElement)player.FindName("DockTransitionCover");
             var vmem = (FrameworkElement)player.FindName("VmemView");
+            var surface = (FrameworkElement)player.FindName("VideoSurface");
 
             var scales = new List<double>();
             var coverVisibleDuringMorph = false;
@@ -82,7 +83,7 @@ internal static class VmemMorphTests
                 var tracking = Field<bool>(player, "_vmemTracking");
                 if (!animating && !tracking) return;
                 if (tracking && !animating) trackingSamples++;
-                if (vmem.RenderTransform is TransformGroup g && g.Children.Count > 0 && g.Children[0] is ScaleTransform st)
+                if (surface.RenderTransform is TransformGroup g && g.Children.Count > 0 && g.Children[0] is ScaleTransform st)
                     scales.Add(Math.Round(st.ScaleX, 3));
                 if (cover.Visibility == Visibility.Visible) coverVisibleDuringMorph = true;
             };
@@ -104,17 +105,91 @@ internal static class VmemMorphTests
             check(trackingSamples >= 3, $"scroll drives the morph directly (finger-tracking): {trackingSamples} tracking frames");
             check(Math.Abs(Field<double>(player, "_webDockProgress") - 1) < 0.02,
                 $"docked progress settles at 1: {Field<double>(player, "_webDockProgress"):F3}");
-            check(vmem.Clip is RectangleGeometry, "docked video keeps rounded-corner clipping");
+            check(surface.Clip is RectangleGeometry, "docked video keeps rounded-corner clipping");
+            check(ReferenceEquals(((Border)player.FindName("WebDockAnchor")).Background, Brushes.Transparent),
+                "moving video leaves no opaque black placeholder behind in the right rail");
+            SaveWindow(player, artifacts, "vmem-morph-docked.png");
 
-            player.UpdateLayout();
-            var bmp = new RenderTargetBitmap((int)player.ActualWidth, (int)player.ActualHeight, 96, 96, PixelFormats.Pbgra32);
-            bmp.Render(player);
-            var dir = Path.Combine(artifacts, "vmem-morph");
-            Directory.CreateDirectory(dir);
-            var enc = new PngBitmapEncoder();
-            enc.Frames.Add(BitmapFrame.Create(bmp));
-            using (var fs = File.Create(Path.Combine(dir, "vmem-morph-docked.png"))) enc.Save(fs);
-            Console.WriteLine("VMEMMORPH saved " + Path.Combine(dir, "vmem-morph-docked.png"));
+            var stage = (FrameworkElement)player.FindName("PlayerStage");
+            var area = (FrameworkElement)player.FindName("VideoAreaRoot");
+            var danmaku = (FrameworkElement)player.FindName("DanmakuCanvas");
+            var maxError = 0.0;
+            var returnScale = 1.0;
+            var overlap = false;
+            var clipReused = true;
+            var danmakuVisible = true;
+            RectangleGeometry? clipInstance = null;
+            var returnFrames = 0;
+            EventHandler watchReturn = (_, _) =>
+            {
+                var tracking = Field<bool>(player, "_vmemTracking");
+                var animating = Field<bool>(player, "_webRendering");
+                overlap |= tracking && animating;
+                if ((!tracking && !animating) || !Field<bool>(player, "_vmemMorphPrepared")) return;
+                returnFrames++;
+                var p = Field<double>(player, "_webDockProgress");
+                var inline = Field<Rect>(player, "_vmemInlineBounds");
+                var dock = Field<Rect>(player, "_vmemDockBounds");
+                var actual = surface.TransformToAncestor(stage).TransformBounds(new Rect(surface.RenderSize));
+                var expected = new Rect(inline.X + (dock.X - inline.X) * p, inline.Y + (dock.Y - inline.Y) * p,
+                    inline.Width + (dock.Width - inline.Width) * p, inline.Height + (dock.Height - inline.Height) * p);
+                var error = new[] { Math.Abs(actual.X - expected.X), Math.Abs(actual.Y - expected.Y),
+                    Math.Abs(actual.Width - expected.Width), Math.Abs(actual.Height - expected.Height) }.Max();
+                if (error > maxError + .1)
+                    Console.WriteLine($"MORPH GEOMETRY p={p:F5} actual={actual} expected={expected} source={Field<Rect>(player, "_vmemMorphSource")} size={vmem.RenderSize} tracking={tracking} animation={animating}");
+                maxError = Math.Max(maxError, error);
+                if (surface.RenderTransform is TransformGroup g && g.Children[0] is ScaleTransform scale)
+                    returnScale = Math.Max(returnScale, scale.ScaleX);
+                if (surface.Clip is RectangleGeometry clip)
+                {
+                    clipInstance ??= clip;
+                    clipReused &= ReferenceEquals(clipInstance, clip);
+                }
+                danmakuVisible &= danmaku.Visibility == Visibility.Visible;
+            };
+            CompositionTarget.Rendering += watchReturn;
+            try
+            {
+                scroll.ScrollToTop(); Pump(70);
+                SaveWindow(player, artifacts, "vmem-morph-return.png");
+                // Interrupt the return with another dock gesture before it has settled.
+                scroll.ScrollToVerticalOffset(placeholder.ActualHeight + 100); Pump(60);
+                Settle(player);
+                check(Math.Abs(Field<double>(player, "_webDockProgress") - 1) < .001,
+                    "a reversed gesture returns to the dock without competing animation drivers");
+                scroll.ScrollToTop(); Pump(60); Settle(player);
+            }
+            finally { CompositionTarget.Rendering -= watchReturn; }
+            check(returnFrames >= 3 && returnScale > 1.2, $"small-to-large expands the actual video before landing ({returnFrames} frames, max scale {returnScale:F3})");
+            check(maxError < 1.5, $"both directions follow the canonical endpoint rectangles (max error {maxError:F3} DIP)");
+            check(!overlap, "finger tracking and automatic settling never write the same frame");
+            check(clipReused, "rounded clipping reuses one geometry across frames and interruptions");
+            check(danmakuVisible && area.IsDescendantOf(surface) && vmem.IsDescendantOf(surface),
+                "danmaku and brightness layers remain visible and travel with the video");
+            check(surface.Clip == null && Math.Abs(Field<double>(player, "_webDockProgress")) < .001,
+                "returning inline clears rounded clipping and settles at zero");
+            check(!Field<bool>(player, "_webFrameAttached"), "settled motion releases its static composition subscription");
+
+            scroll.ScrollToVerticalOffset(placeholder.ActualHeight + 100); Pump(60);
+            player.Width = 1180; Pump(80); Settle(player);
+            check(surface.ActualWidth > 0 && surface.ActualHeight > 0 && !Field<bool>(player, "_webFrameAttached"),
+                "resizing during motion commits a valid rectangle and releases the clock");
+            scroll.ScrollToVerticalOffset(scroll.ScrollableHeight); Pump(60); Settle(player);
+            Svc.Settings.SetUiScalePercent(150); Pump(400); Settle(player);
+            check(surface.Clip is RectangleGeometry radius && Math.Abs(radius.Rect.Width - surface.ActualWidth) < .1 &&
+                Math.Abs(radius.Rect.Height - surface.ActualHeight) < .1,
+                "docked clipping follows actual video dimensions after UI scaling");
+            SaveWindow(player, artifacts, "vmem-morph-scaled.png");
+            scroll.ScrollToTop(); Pump(60);
+            player.WindowState = WindowState.Minimized; Pump(100);
+            check(!Field<bool>(player, "_webFrameAttached"), "minimizing mid-gesture releases the composition clock");
+            player.WindowState = WindowState.Normal; Pump(400);
+            check(surface.ActualWidth > 0 && surface.ActualHeight > 0,
+                "restoring a minimized transition keeps a nonzero video surface");
+            Svc.Settings.SetWebPlayerLayout(false); Pump(400);
+            check(surface.Clip == null && !Field<bool>(player, "_webFrameAttached"),
+                "leaving web layout restores full-stage presentation and stops motion");
+
             Console.WriteLine($"VMEMMORPH scales={string.Join(",", scales.Distinct().Take(12))}");
         }
         catch (Exception ex)
@@ -129,6 +204,15 @@ internal static class VmemMorphTests
             Svc.Settings.SetWebPlayerLayout(oldLayout);
             Svc.Settings.SetUiScalePercent(oldScale);
         }
+    }
+
+    private static void Settle(PlayerWindow player)
+    {
+        var deadline = Environment.TickCount64 + 8000;
+        while ((Field<bool>(player, "_vmemTracking") || Field<bool>(player, "_webRendering")) && Environment.TickCount64 < deadline)
+            Pump(30);
+        if (Field<bool>(player, "_vmemTracking") || Field<bool>(player, "_webRendering"))
+            throw new TimeoutException("vmem morph did not release its animation clock");
     }
 
     private static void SaveWindow(Window w, string artifacts, string name)

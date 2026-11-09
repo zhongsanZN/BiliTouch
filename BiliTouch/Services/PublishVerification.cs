@@ -37,6 +37,9 @@ internal static class PublishVerification
                 results["trayIconWidth"]=icon.Width;
             }
             Svc.Theme.Initialize(); Svc.Settings.SetPlayerVolume(0);
+            var verifyVmem = args.Contains("--vmem");
+            Svc.Settings.SetVmemRenderer(verifyVmem);
+            Svc.Settings.SetWebPlayerLayout(args.Contains("--web-layout"));
             var uiAssets=new[]{"0395","0397","1229","1273","1275","1316","1325","1327","1333","1334","1335","1336","1420","1490","2030","2031","2032","2114","2184","2193","2206","2208","2211","2212","2213","2214","2684","gramophone"};
             foreach(var asset in uiAssets)
                 if(BiliTouch.Helpers.SkinService.Instance.Image("ui_"+asset).PixelWidth<=0)throw new InvalidOperationException("Published UI artwork missing: "+asset);
@@ -58,6 +61,16 @@ internal static class PublishVerification
             if(first<0) throw new InvalidOperationException("Published player did not start decoding: "+player.State);
             await Task.Delay(650); var second=player.Time;
             if(second<=first+100) throw new InvalidOperationException("Published player did not advance");
+            if (verifyVmem)
+            {
+                var vmem = (BiliTouch.Helpers.VmemVideoView)window.FindName("VmemView");
+                if (vmem.PresentedFrames < 5 || vmem.Source == null)
+                    throw new InvalidOperationException("Published composited video did not upload live frames");
+                results["vmemPresentedFrames"] = vmem.PresentedFrames;
+            }
+            results["webLayoutMounted"] = typeof(PlayerWindow).GetField("_webLayoutMounted", BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(window);
+            if (args.Contains("--web-layout") && !Equals(results["webLayoutMounted"], true))
+                throw new InvalidOperationException("Published web layout did not mount");
             results["firstMs"]=first;results["secondMs"]=second;results["videoWidth"]=player.Media?.Tracks.FirstOrDefault(t=>t.TrackType==LibVLCSharp.Shared.TrackType.Video).Data.Video.Width;
             var core=(LibVLCSharp.Shared.LibVLC)typeof(PlayerWindow).GetField("_libVLC",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(window)!;
             results["enhancementRequested"]=EnhancementProfile.Current.Enabled;results["enhancementStatus"]=VideoEnhancement.Status(core);

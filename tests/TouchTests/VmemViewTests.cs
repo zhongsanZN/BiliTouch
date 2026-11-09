@@ -43,9 +43,9 @@ internal static class VmemViewTests
         Dispatcher.PushFrame(frame);
     }
 
-    public static void Run(Action<bool, string> check, string artifacts)
+    public static void Run(Action<bool, string> check, string artifacts, string? clipPath = null, double sourceFps = 0)
     {
-        var clip = FindClip();
+        var clip = clipPath ?? FindClip();
         if (clip == null) { check(true, "vmem view probe skipped without a local clip"); return; }
 
         var window = new Window { Width = 900, Height = 560, WindowStyle = WindowStyle.None,
@@ -78,12 +78,16 @@ internal static class VmemViewTests
             check(size.Width > 0 && size.Height > 0, $"format negotiated: {size.Width}x{size.Height}");
 
             // 帧率：按**片源本身**的帧率判定，别拿 60 硬套 30fps 的夹具
-            var srcFps = clip.Contains("motion", StringComparison.OrdinalIgnoreCase) ? 60.0 : 30.0;
+            var srcFps = sourceFps > 0 ? sourceFps : clip.Contains("motion", StringComparison.OrdinalIgnoreCase) ? 60.0 : 30.0;
             var f0 = view.DeliveredFrames;
+            var p0 = view.PresentedFrames;
             Pump(1500);
             var fps = (view.DeliveredFrames - f0) / 1.5;
+            var uploadFps = (view.PresentedFrames - p0) / 1.5;
             check(fps >= srcFps * 0.85,
                 $"vmem keeps up with the source: {fps:F1} fps vs source {srcFps:F1} fps");
+            check(uploadFps >= srcFps * .8,
+                $"WPF bitmap uploads keep up with decoded frames: {uploadFps:F1}/s (coalesced={view.CoalescedFrames})");
 
             // 画面确实在变：连续采两次像素哈希，必须不同
             var hash1 = HashView(view, out var w, out var h);

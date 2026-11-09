@@ -59,7 +59,9 @@ public partial class MainWindow : FluentWindow
         PartitionCol2.ItemsSource = PartitionCatalog.Columns[2];
 
         Loaded += OnLoaded;
-        PreviewMouseMove+=(_,e)=>{var p=e.GetPosition(SharedHeaderSurface);bool inside=p.Y>=0 && p.Y<=SharedHeaderSurface.ActualHeight && p.X>=0 && p.X<=SharedHeaderSurface.ActualWidth;if(inside || _headerPointerInside)RepaintHeader();_headerPointerInside=inside;};
+        // The artwork does not depend on cursor coordinates. Preserve enter/leave
+        // recovery without rebuilding its gradients for every mouse movement.
+        PreviewMouseMove+=(_,e)=>{var p=e.GetPosition(SharedHeaderSurface);bool inside=p.Y>=0 && p.Y<=SharedHeaderSurface.ActualHeight && p.X>=0 && p.X<=SharedHeaderSurface.ActualWidth;if(inside != _headerPointerInside)RepaintHeader();_headerPointerInside=inside;};
     }
 
     private bool _headerPointerInside,_headerRepaintQueued;

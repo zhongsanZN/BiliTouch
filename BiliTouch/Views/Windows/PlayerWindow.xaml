@@ -1144,7 +1144,8 @@
                                                        FontSize="14" Foreground="White"/></helpers:SkinGlyph>
                                         </Button>
                                         <Popup x:Name="VolumePopup" Placement="Top" StaysOpen="True"
-                                               AllowsTransparency="True" PopupAnimation="Fade" VerticalOffset="-10">
+                                               AllowsTransparency="True" PopupAnimation="Fade">
+                                            <Border Background="Transparent" Padding="0,0,0,10">
                                             <Border Background="#F0202226" CornerRadius="10" Padding="12,10"
                                                     BorderBrush="#33FFFFFF" BorderThickness="1" Width="196">
                                                 <StackPanel>
@@ -1157,6 +1158,7 @@
                                                             Minimum="0" Maximum="100" Value="80"
                                                             ValueChanged="OnVolumeChanged" />
                                                 </StackPanel>
+                                            </Border>
                                             </Border>
                                         </Popup>
 
