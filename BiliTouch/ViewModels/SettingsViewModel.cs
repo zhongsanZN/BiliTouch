@@ -712,6 +712,29 @@ public partial class SettingsViewModel : ObservableObject
         ? "允许 WPF 使用硬件加速；改完需重启应用生效"
         : "WPF 使用 CPU 软件渲染；改完需重启应用生效";
 
+    // ----------------- 实验性：vmem 渲染 -----------------
+
+    /// <summary>
+    /// vmem 自定义输出开关。开了之后视频变成普通 WPF 元素，小窗动画才能做
+    /// 「画面本体连续变形」（原来 HwndHost 只能拿假卡片盖着）。
+    /// ★ 只对**下一个打开的播放器窗口**生效，不用重启应用。
+    /// </summary>
+    public bool UseVmemRenderer
+    {
+        get => Svc.Settings.UseVmemRenderer;
+        set
+        {
+            if (value == Svc.Settings.UseVmemRenderer) return;
+            Svc.Settings.SetVmemRenderer(value);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(UseVmemRendererHint));
+        }
+    }
+
+    public string UseVmemRendererHint => Svc.Settings.UseVmemRenderer
+        ? "已开启：视频由 WPF 合成，可圆角/阴影/连续变形；4K 片源可能掉帧，卡就关掉"
+        : "关闭：走原生 VideoView（硬解最优）。开启后重开播放器生效，用于小窗动效预览";
+
     // ----------------- 默认画质 -----------------
 
     /// <summary>默认画质下拉框的显示项(顺序即 QualityPreference.All 的顺序)</summary>

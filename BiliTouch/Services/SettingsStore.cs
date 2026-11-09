@@ -321,6 +321,23 @@ public class SettingsStore
     public bool HardwareAccelerationEnabled { get; set; } = true;
 
     /// <summary>
+    /// 实验性：vmem 自定义输出（视频变成普通 WPF 元素）。
+    /// ★ 默认 关 —— 保守走原来的 VideoView；用户想试「画面本体变形」再自己开。
+    /// ★ 与 Models.AppSettings.UseVmemRenderer 是读写契约, 两处必须一致;
+    ///   那边可空, 缺字段(null)在这里归一成 false。
+    /// ★ 只影响**下一个打开的播放器窗口**(视频宿主在窗口构造时定死), 不用重启整个应用。
+    /// </summary>
+    public bool UseVmemRenderer { get; set; }
+
+    /// <summary>改 vmem 渲染开关并落盘。</summary>
+    public void SetVmemRenderer(bool value)
+    {
+        if (UseVmemRenderer == value) return;
+        UseVmemRenderer = value;
+        Save();
+    }
+
+    /// <summary>
     /// 改 GPU 硬件加速并落盘。
     /// ★ 不广播事件: 渲染模式改不了当前进程, 广播只会让界面假装已经生效。
     ///   设置页的提示文案负责告诉用户"重启后生效"。
@@ -628,6 +645,9 @@ public class SettingsStore
         //   升级后全体老用户静默掉进软件渲染, 那是比崩溃更难查的性能回归。
         HardwareAccelerationEnabled = s.HardwareAccelerationEnabled ?? true;
 
+        // ★ vmem 渲染(实验): 老配置缺字段 ⇒ null ⇒ 按"关"处理(保守)。
+        UseVmemRenderer = s.UseVmemRenderer ?? false;
+
         // ★ CdnManualId 要校验: 老配置里的 Id 可能已从候选表下线,
         //   留着它会让"手动模式"指到一条不存在的线路(见 CdnService.SelectUrlAsync)。
         CdnMode = s.CdnMode;
@@ -837,6 +857,7 @@ public class SettingsStore
         SkippedVersion = SkippedVersion,
         NoLogin1080P = NoLogin1080P,
         HardwareAccelerationEnabled = HardwareAccelerationEnabled,
+        UseVmemRenderer = UseVmemRenderer,
         CdnMode = CdnMode,
         CdnManualId = CdnManualId,
         BlockPcdn = BlockPcdn,

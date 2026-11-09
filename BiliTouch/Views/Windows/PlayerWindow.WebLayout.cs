@@ -538,7 +538,7 @@ public partial class PlayerWindow
     //   原因见 SetWebDockTarget 上方注释。
     private void StopWebVideoAnimation()
     {
-        if(!_closing){VideoView.Visibility=Visibility.Visible;VideoSurface.Background=Brushes.Black;}
+        if(!_closing){SetVideoHostVisible(true);VideoSurface.Background=Brushes.Black;}
         if (_webRendering) { CompositionTarget.Rendering -= OnWebVideoFrame; _webRendering = false; }
         if (DockTransitionCover != null) DockTransitionCover.Visibility = Visibility.Collapsed;
         // 收尾必须让原生窗口落在最终几何上: 过渡期间它一直没动, 只有这里会动。

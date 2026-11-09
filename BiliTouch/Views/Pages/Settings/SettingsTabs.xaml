@@ -572,6 +572,24 @@
                     </Grid>
                     <Border Style="{StaticResource SettingsRowDivider}" />
 
+                    <!-- 实验性 vmem 渲染：把视频变成普通 WPF 元素，才能圆角/阴影/连续变形。
+                         默认关；4K 片源每帧字节数是 1080p 的 4 倍，可能掉帧。 -->
+                    <Grid Style="{StaticResource SettingsRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                            <TextBlock Text="实验性：WPF 合成视频（vmem）" Style="{StaticResource SettingsRowTitleStyle}" />
+                            <TextBlock Text="{Binding UseVmemRendererHint}"
+                                       Style="{StaticResource SettingsRowDescStyle}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
+                                  VerticalAlignment="Center"
+                                  IsChecked="{Binding UseVmemRenderer, Mode=TwoWay}" />
+                    </Grid>
+                    <Border Style="{StaticResource SettingsRowDivider}" />
+
                     <!-- CDN 线路: 自动测速挑最快 / 手动指定一家 / 跟随服务端。
                          实测各家 CDN 同一时刻吞吐能差 4 倍以上, 且排名随网络/地区/时段变化,
                          所以默认自动。逻辑与实测依据见 Services/CdnService.cs。 -->

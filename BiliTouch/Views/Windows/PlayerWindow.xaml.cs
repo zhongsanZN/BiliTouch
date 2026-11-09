@@ -50,6 +50,8 @@ public partial class PlayerWindow : FluentWindow
 
     private LibVLC _libVLC = null!;
     private MediaPlayer _mp = null!;
+    /// <summary>实验性 vmem 模式：视频是普通 WPF 元素（VmemView），不是 HwndHost。</summary>
+    private bool _vmemMode;
     private readonly DispatcherTimer _progressTimer;
     private string _currentBvid = "";
     /// <summary>当前播的是离线缓存里的本地文件(没有 aid/cid, 也没有在线互动)</summary>
@@ -639,9 +641,15 @@ public partial class PlayerWindow : FluentWindow
         // 反复 new/Dispose 原生库会引发 Windows 级访问违例弹窗:
         //   "Exception Processing Message 0xc0000005 - Unexpected parameters"
         // 窗口只负责挂载属于自己的 MediaPlayer, 开关窗口不再触碰原生库生命周期。
+        //
+        // ★ 实验性 vmem 模式：视频宿主换成普通 WPF Image（VmemVideoView），
+        //   这样画面才能圆角/阴影/逐帧连续变形。--vout=vmem 是实例级选项，
+        //   所以必须用专用的 VlcCore.GetVmem()，不能污染共享实例。
+        _vmemMode = Svc.Settings.UseVmemRenderer;
+        if (_vmemMode && !MountVmemSurface()) _vmemMode = false;
         try
         {
-            _libVLC = VlcCore.Get();
+            _libVLC = _vmemMode ? VlcCore.GetVmem() : VlcCore.Get();
         }
         catch (Exception ex)
         {
@@ -1825,11 +1833,61 @@ public partial class PlayerWindow : FluentWindow
     ///
     /// 之前 6 个播放点全都是 `_mp.Play(new Media(...))` 直接把 Media 丢掉, 一个都没释放。
     /// </summary>
+    /// <summary>
+    /// 切到 vmem 宿主：把 `VideoAreaRoot` 从 `VideoView.Content` 搬回普通 WPF 树。
+    ///
+    /// ★ 为什么能搬：`VideoAreaRoot` 之所以必须待在 `VideoView.Content` 里，是因为
+    ///   `VideoView` 是 `HwndHost`（airspace）—— 普通兄弟元素会被原生视频窗口盖住。
+    ///   vmem 模式下没有原生窗口，屏幕上是普通 `Image`，所以它可以直接当兄弟盖上去。
+    /// ★ 失败就返回 false，由调用方退回 VideoView 模式（不能出现"内核是 vmem、
+    ///   宿主还是 VideoView"的半吊子状态，那样会黑屏）。
+    /// </summary>
+    private bool MountVmemSurface()
+    {
+        try
+        {
+            var areaRoot = VideoAreaRoot;
+            if (areaRoot == null)
+            {
+                WriteLibVLCDebug("[Vmem] mount skipped: VideoAreaRoot is null\n");
+                return false;
+            }
+            // 从当前父级摘下：正常是 VideoView.Content（ContentControl），
+            // 若库已经把它搬进浮层窗口的树里，就按实际父级类型处理。
+            if (areaRoot.Parent is Panel panel) panel.Children.Remove(areaRoot);
+            else if (areaRoot.Parent is ContentControl owner) owner.Content = null;
+            else if (areaRoot.Parent is Decorator decorator) decorator.Child = null;
+            try { VideoView.Content = null; } catch { }
+            WriteLibVLCDebug($"[Vmem] areaRoot.Parent was {areaRoot.Parent?.GetType().Name ?? "null"}\n");
+
+            VideoView.Visibility = Visibility.Collapsed;
+            Panel.SetZIndex(VmemView, 0);
+            Panel.SetZIndex(areaRoot, 10);
+            VideoSurface.Children.Insert(1, areaRoot);   // 0 = VmemView
+            VmemView.Visibility = Visibility.Visible;
+            WriteLibVLCDebug("[Vmem] mounted: video host = VmemVideoView\n");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            WriteLibVLCDebug($"[Vmem] mount failed: {ex.GetType().Name} {ex.Message}\n");
+            return false;
+        }
+    }
+
+    /// <summary>视频宿主显隐：vmem 模式控 VmemView，否则控 VideoView。</summary>
+    private void SetVideoHostVisible(bool visible)
+    {
+        if (_vmemMode) VmemView.Visibility = visible ? Visibility.Visible : Visibility.Hidden;
+        else VideoView.Visibility = visible ? Visibility.Visible : Visibility.Hidden;
+    }
+
     private void CreateNativeVideoPlayer()
     {
         var player = new MediaPlayer(_libVLC);
         _mp = player;
-        VideoView.MediaPlayer = _mp;
+        if (_vmemMode) VmemView.Attach(player);   // ★ vmem 回调必须在 Play 之前挂好
+        else VideoView.MediaPlayer = _mp;
 
         _mp.TimeChanged += OnTimeChanged;
         _mp.LengthChanged += OnLengthChanged;
@@ -9749,15 +9807,20 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void DetachVideoOverlay()
     {
-        try { VideoView.Content = null; } catch { }
-
-        try
+        // ★ vmem 模式下 VideoAreaRoot 已经搬到普通 WPF 树里了，这里**不能**清
+        //   VideoView.Content（那本来就是 null，清了也无害，但别误伤已搬走的元素）。
+        if (!_vmemMode)
         {
-            var prop = typeof(VideoView).GetProperty("ForegroundWindow",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-            if (prop?.GetValue(VideoView) is Window fw) fw.Hide();
+            try { VideoView.Content = null; } catch { }
+
+            try
+            {
+                var prop = typeof(VideoView).GetProperty("ForegroundWindow",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                if (prop?.GetValue(VideoView) is Window fw) fw.Hide();
+            }
+            catch { /* 拿不到就算了, 内容已清空, 顶多剩下一个全透明的空窗口 */ }
         }
-        catch { /* 拿不到就算了, 内容已清空, 顶多剩下一个全透明的空窗口 */ }
     }
 
     /// <summary>
@@ -9933,6 +9996,8 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private IntPtr FindVideoStaticWindow()
     {
+        // vmem 模式下没有 libvlc 的 d3d11 子窗口，也就没有那个会露白底的 `Static`。
+        if (_vmemMode) return IntPtr.Zero;
         try
         {
             var vv = VideoView;
@@ -10087,10 +10152,19 @@ public partial class PlayerWindow : FluentWindow
         }
 
         // 回到 UI 线程解绑(VideoView 是 DependencyObject, 只能在 UI 线程操作)
-        try { VideoView.MediaPlayer = null; } catch { }
-        try { VideoView.Content = null; } catch { }
-        // 释放 VideoView 自己持有的原生子窗口 + ForegroundWindow
-        try { VideoView.Dispose(); } catch { }
+        if (_vmemMode)
+        {
+            // ★ vmem：先让宿主停止接收回调，再释放 MediaPlayer（顺序不能反，
+            //   反了就是"回调读已释放缓冲"的 0xC0000005 —— 已在 --vmem-view 里踩过）。
+            try { VmemView.Dispose(); } catch { }
+        }
+        else
+        {
+            try { VideoView.MediaPlayer = null; } catch { }
+            try { VideoView.Content = null; } catch { }
+            // 释放 VideoView 自己持有的原生子窗口 + ForegroundWindow
+            try { VideoView.Dispose(); } catch { }
+        }
 
         // MediaPlayer 的 Dispose 同样可能有内部等待, 也放后台
         if (mp != null)
@@ -10125,7 +10199,8 @@ public partial class PlayerWindow : FluentWindow
         {
             try { _mp?.Stop(); } catch { }
             try { _mp?.Dispose(); } catch { }
-            try { VideoView?.Dispose(); } catch { }
+            if (_vmemMode) { try { VmemView?.Dispose(); } catch { } }
+            else { try { VideoView?.Dispose(); } catch { } }
         }
         // 注意: 绝不释放 _libVLC —— 它是进程级共享实例(见 VlcCore),
         // 由 App.OnExit 统一释放。窗口级别的反复创建/销毁不会再触碰原生库生命周期。

@@ -749,3 +749,58 @@ libvlccore，代价只是多一份插件状态。
   live-room 50、player-video-load 1）。
 - 下一轮：把 PlayerWindow 的视频宿主换成 VmemVideoView（先做「网页版布局」这一条路径），
   浮层控件改挂普通 WPF 树，逐项回归。
+---
+
+## 第九轮：vmem 接进真实 PlayerWindow（设置开关 + 浮层搬迁 + 回归）
+
+上一轮只做了控件，这一轮把它接到真实播放器里。**默认关闭**，设置页可开。
+
+### 1. 开关
+
+- Models.AppSettings.UseVmemRenderer（可空，缺字段按 false）+ SettingsStore.UseVmemRenderer
+- 设置页「GPU 硬件加速」下面新增一行：**实验性：WPF 合成视频（vmem）**
+- 只影响**下一个打开的播放器窗口**，不用重启整个应用
+
+### 2. 关键改动：把浮层搬回普通 WPF 树
+
+VideoAreaRoot（弹幕 + 控制栏 + 手势层 + Loading/EOF 遮罩）原本必须待在
+VideoView.Content 里，因为 VideoView 是 HwndHost（airspace）——普通兄弟元素会被
+原生视频窗口盖住。vmem 模式下没有原生窗口，屏幕上是普通 Image，所以它可以直接当兄弟盖上去。
+
+MountVmemSurface() 做三件事：从原父级摘下 VideoAreaRoot → VideoView.Visibility=Collapsed
+→ VideoSurface.Children.Insert(1, areaRoot) 并设 ZIndex=10。失败（拿不到元素）就整体回退
+到 VideoView 模式 —— 不允许出现"内核是 vmem、宿主还是 VideoView"的半吊子状态，那会黑屏。
+
+其余触点：
+- CreateNativeVideoPlayer：vmem 下 VmemView.Attach(player)，否则 VideoView.MediaPlayer = _mp
+- DetachVideoOverlay / TeardownAndCloseAsync / OnClosed 兜底：vmem 下改走 VmemView.Dispose()，
+  且**先停宿主再释放 MediaPlayer**（反了就是上轮踩过的"回调读已释放缓冲"崩溃）
+- FindVideoStaticWindow：vmem 下直接返回 0（没有 d3d11 子窗口，也就没有白底 Static）
+- StopWebVideoAnimation 里的 VideoView.Visibility 改走 SetVideoHostVisible()
+
+### 3. 验证（--vmem-player，真实 PlayerWindow，7 项全过）
+
+| 断言 | 结果 |
+|---|---|
+| 窗口以 vmem 模式构建 | 通过 |
+| VmemVideoView 宿主可见 | 通过 |
+| VideoAreaRoot 已搬进普通 WPF 树 | 通过 |
+| 弹幕层仍在视频区内 | 通过 |
+| 控制栏可见 | 通过 |
+| vmem 在真实窗口里持续交付帧 | **71 帧** |
+| **整窗可被 RenderTargetBitmap 截到** | 6413/8013 采样非背景 |
+
+截图 rtifacts/touch-tests/vmem-player/vmem-player.png：视频 + 控制栏 + 右侧信息栏
+全部正常，而且**整张图是 WPF 渲染出来的**——这在 HwndHost 下永远截不到。
+
+### 4. 现状
+
+- 十项回归 **178 项全绿**（vmem-player 7、vmem-view 6、web-morph-motion 11、enhancement-vsr 9、
+  danmaku-recovery 13、web-player-layout 33、web-dock-flicker 7、web-controls-unread 41、
+  live-room 50、player-video-load 1），默认（非 vmem）路径完全没变。
+- **还没做**：vmem 模式下的小窗停靠动画仍然是"玻璃片"那一套 —— 因为 DockTransitionCover
+  的逻辑还没改成"直接变换 VmemView"。现在画面已经是普通 WPF 元素了，
+  下一步只要把停靠动画从"遮罩收缩"换成"VmemView 的 RenderTransform + 圆角裁剪"，
+  就能得到第八轮原型里那种**画面本体变形**。
+- 4K 风险仍在：vmem 走软件解码 + BGRA 转换，1080p60 实测 59.8fps/1ms 每帧，
+  4K 每帧字节数是 4 倍，默认关着就是为这个。

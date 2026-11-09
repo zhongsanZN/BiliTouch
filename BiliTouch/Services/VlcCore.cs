@@ -179,6 +179,7 @@ public static class VlcCore
             if (Volatile.Read(ref _livePlayers) > 0) return;
             foreach(var core in EnhancementInstances.Values){try{core.Dispose();}catch{}}
             EnhancementInstances.Clear();
+            if (_vmemInstance != null) { try { _vmemInstance.Dispose(); } catch { } _vmemInstance = null; }
             if (_instance == null) return;
             try { _instance.Dispose(); } catch { /* 退出阶段忽略 */ }
             _instance = null;

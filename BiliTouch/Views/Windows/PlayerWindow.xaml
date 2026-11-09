@@ -800,6 +800,9 @@
                 <Grid x:Name="WebCommentChrome" />
             </Grid>
             <Grid x:Name="VideoSurface" Grid.Column="0" Background="Black">
+                <!-- 实验性 vmem 输出宿主（默认 Collapsed）。开启后 VideoView 被藏掉，
+                     解码帧由这个 Image 画成普通 WPF 元素，VideoAreaRoot 搬到它上面。 -->
+                <helpers:VmemVideoView x:Name="VmemView" Visibility="Collapsed" IsHitTestVisible="False" />
                 <vlc:VideoView x:Name="VideoView">
                     <!-- ★★ 底色必须是 **#01000000(近透明, 不是纯黑!)** —— 2026-10-13 的教训:
                          我曾把它改成 Background="Black" 想盖住 letterbox 白底, 结果**整个画面全黑**
