@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -644,7 +644,15 @@ public class FluentWindow : Window
             // 这里转成 OnHorizontalWheel 广播给子类(首页/搜索页据此切 tab);
             // 不设 handled, 有横向滚动条的内容仍由 WPF 正常处理。
             var delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+            // 物理鼠标侧滚轮(IMDT_MOUSE=0x02)向前/上滚发 +120、向后/下滚发 -120,
+            // 与精确触控板自然滚动(左滑发正 delta → 切向右侧页)符号相反, 按输入源自动校准方向。
+            if (IsPhysicalMouseInput()) delta = (short)(-delta);
             OnHorizontalWheel(delta);
+        }
+        else if (msg == WM_MOUSEWHEEL && (wParam.ToInt64() & MK_SHIFT) != 0)
+        {
+            var delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+            OnHorizontalWheel((short)(-delta));
         }
         else if (msg == WM_SYSCOMMAND)
         {
@@ -662,6 +670,14 @@ public class FluentWindow : Window
 
     /// <summary>触控板横向双指滑动(水平滚轮)。WPF 的 MouseWheel 收不到它, 只能在原生层接。</summary>
     private const int WM_MOUSEHWHEEL = 0x020E;
+    private const int WM_MOUSEWHEEL = 0x020A;
+    private const int MK_SHIFT = 0x0004;
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RawInputMessageSource { public uint DeviceType, OriginId; }
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCurrentInputMessageSource(out RawInputMessageSource source);
+    private static bool IsPhysicalMouseInput() => GetCurrentInputMessageSource(out var src) && src.DeviceType == 0x02;
 
     /// <summary>
     /// 收到触控板/倾斜滚轮的横向滚动时调用(单位同 wheel delta: 每格 120)。

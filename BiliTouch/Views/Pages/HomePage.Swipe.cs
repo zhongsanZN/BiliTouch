@@ -2,6 +2,7 @@ using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -61,6 +62,11 @@ public partial class HomePage
     /// <summary>本次手势是否已经冻结过一次纵向滚动</summary>
     private bool _verticalFrozenOnce;
 
+    /// <summary>双页并排中间态：横滑或触控板跟手期间临时拉进视口并排显示的相邻页</summary>
+    private ScrollViewer? _peerScroll;
+    private int _peerIndex = -1;
+    private TouchDevice? _pendingSwipeTouch;
+
     /// <summary>吸附动画时长。</summary>
     private const int SwipeSnapMs = 180;
 
@@ -69,10 +75,59 @@ public partial class HomePage
         TabHost.PreviewTouchDown += OnSwipeTouchDown;
         TabHost.PreviewTouchMove += OnSwipeTouchMove;
         TabHost.PreviewTouchUp += OnSwipeTouchUp;
+        TabHost.LostTouchCapture += OnSwipeLostTouchCapture;
         TabHost.PreviewStylusDown += OnSwipeStylusDown;
         TabHost.PreviewStylusMove += OnSwipeStylusMove;
         TabHost.PreviewStylusUp += OnSwipeStylusUp;
         TabHost.PreviewMouseLeftButtonUp += OnSwipeMouseUp;
+    }
+
+    private static HomeTabKind KindOfIndex(int index) => index switch
+    {
+        1 => HomeTabKind.Popular,
+        2 => HomeTabKind.Ranking,
+        3 => HomeTabKind.Live,
+        4 => HomeTabKind.Bangumi,
+        _ => HomeTabKind.Recommend,
+    };
+
+    private static TranslateTransform PeerTrans(UIElement element)
+    {
+        if (element.RenderTransform is TranslateTransform t) return t;
+        t = new TranslateTransform();
+        element.RenderTransform = t;
+        return t;
+    }
+
+    private void EnsurePeerVisible(int targetIndex, double offsetX)
+    {
+        if (targetIndex is < 0 or >= 5 || targetIndex == CurrentTabIndex)
+        {
+            ClearPeerPreview();
+            return;
+        }
+        var kind = KindOfIndex(targetIndex);
+        EnsureFill(kind);
+        var peer = ScrollOf(kind);
+        if (peer == null) return;
+        if (!ReferenceEquals(_peerScroll, peer))
+        {
+            ClearPeerPreview();
+            _peerScroll = peer;
+            _peerIndex = targetIndex;
+            peer.SetCurrentValue(VisibilityProperty, Visibility.Visible);
+        }
+        PeerTrans(peer).X = offsetX;
+    }
+
+    private void ClearPeerPreview()
+    {
+        if (_peerScroll == null) return;
+        var peer = _peerScroll;
+        _peerScroll = null;
+        _peerIndex = -1;
+        PeerTrans(peer).X = 0;
+        BindingOperations.GetBindingExpression(peer, VisibilityProperty)?.UpdateTarget();
     }
 
     /// <summary>TabHost 的平移变换(懒建)。</summary>
@@ -136,6 +191,11 @@ public partial class HomePage
                 UnfreezeVertical();
                 return false;
             }
+            if (_pendingSwipeTouch != null)
+            {
+                try { TabHost.CaptureTouch(_pendingSwipeTouch); } catch { }
+                _pendingSwipeTouch = null;
+            }
         }
         if (!_swipeHorizontal || _swipeConsumed) return false;
 
@@ -153,9 +213,19 @@ public partial class HomePage
             FreezeVertical();
         }
         _swipeDx = dx;
-        // 到头(已经在第一个/最后一个 tab)还往那个方向拖: 橡皮筋
+        var width = Math.Max(1, TabHost.ActualWidth);
+        // 到头(已经在第一个/最后一个 tab)还往那个方向拖: 橡皮筋; 否则并排展示相邻 tab 中间态
         var target = CurrentTabIndex + (dx < 0 ? 1 : -1);
-        TabTrans.X = target is >= 0 and < 5 ? dx : dx * SwipeEdgeResist;
+        if (target is >= 0 and < 5)
+        {
+            EnsurePeerVisible(target, dx < 0 ? width : -width);
+            TabTrans.X = dx;
+        }
+        else
+        {
+            ClearPeerPreview();
+            TabTrans.X = dx * SwipeEdgeResist;
+        }
         return true;
     }
 
@@ -226,7 +296,7 @@ public partial class HomePage
         return true;
     }
 
-    /// <summary>吸附动画: 翻页则把内容滑出去再切 tab, 否则弹回原地。</summary>
+    /// <summary>吸附动画: 翻页则双页并排滑向目标再切 tab, 否则弹回原地。</summary>
     private void AnimateSnap(bool switchPage, int target, double width)
     {
         var trans = TabTrans;
@@ -240,18 +310,22 @@ public partial class HomePage
             {
                 trans.BeginAnimation(TranslateTransform.XProperty, null);
                 trans.X = 0;
+                ClearPeerPreview();
+                _wheelSwitching = false;
             };
             trans.BeginAnimation(TranslateTransform.XProperty, back);
             return;
         }
 
-        // 翻页: 让内容顺着手指方向滑出屏幕, 动画结束后再切 tab 并把平移归零
-        var outX = _swipeDx < 0 ? -width : width;
+        // 翻页: 确保目标相邻页在侧面并排就位, 随 TabHost 一起滑入视口中央
+        EnsurePeerVisible(target, target > CurrentTabIndex ? width : -width);
+        var outX = target > CurrentTabIndex ? -width : width;
         var slide = new DoubleAnimation(outX, duration) { EasingFunction = ease };
         slide.Completed += (_, _) =>
         {
             trans.BeginAnimation(TranslateTransform.XProperty, null);
             trans.X = 0;
+            ClearPeerPreview();
             SwitchTabTo(target);
             _wheelSwitching = false;
         };
@@ -287,7 +361,9 @@ public partial class HomePage
         var d = source;
         while (d != null && d != TabHost)
         {
-            if (d is ButtonBase or Slider or TextBox or PasswordBox or Selector or Hyperlink) return false;
+            // 与详情页 InfoSwipeAllowed 一致: 只排除独占拖拽/选字的滑块、输入框与选择器,
+            // 允许从 VideoCard 及其内部元素上起手横滑翻页。
+            if (d is Slider or TextBoxBase or PasswordBox or Selector or Hyperlink) return false;
             d = d is ContentElement content
                 ? ContentOperations.GetParent(content) ?? (content as FrameworkContentElement)?.Parent
                 : VisualTreeHelper.GetParent(d);
@@ -296,30 +372,80 @@ public partial class HomePage
     }
 
     /// <summary>
-    /// 触控板横向双指滑动(由 MainWindow.OnHorizontalWheel 转发, 2026-11-04)。
+    /// 触控板双指连续横滑的跟手中间态预览(progress ∈ [-1, 1], 正值代表往右一页翻)。
+    /// </summary>
+    internal void PreviewHorizontalWheel(double progress)
+    {
+        if (_wheelSwitching || _swipeHorizontal) return;
+        var width = Math.Max(1, TabHost.ActualWidth);
+        var maxPreview = Math.Min(width * 0.38, 220);
+        var dx = -progress * maxPreview;
+        _swipeDx = dx;
+        var target = CurrentTabIndex + (dx < 0 ? 1 : -1);
+        if (target is >= 0 and < 5)
+        {
+            EnsurePeerVisible(target, dx < 0 ? width : -width);
+            TabTrans.X = dx;
+        }
+        else
+        {
+            ClearPeerPreview();
+            TabTrans.X = dx * SwipeEdgeResist;
+        }
+    }
+
+    /// <summary>
+    /// 触控板双指横滑未达整格阈值而抬手停顿时, 按跟手进度收尾吸附或弹回。
+    /// </summary>
+    internal void SettleHorizontalWheelPreview(bool commit)
+    {
+        if (_wheelSwitching || _swipeHorizontal) return;
+        if (Math.Abs(TabTrans.X) < 0.5 && _peerScroll == null) return;
+        var width = Math.Max(1, TabHost.ActualWidth);
+        var target = CurrentTabIndex + (_swipeDx < 0 ? 1 : -1);
+        var valid = target is >= 0 and < 5;
+        if (commit && valid)
+        {
+            _wheelSwitching = true;
+            AnimateSnap(true, target, width);
+        }
+        else
+        {
+            AnimateSnap(false, CurrentTabIndex, width);
+        }
+    }
+
+    /// <summary>
+    /// 触控板横向双指滑动 / 鼠标倾斜滚轮(由 MainWindow.OnHorizontalWheel 转发, 2026-11-04)。
     ///
-    /// ★ 与触摸手势共用同一套"切一页"逻辑, 但**不跟手**: 触控板没有绝对坐标,
-    ///   只能拿到离散的 delta, 所以直接切一页 + 走同款吸附动画的尾段。
-    /// ★ 已经在动画中(_tabTrans 有活动动画)时忽略, 否则连划会叠加。
+    /// ★ 若前序小 delta 已经启动了跟手中间态(TabTrans.X != 0), 直接从当前双页并排中间位置
+    ///   平滑收尾滑入目标页; 若是单次整格倾斜滚轮, 同样先把目标页并排摆到侧面再滑入。
+    /// ★ 已经在动画中(_wheelSwitching)时忽略, 否则连划会叠加。
     /// </summary>
     internal void HandleHorizontalWheel(int direction)
     {
         if (direction == 0) return;
-        // 动画中不响应(连划时避免叠起来) —— 这是第二道单次限位
         if (_wheelSwitching) return;
         var target = CurrentTabIndex + direction;
-        if (target is < 0 or >= 5) return;
+        var width = Math.Max(1, TabHost.ActualWidth);
+        if (target is < 0 or >= 5)
+        {
+            if (Math.Abs(TabTrans.X) > 0.5) AnimateSnap(false, CurrentTabIndex, width);
+            return;
+        }
         _wheelSwitching = true;
-        // 复用吸附动画: 方向决定往哪边滑出(-1 = 往左滑出 = 切到右边那页)
         _swipeDx = direction > 0 ? -1 : 1;
-        AnimateSnap(true, target, Math.Max(1, TabHost.ActualWidth));
+        AnimateSnap(true, target, width);
     }
 
     /// <summary>触控板切页进行中(动画期间拒绝新的切页请求)</summary>
     private bool _wheelSwitching;
 
-    private void OnSwipeTouchDown(object? sender, TouchEventArgs e) =>
+    private void OnSwipeTouchDown(object? sender, TouchEventArgs e)
+    {
+        _pendingSwipeTouch = e.TouchDevice;
         SwipeDown(RootPoint(e), e.OriginalSource as DependencyObject);
+    }
 
     /// <summary>
     /// 取触摸点在**窗口根坐标**里的位置(不是 TabHost 局部坐标)。
@@ -366,6 +492,18 @@ public partial class HomePage
         _tapCard = null;
         _swipeDirKnown = false;
         _swipeHorizontal = false;
+        _pendingSwipeTouch = null;
+        try { TabHost.ReleaseTouchCapture(e.TouchDevice); } catch { }
+    }
+
+    private void OnSwipeLostTouchCapture(object? sender, TouchEventArgs e)
+    {
+        if (_swipeHorizontal && !_swipeConsumed)
+            AnimateSnap(false, CurrentTabIndex, Math.Max(1, TabHost.ActualWidth));
+        UnfreezeVertical();
+        _swipeDirKnown = false;
+        _swipeHorizontal = false;
+        _pendingSwipeTouch = null;
     }
 
     private void OnSwipeStylusDown(object? sender, StylusEventArgs e) =>

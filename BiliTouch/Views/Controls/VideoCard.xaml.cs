@@ -177,15 +177,23 @@ public partial class VideoCard : UserControl
             _pressAt = e.GetPosition(this);
             _pressed = true;
             _dragCanceled = false;
+            AnimateCoverScale(0.97, 110);
         };
         PreviewMouseMove += (_, e) =>
         {
             if (!_pressed || e.LeftButton != MouseButtonState.Pressed) return;
             var p = e.GetPosition(this);
             if (Math.Abs(p.X - _pressAt.X) > ClickSlop || Math.Abs(p.Y - _pressAt.Y) > ClickSlop)
+            {
                 _dragCanceled = true;
+                AnimateCoverScale(IsMouseOver ? 1.04 : 1.0);
+            }
         };
-        PreviewMouseLeftButtonUp += (_, _) => _pressed = false;
+        PreviewMouseLeftButtonUp += (_, _) =>
+        {
+            _pressed = false;
+            AnimateCoverScale(IsMouseOver ? 1.04 : 1.0);
+        };
         // ★ 触摸兜底(2026-11-04): 只靠 MouseLeftButtonUp 不够 —— 手指落在卡片上时,
         //   外层 ScrollViewer 的平移逻辑可能把手势接走, 提升出来的鼠标 up 就到不了卡片,
         //   表现是"某些卡片(尤其直播卡)怎么点都点不进去"。
@@ -255,12 +263,12 @@ public partial class VideoCard : UserControl
 
     private void OnMouseLeave(object sender, MouseEventArgs e) => AnimateCoverScale(1);
 
-    /// <summary>悬停放大(作用在封面卡片上, 用户要求"放大效果不要删")</summary>
-    private void AnimateCoverScale(double zoom)
+    /// <summary>悬停放大/按压微缩(作用在封面卡片上, 用户要求"放大效果不要删")</summary>
+    private void AnimateCoverScale(double zoom, int durationMs = 180)
     {
         if (_coverScale == null) return;
-        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-        var ms = TimeSpan.FromMilliseconds(180);
+        var ease = new QuarticEase { EasingMode = EasingMode.EaseOut };
+        var ms = TimeSpan.FromMilliseconds(durationMs);
         _coverScale.BeginAnimation(ScaleTransform.ScaleXProperty,
             new DoubleAnimation(_coverScale.ScaleX, zoom, ms) { EasingFunction = ease });
         _coverScale.BeginAnimation(ScaleTransform.ScaleYProperty,
@@ -298,6 +306,7 @@ public partial class VideoCard : UserControl
             return;
         }
 
+        SeamlessTransitionDirector.Capture(CoverCard, v.Bvid, 8.0, CoverBox);
         Svc.Player.PlayVideo(v.Bvid, v.Title);
     }
 

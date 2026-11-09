@@ -799,7 +799,7 @@
                 </ScrollViewer>
                 <Grid x:Name="WebCommentChrome" />
             </Grid>
-            <Grid x:Name="VideoSurface" Grid.Column="0" Background="Black">
+            <Grid x:Name="VideoSurface" Grid.Column="0" Background="Black" ClipToBounds="True">
                 <!-- 实验性 vmem 输出宿主（默认 Collapsed）。开启后 VideoView 被藏掉，
                      解码帧由这个 Image 画成普通 WPF 元素，VideoAreaRoot 搬到它上面。 -->
                 <helpers:VmemVideoView x:Name="VmemView" Visibility="Collapsed" IsHitTestVisible="False" />
@@ -816,7 +816,7 @@
                          ★ 滚轮用 PreviewMouseWheel 挂在这层根 Grid 上: 隧道事件从根往叶子最先
                            经过这里, 不会被底部控制栏里的 Slider / 清晰度 Popup 里的 ListBox 先截走;
                            也只挂视频区(右侧信息面板的滚轮仍然该滚它自己的列表)。 -->
-                    <Grid x:Name="VideoAreaRoot" Background="#01000000"
+                    <Grid x:Name="VideoAreaRoot" Background="#01000000" ClipToBounds="True"
                           SizeChanged="OnVideoAreaSizeChanged"
                           PreviewMouseLeftButtonDown="OnVideoAreaMouseLeftDown"
                           PreviewMouseLeftButtonUp="OnVideoAreaMouseLeftUp"
@@ -837,9 +837,13 @@
                                    孤立的 Up 是弹层收起时漏过来的(实测, 见 OnVideoAreaMouseRightDown)。 -->
                             <!-- Local picture dimming: below controls/OSD; never changes system brightness. -->
                             <Border x:Name="TouchDimmer" Background="Black" Opacity="0" IsHitTestVisible="False" />
-                            <!-- 弹幕层 -->
+                            <!-- 弹幕层: 必须显式 ClipToBounds="True"（与 LiveCanvas 一致）。
+                                 滚动弹幕上屏起点在 X = canvasWidth（画布右缘外侧），vmem 模式下
+                                 VideoAreaRoot 挂在主视觉树里：并排布局右侧 InfoPanel 是 70% 半透明亚克力底，
+                                 网页布局内联态 VideoSurface 更是 ColumnSpan=2 + ZIndex=10 压在右栏之上；
+                                 若不裁剪，弹幕会从右侧信息栏内甚至浮在右栏文字上方开始往左滚。 -->
                             <Canvas SizeChanged="OnDanmakuViewportChanged" x:Name="DanmakuCanvas" Background="Transparent" IsHitTestVisible="False"
-                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+                                    ClipToBounds="True" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
 
                             <!-- ===== 「听视频」聆听态画面(2026-10-06 新增) =====
                                  ★ 为什么必须是**一层盖住视频的浮层**而不是"隐藏 VideoView":
@@ -867,13 +871,16 @@
                                     <Border Margin="-22" CornerRadius="34" Background="#14000000"/>
                                     <Border Margin="-13" CornerRadius="26" Background="#1F000000"/>
                                     <Border Margin="-6" CornerRadius="20" Background="#2E000000"/>
-                                    <Border Background="#4D000000" BorderBrush="#B3FFFFFF" BorderThickness="2"
-                                            CornerRadius="14">
-                                        <StackPanel x:Name="BrandMark" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                    RenderTransformOrigin="0.5,0.5">
-                                            <Image Source="/BiliTouch;component/Assets/app.png" Width="64" Height="64" Stretch="Uniform"/>
-                                            <TextBlock Text="BiliTouch" Foreground="#CCFFFFFF" FontSize="12" HorizontalAlignment="Center" Margin="0,8,0,0"/>
-                                        </StackPanel>
+                                    <Border x:Name="DockTransitionPoster" CornerRadius="14" Background="#4D000000"
+                                            BorderBrush="#B3FFFFFF" BorderThickness="2">
+                                        <Grid>
+                                            <Border CornerRadius="12" Background="#59000000" />
+                                            <StackPanel x:Name="BrandMark" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                        RenderTransformOrigin="0.5,0.5">
+                                                <Image Source="/BiliTouch;component/Assets/app.png" Width="64" Height="64" Stretch="Uniform"/>
+                                                <TextBlock Text="BiliTouch" Foreground="#CCFFFFFF" FontSize="12" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                                            </StackPanel>
+                                        </Grid>
                                     </Border>
                                 </Grid>
                             </Border>
@@ -928,14 +935,18 @@
                             <!-- 加载遮罩: 转圈 + 轮换颜文字 + 文案(颜文字由后台定时器驱动, 见 ShowLoading) -->
                             <Border x:Name="LoadingOverlay" Background="Black"
                                     Visibility="Collapsed">
-                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <controls:LoadingRing Width="40" Height="40" HorizontalAlignment="Center" />
-                                    <TextBlock x:Name="LoadingKaomoji" Text="(´･ω･`)" FontSize="20"
-                                               Margin="0,18,0,0" HorizontalAlignment="Center"
-                                               Foreground="{DynamicResource AccentTextBrush}" />
-                                    <TextBlock x:Name="LoadingText" Text="正在加载视频…" Margin="0,8,0,0"
-                                               Foreground="#999" FontSize="13" HorizontalAlignment="Center" />
-                                </StackPanel>
+                                <Grid>
+                                    <!-- 一镜到底首帧海报底图: 承接飞入的卡片封面, 待真实视频首帧上屏后随遮罩淡出 -->
+                                    <Border x:Name="LoadingPoster" Visibility="Collapsed" Opacity="0.38" />
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <controls:LoadingRing Width="40" Height="40" HorizontalAlignment="Center" />
+                                        <TextBlock x:Name="LoadingKaomoji" Text="(´･ω･`)" FontSize="20"
+                                                   Margin="0,18,0,0" HorizontalAlignment="Center"
+                                                   Foreground="{DynamicResource AccentTextBrush}" />
+                                        <TextBlock x:Name="LoadingText" Text="正在加载视频…" Margin="0,8,0,0"
+                                                   Foreground="#999" FontSize="13" HorizontalAlignment="Center" />
+                                    </StackPanel>
+                                </Grid>
                             </Border>
                             <!-- 失败遮罩 -->
                             <Border x:Name="FailOverlay" Background="Black" Visibility="Collapsed">
@@ -1470,7 +1481,7 @@
             <Grid x:Name="InfoPanel" Grid.Column="1" Background="{DynamicResource AppBackgroundBrush}">
                 <helpers:SkinSurface Kind="Content" />
                 <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1,0,0,0">
-                    <Grid x:Name="RightLayoutGrid"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Grid x:Name="RightLayoutGrid" ClipToBounds="True"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                         <ContentControl x:Name="WebHeaderHost" Grid.Row="0" Margin="20,18,20,0" Visibility="Collapsed"/>
                         <Border x:Name="WebDockAnchor" Grid.Row="1" Height="0" Margin="20,0,20,0" Visibility="Collapsed" Background="Black"/>
                     <ScrollViewer x:Name="InfoScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto"
@@ -1741,6 +1752,9 @@
                                     <RadioButton x:Name="TabComments" Grid.Column="1" GroupName="ContentTab"
                                                  Style="{StaticResource ContentTabStyle}" Content="评论"
                                                  Checked="TabComments_Checked" />
+                                    <RadioButton x:Name="TabRecommended" Grid.Column="1" GroupName="ContentTab"
+                                                 Style="{StaticResource ContentTabStyle}" Content="推荐"
+                                                 Visibility="Collapsed" Checked="TabRecommended_Checked" />
                                     <!-- 视频合集入口(2026-10-02 新增; 2026-10-03 改成与 简介/评论 统一风格):
                                          无合集的视频整个按钮**隐藏**(不是禁用) —— 右侧信息栏只有 400px,
                                          一个常年灰着的按钮既占位又像是坏了, 而 B 站自己在没有合集时也不给入口。
@@ -2110,7 +2124,7 @@
                                                                Style="{StaticResource MetaTextStyle}"
                                                                Margin="6,0,0,0" Text="" />
                                                 </StackPanel>
-                                                <TextBlock Text="相关视频" FontSize="13" FontWeight="SemiBold"
+                                                <TextBlock x:Name="RelatedHeading" Text="相关视频" FontSize="13" FontWeight="SemiBold"
                                                            Style="{StaticResource MetaTextStyle}"
                                                            Foreground="{DynamicResource TextPrimaryBrush}" />
                                             </DockPanel>
@@ -2253,6 +2267,11 @@
                                              合集面板底下是内容, 必须实。两者需求相反, 不能共用一个键。
                                              OverlaySurfaceBrush 恒为不透明, 且刻意**不进** ApplyAcrylicSurfaces 的
                                              覆盖清单(见 Colors.Light.xaml / Colors.Dark.xaml)。 -->
+                                </StackPanel>
+                                <StackPanel x:Name="WebRecommendationsPanel" Visibility="Collapsed">
+                                    <TextBlock x:Name="WebRecommendationsHint" Text="暂无推荐视频"
+                                               Margin="0,8,0,0" TextWrapping="Wrap"
+                                               Style="{StaticResource MetaTextStyle}" />
                                 </StackPanel>
                                 <StackPanel x:Name="CommentsPanel" Visibility="Collapsed">
                                     <!-- ★★ 2026-11-01 评论输入改为右下角悬浮按钮(FAB):
@@ -2580,6 +2599,18 @@
                 <controls:DownloadProgressBanner Margin="0,52,12,0" />
                 <controls:ThemeReactionHost x:Name="ThemeReactions" Panel.ZIndex="90" />
             </Grid>
+        </Grid>
+
+        <!-- 金标联盟「一镜到底」(Seamless Shared-Element Morph) 连续几何过渡舞台。
+             平时 Collapsed + IsHitTestVisible=False，不占布局、不拦截任何鼠标/触摸输入。
+             展开时由单一 CompositionTarget.Rendering 临界阻尼弹簧驱动几何、圆角与背景阻尼渐显。 -->
+        <Grid x:Name="SeamlessMorphOverlay" Grid.RowSpan="2" Panel.ZIndex="120"
+              Visibility="Collapsed" IsHitTestVisible="False" ClipToBounds="True">
+            <Border x:Name="SeamlessBackdrop" Background="#40000000" Opacity="0" />
+            <Border x:Name="SeamlessHeroCard" HorizontalAlignment="Left" VerticalAlignment="Top"
+                    RenderTransformOrigin="0,0" Background="{DynamicResource PlaceholderBrush}">
+                <Border x:Name="SeamlessHeroShade" Background="#26000000" Opacity="0" />
+            </Border>
         </Grid>
     </Grid>
 </views:FluentWindow>

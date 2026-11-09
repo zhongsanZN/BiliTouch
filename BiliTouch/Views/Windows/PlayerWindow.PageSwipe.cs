@@ -40,7 +40,7 @@ public partial class PlayerWindow
     {
         _infoSwipeStart = p;
         _infoSwipeStartTick = Environment.TickCount64;
-        _infoSwipeArmed = !IsWebVideoLayout && InfoSwipeAllowed(source);
+        _infoSwipeArmed = InfoSwipeAllowed(source);
         _infoHorizontalDecided = false;
         _infoDraggingPage = false;
         _infoGestureMoved = false;
@@ -155,7 +155,7 @@ public partial class PlayerWindow
                 _infoPageSwitching = true;
                 try
                 {
-                    if (degradeTarget == 1) TabComments.IsChecked = true;
+                    if (degradeTarget == 1) SecondaryPageButton().IsChecked = true;
                     else TabIntro.IsChecked = true;
                 }
                 finally { _infoPageSwitching = false; }
@@ -179,10 +179,12 @@ public partial class PlayerWindow
         if (PageHost == null || PageHost.ActualWidth <= 1) return false;
         var current = CurrentPagePanel();
         var other = OtherPagePanel();
-        if (current == null || other == null || current.ActualHeight <= 1) return false;
+        if (current == null || other == null) return false;
+        if (IsWebVideoLayout) UpdateWebRecommendationsHint();
         _infoDraggingPage = true;
         // 两页高度不同: 翻页过程中按当前页锁高, 免得简介/评论切一半时整页跳一下
-        PageHost.Height = current.ActualHeight;
+        if (current.ActualHeight > 1)
+            PageHost.Height = current.ActualHeight;
         TransformOf(current).X = 0;
         var t = TransformOf(other);
         t.X = _infoDragDx < 0 ? PageHost.ActualWidth : -PageHost.ActualWidth;
@@ -207,6 +209,11 @@ public partial class PlayerWindow
             c.X = dx * PageEdgeResistance;
             if (other.Visibility == Visibility.Visible) other.Visibility = Visibility.Collapsed;
             return;
+        }
+        if (other.Visibility != Visibility.Visible)
+        {
+            other.Opacity = 1;
+            other.Visibility = Visibility.Visible;
         }
         c.X = dx;
         o.X = dx + (dx < 0 ? width : -width);
@@ -239,7 +246,7 @@ public partial class PlayerWindow
                 _infoPageSwitching = true;
                 try
                 {
-                    if (target == 1) TabComments.IsChecked = true;
+                    if (target == 1) SecondaryPageButton().IsChecked = true;
                     else TabIntro.IsChecked = true;
                 }
                 finally
@@ -301,13 +308,17 @@ public partial class PlayerWindow
         panel.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(180)));
     }
 
-    private int PageIndex => TabComments?.IsChecked == true ? 1 : 0;
+    private RadioButton SecondaryPageButton() => IsWebVideoLayout ? TabRecommended : TabComments;
+
+    private FrameworkElement? SecondaryPagePanel() => IsWebVideoLayout ? WebRecommendationsPanel : CommentsPanel;
+
+    private int PageIndex => SecondaryPageButton()?.IsChecked == true ? 1 : 0;
 
     private FrameworkElement? CurrentPagePanel() =>
-        TabComments?.IsChecked == true ? CommentsPanel : IntroPanel;
+        PageIndex == 1 ? SecondaryPagePanel() : IntroPanel;
 
     private FrameworkElement? OtherPagePanel() =>
-        TabComments?.IsChecked == true ? IntroPanel : CommentsPanel;
+        PageIndex == 1 ? IntroPanel : SecondaryPagePanel();
 
     private static TranslateTransform TransformOf(FrameworkElement panel)
     {

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -21,6 +21,13 @@ public partial class PlayerWindow
 {
     private bool _webInitialized, _webLayoutMounted, _webLayoutQueued, _webChangingLayout, _webRendering;
     private bool _webPreviousComments, _webHasMounted;
+    private bool _webRecommendedSelected;
+    private int _webRelatedIndex;
+    private Thickness _webRelatedMargin;
+    private bool _webDockSpacingPrepared;
+    private double _webDockBaseGap, _webDockFullGap, _webDockFullViewport;
+    private Thickness _webDockContentMargin;
+    private readonly TranslateTransform _webDockBodyMove = new();
     private double _webSavedScroll, _webSavedBodyScroll, _webLegacyInfoScroll;
     private double _webDockProgress, _webAnimationTo;
     private long _webSurfaceSettledAt;
@@ -75,6 +82,7 @@ public partial class PlayerWindow
     private void InitializeAlternatePlayerLayout()
     {
         _webInitialized = true;
+        InfoScroll.RenderTransform = _webDockBodyMove;
         _webHeaderParts = InfoContentStack.Children.Cast<FrameworkElement>().Take(3).ToArray();
         _webHeaderScroll = new ScrollViewer { Content = _webHeaderStack, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         WebHeaderHost.Content = _webHeaderScroll;
@@ -121,6 +129,7 @@ public partial class PlayerWindow
 
     private void FinishHiddenWebMotion()
     {
+        StopSeamlessMorph();
         if (!_webRendering && !_vmemTracking) return;
         _webDockProgress = _vmemTracking ? (_vmemTrackTarget >= .5 ? 1 : 0) : _webAnimationTo;
         _webAnimationTo = _webDockProgress;
@@ -161,7 +170,7 @@ public partial class PlayerWindow
     {
         _infoSwipeArmed = _infoDraggingPage = _infoPageAnimating = _infoHorizontalDecided = false;
         PageHost.BeginAnimation(HeightProperty, null); PageHost.Height = double.NaN;
-        foreach (var page in new FrameworkElement[] { IntroPanel, CommentsPanel })
+        foreach (var page in new FrameworkElement[] { IntroPanel, WebRecommendationsPanel, CommentsPanel })
         { page.BeginAnimation(OpacityProperty, null); page.Opacity = 1; page.RenderTransform = Transform.Identity; }
     }
 
@@ -179,12 +188,18 @@ public partial class PlayerWindow
         ResetWebPageAnimations();
         foreach (var part in _webHeaderParts) { DetachWebElement(part); _webHeaderStack.Children.Add(part); }
         DetachWebElement(CommentsPanel); WebCommentsHost.Content = CommentsPanel;
+        _webRelatedIndex = IntroPanel.Children.IndexOf(RelatedPanel);
+        _webRelatedMargin = RelatedPanel.Margin;
+        DetachWebElement(RelatedPanel); WebRecommendationsPanel.Children.Add(RelatedPanel);
+        RelatedPanel.Margin = new Thickness(0);
+        RelatedHeading.Text = "推荐";
         foreach (var control in new FrameworkElement[] { BtnBackToComments, CommentFab, CommentComposerPanel })
         { DetachWebElement(control); WebCommentChrome.Children.Add(control); }
         InfoContentStack.Margin = new Thickness(20, 0, 20, 24);
         WebLeftPane.Visibility = WebHeaderHost.Visibility = WebDockAnchor.Visibility = Visibility.Visible;
-        TabComments.Visibility = Visibility.Collapsed; TabIntro.IsChecked = true;
-        IntroPanel.Visibility = CommentsPanel.Visibility = Visibility.Visible;
+        TabComments.Visibility = Visibility.Collapsed; TabRecommended.Visibility = Visibility.Visible;
+        if (_webRecommendedSelected) TabRecommended.IsChecked = true; else TabIntro.IsChecked = true;
+        SelectWebInfoPage(_webRecommendedSelected, animate: false);
         UiScale.Register(WebCommentsScaleRoot); UiScale.Register(WebCommentChrome);
         // ★★★ 2026-11-08 修「退出全屏后视频变黑」（用户报的第二个问题，与闪退同源）：
         //   下面两行会把 VideoSurface 从 Stretch 改成 Left/Top，而它的 Width/Height 此时是
@@ -218,6 +233,11 @@ public partial class PlayerWindow
         _webSavedScroll = WebLeftScroll.VerticalOffset; _webSavedBodyScroll = InfoScroll.VerticalOffset;
         StopWebVideoAnimation(); StopWebScrollAnimation(); _webLayoutMounted = false;
         DetachWebElement(CommentsPanel); PageHost.Children.Add(CommentsPanel);
+        DetachWebElement(RelatedPanel);
+        IntroPanel.Children.Insert(Math.Clamp(_webRelatedIndex, 0, IntroPanel.Children.Count), RelatedPanel);
+        RelatedPanel.Margin = _webRelatedMargin;
+        RelatedHeading.Text = "相关视频";
+        WebRecommendationsPanel.Visibility = TabRecommended.Visibility = Visibility.Collapsed;
         for (int i = 0; i < _webHeaderParts.Length; i++) { DetachWebElement(_webHeaderParts[i]); InfoContentStack.Children.Insert(i, _webHeaderParts[i]); }
         foreach (var control in new FrameworkElement[] { BtnBackToComments, CommentFab, CommentComposerPanel })
         { DetachWebElement(control); InfoPanel.Children.Add(control); }
@@ -238,6 +258,32 @@ public partial class PlayerWindow
         UpdateCommentComposer(); UpdateAlternateVideoControls();
         if (_vmemMode) ResetVmemMorph(docked: false);
         UpdateCommentPicturePlacement();
+    }
+
+    private void TabRecommended_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_webLayoutMounted) SelectWebInfoPage(recommended: true);
+    }
+
+    private void SelectWebInfoPage(bool recommended, bool animate = true)
+    {
+        if (!_webLayoutMounted) return;
+        _webRecommendedSelected = recommended;
+        IntroPanel.Visibility = recommended ? Visibility.Collapsed : Visibility.Visible;
+        WebRecommendationsPanel.Visibility = recommended ? Visibility.Visible : Visibility.Collapsed;
+        // The comments keep their independent left-column state, including an open thread/draft.
+        CommentsPanel.Visibility = Visibility.Visible;
+        UpdateWebRecommendationsHint();
+        if (animate && !_webChangingLayout)
+            AnimatePageEntrance(recommended ? WebRecommendationsPanel : IntroPanel, fromRight: recommended);
+        UpdateCommentComposer();
+    }
+
+    private void UpdateWebRecommendationsHint()
+    {
+        if (WebRecommendationsHint == null) return;
+        WebRecommendationsHint.Text = _isLocalPlayback ? "本地视频没有推荐" : _relatedEmptyMessage;
+        WebRecommendationsHint.Visibility = RelatedPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>
@@ -329,6 +375,7 @@ public partial class PlayerWindow
         if (!_vmemTracking && !_webRendering && Math.Abs(p - _webDockProgress) < .0001) return true;
         if (!_vmemMorphPrepared) PrepareVmemMorph();
         if (!_vmemMorphPrepared) return false;
+        PrepareWebDockSpacing();
 
         // Tracking takes over the same composition clock, keeping current position and velocity.
         // Two callbacks must never write the progress during an interrupted settle.
@@ -353,8 +400,10 @@ public partial class PlayerWindow
 
     private void AdvanceVmemTracking(double seconds)
     {
+        var trackOmega = Math.Abs(_vmemTrackTarget - _webDockProgress) > 0.55 ? WebMorphOmega : 36.0;
         (_webDockProgress, _webDockVelocity) = SpringMotion.Advance(
-            _webDockProgress, _webDockVelocity, _vmemTrackTarget, seconds, 48);
+            _webDockProgress, _webDockVelocity, _vmemTrackTarget, seconds, trackOmega);
+        UpdateWebDockSpacing(_webDockProgress);
         ApplyVmemMorph(_webDockProgress);
         if (Environment.TickCount64 - _vmemLastScrollMs < 140) return;
         _vmemTracking = false;
@@ -400,6 +449,7 @@ public partial class PlayerWindow
         _webAnimationTo = target;
         _webAnimationDurationMs = reversing ? WebMorphReverseDurationMs : WebMorphDurationMs;
         _webSurfaceSettledAt = 0;
+        PrepareWebDockSpacing();
         // ★ 一次性算好「遮罩该缩到哪」：朝真实的 WebDockAnchor 几何收缩，
         //   而不是硬编码往视频区右上角缩 —— 后者与落点方向不一致，观感就是"缩完瞬移"。
         UpdateWebCoverTargetGeometry();
@@ -542,6 +592,9 @@ public partial class PlayerWindow
         (_webDockProgress, _webDockVelocity) = SpringMotion.Advance(
             _webDockProgress, _webDockVelocity, _webAnimationTo, seconds,
             WebMorphOmega * WebMorphDurationMs / _webAnimationDurationMs);
+        // Only the right scroll viewport yields. The video keeps its fixed native
+        // size until commit; no UpdateLayout or video-window resize is done per frame.
+        UpdateWebDockSpacing(_webDockProgress);
         // ★ vmem 模式走「画面本体变形」；其余走「玻璃卡片」兜底。
         if (_vmemMode && _vmemMorphPrepared) ApplyVmemMorph(_webDockProgress);
         else UpdateWebCoverAnimation(_webDockProgress);
@@ -611,6 +664,7 @@ public partial class PlayerWindow
             _webBrandLayoutScale.ScaleX = _webBrandLayoutScale.ScaleY = brandScale * 0.72;
             BrandMark.Opacity = 0.35 + 0.65 * (1 - p);
         }
+        if (DockTransitionPoster != null) DockTransitionPoster.CornerRadius = new CornerRadius(4 + 10 * p);
         if (DockTransitionCover != null) DockTransitionCover.Opacity = 1 - 0.35 * p;
     }
 
@@ -636,15 +690,62 @@ public partial class PlayerWindow
 
     private void PrepareWebDockAnchor(double progress)
     {
+        var restoreSpacing = RestoreWebDockSpacing();
+        var changed = SetWebDockAnchorSpacing(progress);
+        // Resolve the real placeholder and scroll viewport once, before the video commits.
+        if (changed || restoreSpacing) PlayerStage.UpdateLayout();
+    }
+
+    private bool RestoreWebDockSpacing()
+    {
+        if (!_webDockSpacingPrepared) return false;
+        _webDockSpacingPrepared = false;
+        InfoContentStack.Margin = _webDockContentMargin;
+        InfoScroll.Height = double.NaN;
+        InfoScroll.VerticalAlignment = VerticalAlignment.Stretch;
+        _webDockBodyMove.Y = 0;
+        WebDockAnchor.Background = _vmemMode ? Brushes.Transparent : Brushes.Black;
+        return true;
+    }
+
+    private bool SetWebDockAnchorSpacing(double progress)
+    {
         var p = Math.Clamp(progress, 0, 1);
         var margin = new Thickness(20, 12 * p, 20, 0);
         var changed = WebDockAnchor.Margin != margin;
         if (changed) WebDockAnchor.Margin = margin;
         var height = WebDockAnchor.ActualWidth * 9 / 16 * p;
         if (!Nearly(WebDockAnchor.Height, height)) { WebDockAnchor.Height = height; changed = true; }
-        // TransformToAncestor reads arranged geometry. Settle the placeholder first,
-        // otherwise the snapshot lands at the old top and the native video drops 12 DIP.
-        if (changed) PlayerStage.UpdateLayout();
+        return changed;
+    }
+
+    private void PrepareWebDockSpacing()
+    {
+        if (_webDockSpacingPrepared || !_webLayoutMounted || InfoScroll.ActualHeight <= 0) return;
+        _webDockSpacingPrepared = true;
+        _webDockBaseGap = WebDockAnchor.Height + WebDockAnchor.Margin.Top;
+        _webDockFullGap = WebDockAnchor.ActualWidth * 9 / 16 + 12;
+        _webDockFullViewport = InfoScroll.ActualHeight + _webDockBaseGap;
+        _webDockContentMargin = InfoContentStack.Margin;
+        // Keep a full-height scroll viewport for the whole gesture. Bottom padding
+        // preserves its original scroll range when expanding from a docked viewport.
+        InfoContentStack.Margin = new Thickness(_webDockContentMargin.Left, _webDockContentMargin.Top,
+            _webDockContentMargin.Right, _webDockContentMargin.Bottom + _webDockBaseGap);
+        InfoScroll.VerticalAlignment = VerticalAlignment.Top;
+        InfoScroll.Height = _webDockFullViewport;
+        WebDockAnchor.Background = Brushes.Transparent;
+    }
+
+    private void UpdateWebDockSpacing(double progress)
+    {
+        if (!_webDockSpacingPrepared) return;
+        var gap = _webDockFullGap * Math.Clamp(progress, 0, 1);
+        _webDockBodyMove.Y = gap - _webDockBaseGap;
+        // Near the end of the list, restore the real scroll limit progressively as
+        // the viewport opens up. This prevents a last-frame clamp/jump on undocking.
+        var extent = Math.Max(0, InfoScroll.ExtentHeight - _webDockBaseGap);
+        var limit = Math.Max(0, extent - _webDockFullViewport + gap);
+        if (InfoScroll.VerticalOffset > limit + .1) InfoScroll.ScrollToVerticalOffset(limit);
     }
     private Rect CalculateWebVideoBounds(double progress)
     {
@@ -716,6 +817,7 @@ public partial class PlayerWindow
         if(!_closing){SetVideoHostVisible(true);VideoSurface.Background=Brushes.Black;}
         // Commit before dropping the presentation transform; the next layout updates the clip size.
         if (_webLayoutMounted && !_closing) ApplyWebVideoBounds();
+        else RestoreWebDockSpacing();
         // ★ vmem：收尾把画面变换复位，圆角按当前是否停靠保留。
         if (_vmemMode) ResetVmemMorph(docked: _webDockProgress >= .5);
         if (DockTransitionCover != null) DockTransitionCover.Visibility = Visibility.Collapsed;

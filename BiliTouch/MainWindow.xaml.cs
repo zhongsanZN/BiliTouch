@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Windows;
@@ -119,6 +119,7 @@ public partial class MainWindow : FluentWindow
 
         // 反向时清掉余量(与纵向滚轮同款约定)
         if (Math.Sign(delta) != Math.Sign(_hWheelAccum)) _hWheelAccum = 0;
+        if (_hWheelConsumed && Math.Sign(delta) != _hWheelConsumedDir) _hWheelConsumed = false;
         _hWheelAccum += delta;
 
         // 只要还有 delta 进来, 就把"滚动流结束"的判定往后推
@@ -127,11 +128,21 @@ public partial class MainWindow : FluentWindow
         // 本滚动流已经切过一页 ⇒ 剩余 delta 只累计不切(等定时器解锁)
         if (_hWheelConsumed) { return; }
 
-        if (Math.Abs(_hWheelAccum) < Notch) return;
+        if (Math.Abs(_hWheelAccum) < Notch)
+        {
+            var signedRatio = (_hWheelInvert ? -_hWheelAccum : _hWheelAccum) / (double)Notch;
+            if (CurrentModuleGestures is { } previewGestures) previewGestures.PreviewHorizontalWheel(signedRatio);
+            else if (_vm.Current == PageKey.Mine && PageOf(PageKey.Mine) is MinePage previewMine)
+                previewMine.PreviewHorizontalWheel(signedRatio);
+            else if (PageOf(PageKey.Home) is HomePage previewHome)
+                previewHome.PreviewHorizontalWheel(signedRatio);
+            return;
+        }
 
         var dir = Math.Sign(_hWheelAccum);
         _hWheelAccum = 0;
         _hWheelConsumed = true;
+        _hWheelConsumedDir = dir;
 
         // ★ 方向: delta > 0 ⇒ 手指向左滑 ⇒ 内容向左跟手 ⇒ 露出**右**边那页 ⇒ +1
         if(CurrentModuleGestures is {} gestures) gestures.Step(_hWheelInvert?-dir:dir);
@@ -151,7 +162,7 @@ public partial class MainWindow : FluentWindow
     {
         if (_hWheelIdleTimer == null)
         {
-            _hWheelIdleTimer = new DispatcherTimer
+            _hWheelIdleTimer = new DispatcherTimer(DispatcherPriority.Input)
             {
                 Interval = TimeSpan.FromMilliseconds(HandWheelIdleMs)
             };
@@ -159,8 +170,20 @@ public partial class MainWindow : FluentWindow
             {
                 // 滚动流结束: 停表 + 解锁下一次切页
                 _hWheelIdleTimer!.Stop();
+                var accum = _hWheelAccum;
+                var consumed = _hWheelConsumed;
                 _hWheelConsumed = false;
+                _hWheelConsumedDir = 0;
                 _hWheelAccum = 0;
+                if (!consumed && accum != 0)
+                {
+                    var commit = Math.Abs(accum) >= Notch * 0.58;
+                    if (CurrentModuleGestures is { } settleGestures) settleGestures.SettleHorizontalWheelPreview(commit);
+                    else if (_vm.Current == PageKey.Mine && PageOf(PageKey.Mine) is MinePage settleMine)
+                        settleMine.SettleHorizontalWheelPreview(commit);
+                    else if (PageOf(PageKey.Home) is HomePage settleHome)
+                        settleHome.SettleHorizontalWheelPreview(commit);
+                }
             };
         }
         _hWheelIdleTimer.Stop();     // Stop+Start 就是"重置"
@@ -184,6 +207,7 @@ public partial class MainWindow : FluentWindow
 
     /// <summary>本次滚动流是否已经切过一页(滚动流结束后由定时器清掉)</summary>
     private bool _hWheelConsumed;
+    private int _hWheelConsumedDir;
 
     /// <summary>本次滚动流累计的 delta 余量</summary>
     private int _hWheelAccum;

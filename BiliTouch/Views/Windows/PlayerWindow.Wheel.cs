@@ -43,24 +43,43 @@ public partial class PlayerWindow
     /// </summary>
     protected override void OnHorizontalWheel(int delta)
     {
-        if (delta == 0 || _closing || _isLive || IsWebVideoLayout) return;
+        if (delta == 0 || _closing || _isLive) return;
         if (InfoPanel == null || !InfoPanel.IsMouseOver) return;
 
-        if (Math.Sign(delta) != Math.Sign(_pageWheelAccum)) _pageWheelAccum = 0;
+        if (_pageWheelAccum != 0 && Math.Sign(delta) != Math.Sign(_pageWheelAccum))
+        {
+            _pageWheelAccum = 0;
+            _pageWheelConsumed = false;
+        }
         _pageWheelAccum += delta;
         RestartPageWheelIdle();
 
-        if (_pageWheelConsumed) return;
-        if (Math.Abs(_pageWheelAccum) < PageWheelNotch) return;
+        if (_pageWheelConsumed || _infoPageAnimating) return;
 
-        var dir = Math.Sign(_pageWheelAccum);
+        var signedAccum = PageWheelInvert ? -_pageWheelAccum : _pageWheelAccum;
+        var dir = Math.Sign(signedAccum);
+        if (dir == 0) return;
+
+        if (Math.Abs(_pageWheelAccum) < PageWheelNotch)
+        {
+            // ★ 精确式触控板连续双指横滑: 在达到整格阈值前实时驱动双页并排中间态(BeginPageDrag + ApplyPageDrag),
+            //   让触控板横滑拥有与触屏完全一致的跟手预览与边缘橡皮筋手感。
+            if (PageHost != null && PageHost.ActualWidth > 1)
+            {
+                var width = Math.Max(1, PageHost.ActualWidth);
+                var maxPreview = Math.Min(width * 0.45, 160);
+                _infoDragDx = -signedAccum / (double)PageWheelNotch * maxPreview;
+                if (!_infoDraggingPage) _infoDraggingPage = BeginPageDrag();
+                if (_infoDraggingPage) ApplyPageDrag(_infoDragDx);
+            }
+            return;
+        }
+
         _pageWheelAccum = 0;
         _pageWheelConsumed = true;
 
-        var step = PageWheelInvert ? -dir : dir;
-        // ★ 与触摸手势共用同一套入口: 直接调 InfoDown/InfoMove/InfoUp 会走"跟手"那条路,
-        //   但触控板没有绝对坐标。这里复用**降级切换**(直接切 tab + 入场动画),
-        //   对应 InfoUp 里降级路径的语义 —— 观感是"整页滑入", 不是硬切。
+        var step = PageWheelInvert ? -Math.Sign(delta) : Math.Sign(delta);
+        if (step == 0) step = dir;
         SwitchInfoPageByWheel(step);
     }
 
@@ -76,8 +95,19 @@ public partial class PlayerWindow
             _pageWheelIdle.Tick += (_, _) =>
             {
                 _pageWheelIdle!.Stop();
+                var accum = _pageWheelAccum;
+                var consumed = _pageWheelConsumed;
                 _pageWheelConsumed = false;
                 _pageWheelAccum = 0;
+
+                // 若触控板双指横滑停在半途(未达到 120 整格阈值就松手), 按当前跟手进度吸附或弹回
+                if (!consumed && _infoDraggingPage && !_infoPageAnimating && _pendingCaptureDevice == null)
+                {
+                    var target = PageIndex + (_infoDragDx < 0 ? 1 : -1);
+                    var shouldSwitch = (target is 0 or 1) &&
+                        (Math.Abs(accum) >= PageWheelNotch * 0.58 || Math.Abs(_infoDragDx) >= PageSwitchDistance);
+                    FinishPageDrag(shouldSwitch, target);
+                }
             };
         }
         _pageWheelIdle.Stop();
@@ -85,8 +115,8 @@ public partial class PlayerWindow
     }
 
     /// <summary>
-    /// 按方向切右栏页(0=简介, 1=评论), 并播放入场动画。
-    /// 到头了(已在两端)就不动 —— 与触摸手势的"到头不绕圈"一致。
+    /// 按方向切右栏页(0=简介, 1=评论/推荐), 并播放双页并排过渡动画。
+    /// 到头了(已在两端)则若处于触控板半途跟手态平滑回弹, 否则不动。
     /// </summary>
     /// <summary>测试入口: 直接驱动滚轮翻页(不经原生消息)</summary>
     internal void SwitchInfoPageByWheelForTest(int direction) => SwitchInfoPageByWheel(direction);
@@ -94,21 +124,26 @@ public partial class PlayerWindow
     private void SwitchInfoPageByWheel(int direction)
     {
         if (direction == 0) return;
-        if (_infoDraggingPage || _infoPageAnimating) return;   // 触屏手势进行中不接管
+        if (_infoPageAnimating) return;
         if (PageHost == null || PageHost.ActualWidth <= 1) return;
 
         var target = PageIndex + direction;
-        if (target is not (0 or 1)) return;
+        if (target is not (0 or 1))
+        {
+            if (_infoDraggingPage && _pendingCaptureDevice == null)
+                FinishPageDrag(switchPage: false, target);
+            return;
+        }
 
-        // ★★★ 2026-11-04 用户反馈"触控板还是硬切, 看不到另一边的内容":
-        //
-        //   上一版我只调 `FinishPageDrag`, **没有先 `BeginPageDrag`** ——
-        //   而 BeginPageDrag 正是"把另一页摆到侧面 + 锁高"的那一步。
-        //   少了它, 另一页的位移还停在 0, `FinishPageDrag` 里
-        //   "滑出去 + 滑进来"的动画就退化成"当前页滑走、另一页原地淡入" ⇒ 观感就是硬切。
-        //
-        //   ⇒ 现在先按触屏的方式把两页摆好(当前页居中、另一页在侧面),
-        //     FinishPageDrag 才有东西可滑 —— 与手指横滑看到的**完全同一条动画**。
+        // 若触控板前序小 delta 已经启动了跟手中间态(_infoDraggingPage == true),
+        // 直接从当前双页中间位置无缝续接 FinishPageDrag 收尾, 不重置起点!
+        if (_infoDraggingPage && _pendingCaptureDevice == null)
+        {
+            FinishPageDrag(switchPage: true, target);
+            return;
+        }
+        if (_infoDraggingPage) return;   // 触屏手势进行中不接管
+
         var width = Math.Max(1, PageHost.ActualWidth);
         _infoDragDx = direction > 0 ? -width : width;   // 符号决定另一页摆在哪侧
         if (!BeginPageDrag())
@@ -117,7 +152,7 @@ public partial class PlayerWindow
             _infoPageSwitching = true;
             try
             {
-                if (target == 1) TabComments.IsChecked = true;
+                if (target == 1) SecondaryPageButton().IsChecked = true;
                 else TabIntro.IsChecked = true;
             }
             finally { _infoPageSwitching = false; }

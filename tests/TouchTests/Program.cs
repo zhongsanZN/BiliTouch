@@ -45,7 +45,8 @@ internal static class Program
         var exit = 0;
         try
         {
-            if(args.Contains("--player-lifecycle")) PlayerLifecycleTests.Run(Check);
+            if(args.Contains("--web-rail")) WebRailTests.Run(Check, Artifacts);
+            else if(args.Contains("--player-lifecycle")) PlayerLifecycleTests.Run(Check);
             else if(args.Contains("--popup-pointer-review")) PopupLifetimeTests.PointerReview(Artifacts);
             else if(args.Contains("--danmaku-filtering")) DanmakuFilteringTests.Run(Check);
             else if(args.Contains("--popup-lifetime")) PopupLifetimeTests.Run(Check);

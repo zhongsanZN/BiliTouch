@@ -37,12 +37,37 @@ internal sealed class TabNavigationGestures
         page.Unloaded+=(_,_)=>Cancel();
         page.IsVisibleChanged+=(_,_)=>{if(!page.IsVisible)Cancel();};
     }
+    internal void PreviewHorizontalWheel(double progress)
+    {
+        if(_horizontal)return;
+        var buttons=Buttons;var current=SelectedIndex;
+        if(current<0)return;
+        var width=Math.Max(1,_content.ActualWidth);
+        var dx=-progress*Math.Min(width*.22,120);
+        _dx=dx;
+        var edge=current==0 && dx>0 || current==buttons.Length-1 && dx<0;
+        _slide.BeginAnimation(TranslateTransform.XProperty,null);
+        _slide.X=dx*(edge?.35:1);
+    }
+    internal void SettleHorizontalWheelPreview(bool commit)
+    {
+        if(_horizontal)return;
+        if(Math.Abs(_slide.X)<.5)return;
+        var dx=_dx;
+        if(commit && Math.Abs(dx)>1)Step(dx<0?1:-1);
+        else _slide.BeginAnimation(TranslateTransform.XProperty,new DoubleAnimation(_slide.X,0,TimeSpan.FromMilliseconds(160)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseOut}});
+    }
     internal void Step(int direction)
     {
         var buttons=Buttons;var current=SelectedIndex;
         if(current<0 || direction==0)return;
         var next=Math.Clamp(current+Math.Sign(direction),0,buttons.Length-1);
-        if(next==current)return;
+        if(next==current)
+        {
+            if(Math.Abs(_slide.X)>.5)
+                _slide.BeginAnimation(TranslateTransform.XProperty,new DoubleAnimation(_slide.X,0,TimeSpan.FromMilliseconds(160)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseOut}});
+            return;
+        }
         Cancel();buttons[next].SetCurrentValue(ToggleButton.IsCheckedProperty,true);
         _slide.BeginAnimation(TranslateTransform.XProperty,new DoubleAnimation(direction>0?36:-36,0,TimeSpan.FromMilliseconds(180)){EasingFunction=new CubicEase{EasingMode=EasingMode.EaseOut}});
     }
@@ -51,7 +76,7 @@ internal sealed class TabNavigationGestures
         Cancel();_suppressClick=false;_start=point;_started=Environment.TickCount64;_armed=true;
         for(var d=source;d!=null;d=Parent(d))
         {
-            if(d is ButtonBase or TextBoxBase or Slider or Hyperlink or ComboBox or BiliTouch.Views.Controls.ColorPalette){_armed=false;break;}
+            if(d is TextBoxBase or Slider or PasswordBox or Hyperlink or ComboBox or BiliTouch.Views.Controls.ColorPalette){_armed=false;break;}
             if(_scroll==null && d is ScrollViewer viewer)_scroll=viewer;
         }
         if(_scroll!=null){_panning=_scroll.PanningMode;_offset=_scroll.VerticalOffset;}

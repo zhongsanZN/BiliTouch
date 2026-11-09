@@ -43,6 +43,62 @@ internal static class MotionPerformanceTests
         TestFrameOwnership(check);
         TestDenseDanmaku(check);
         TestThemeClockCleanup(check);
+        TestSeamlessContinuousMorph(check);
+    }
+
+    private static void TestSeamlessContinuousMorph(Action<bool, string> check)
+    {
+        var player = new PlayerWindow { Width = 1280, Height = 800, Topmost = true, ShowActivated = false };
+        try
+        {
+            player.Show();
+            Pump(250);
+
+            var cardCover = new WriteableBitmap(16, 9, 96, 96, System.Windows.Media.PixelFormats.Pbgra32, null);
+            var sourceButton = new Border { Width = 240, Height = 135 };
+            SeamlessTransitionDirector.Prime("BV1seamless4", new Rect(80, 140, 240, 135), 8.0, cardCover, sourceButton);
+
+            check(player.TryStartSeamlessEntry("BV1seamless4"), "seamless shared-element morph starts from primed card anchor");
+            var overlay = (FrameworkElement)player.FindName("SeamlessMorphOverlay");
+            var hero = (Border)player.FindName("SeamlessHeroCard");
+            var loadingPoster = (Border)player.FindName("LoadingPoster");
+            var dockPoster = (Border)player.FindName("DockTransitionPoster");
+
+            check(overlay.Visibility == Visibility.Visible && player.IsSeamlessMorphRunning,
+                "seamless overlay becomes visible while morphing");
+            check(loadingPoster.Background is System.Windows.Media.ImageBrush && dockPoster.Background is System.Windows.Media.ImageBrush,
+                "shared cover artwork populates both loading poster and dock transition card without re-decoding");
+
+            // Step forward and verify continuous geometry + corner radius interpolation without overshoot.
+            var initialRect = player.SeamlessCurrentRect;
+            player.StepSeamlessMorph(0.06);
+            var midRect = player.SeamlessCurrentRect;
+            check(midRect.Width > initialRect.Width && midRect.Height > initialRect.Height &&
+                  player.SeamlessMorphProgress > 0.1 && player.SeamlessMorphProgress < 0.99,
+                $"seamless morph interpolates container geometry smoothly (w: {initialRect.Width:F1} -> {midRect.Width:F1})");
+
+            // Interrupt mid-flight with a new target rect and verify zero-jump retargeting.
+            var beforeInterrupt = player.SeamlessCurrentRect;
+            var newTarget = new Rect(20, 44, 880, 495);
+            check(player.StartSeamlessMorph(new Rect(0, 0, 100, 60), newTarget, 8.0, 0.0),
+                "in-flight seamless morph accepts retargeting");
+            var afterInterrupt = player.SeamlessCurrentRect;
+            check(Math.Abs(afterInterrupt.X - beforeInterrupt.X) < 0.5 &&
+                  Math.Abs(afterInterrupt.Width - beforeInterrupt.Width) < 0.5,
+                "interrupting an in-flight morph preserves the instantaneous screen rectangle without jumping");
+
+            for (var i = 0; i < 60 && player.IsSeamlessMorphRunning; i++)
+                player.StepSeamlessMorph(1.0 / 60.0);
+
+            check(!player.IsSeamlessMorphRunning && overlay.Visibility == Visibility.Collapsed,
+                "settled seamless morph hides the overlay and detaches its composition clock");
+        }
+        finally
+        {
+            SeamlessTransitionDirector.Clear();
+            player.Close();
+            Pump(200);
+        }
     }
 
     private static void TestThemeClockCleanup(Action<bool, string> check)
