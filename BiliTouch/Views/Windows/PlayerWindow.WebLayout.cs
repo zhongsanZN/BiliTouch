@@ -291,7 +291,75 @@ public partial class PlayerWindow
         if (e.ViewportWidthChange != 0 || e.ViewportHeightChange != 0)
             UpdateWebMeasurements();
         else if (e.VerticalChange != 0 && WebVideoPlaceholder.Height > 0)
-            UpdateDockForOffset(WebVideoPlaceholder.Height);
+        {
+            // ★ vmem 模式：滚动直接驱动画面变形（跟手）。做不到就退回阈值触发。
+            if (!(_vmemMode && TryTrackVmemMorph(WebVideoPlaceholder.Height)))
+                UpdateDockForOffset(WebVideoPlaceholder.Height);
+        }
+    }
+
+    // ── vmem 跟手 ────────────────────────────────────────────────────────────
+    private bool _vmemTracking;
+    private double _vmemTrackTarget;
+    private long _vmemLastScrollMs;
+    private DispatcherTimer? _vmemTrackTimer;
+
+    /// <summary>
+    /// 跟手：把滚动偏移映射成**目标**变形进度，再由一个 16ms 定时器逐帧向目标插值。
+    ///
+    /// ★ 为什么不直接把进度设成滚动映射值：滚动事件是离散的（滚轮一格就是一个大跳），
+    ///   直接赋值等于硬切。插值之后，连续触控板是"跟手"，滚轮是"快速但平滑地追过去"。
+    /// ★ 为什么现在能做而第四轮不行：那时画面是 HwndHost，动原生窗口必露伪影；而且
+    ///   直接改 `_webDockProgress` 会让 `StartLegacyWebDockTarget` 短路、`_webRendering`
+    ///   不置位，把两套布局回归搞挂。vmem 下只改变换矩阵，零原生调用，也不碰 `_webRendering`。
+    ///
+    /// ★ 映射区间：从 `height*0.18` 起、跨 `height*0.55`，滑完这一段就是完全停靠。
+    ///   停止滚动 140ms 后按当前进度就近收敛（>=0.5 停靠，否则回内联）。
+    /// </summary>
+    private bool TryTrackVmemMorph(double height)
+    {
+        if (!_vmemMode || _closing || height <= 0) return false;
+        var offset = WebLeftScroll.VerticalOffset;
+        var start = height * 0.18;
+        var band = Math.Max(80, height * 0.55);
+        var p = Math.Clamp((offset - start) / band, 0, 1);
+        if (!_vmemMorphPrepared) PrepareVmemMorph();
+        if (!_vmemMorphPrepared) return false;
+
+        _vmemTracking = true;
+        _vmemTrackTarget = p;
+        _vmemLastScrollMs = Environment.TickCount64;
+        StartVmemTrackTimer();
+        return true;
+    }
+
+    private void StartVmemTrackTimer()
+    {
+        _vmemTrackTimer ??= new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(16) };
+        _vmemTrackTimer.Tick -= OnVmemTrackTick;
+        _vmemTrackTimer.Tick += OnVmemTrackTick;
+        if (!_vmemTrackTimer.IsEnabled) _vmemTrackTimer.Start();
+    }
+
+    private void OnVmemTrackTick(object? sender, EventArgs e)
+    {
+        if (_closing || !_vmemTracking) { _vmemTrackTimer?.Stop(); return; }
+        // 逐帧逼近目标：一帧走 35%，约 6 帧（100ms）贴上去。
+        var delta = _vmemTrackTarget - _webDockProgress;
+        if (Math.Abs(delta) > 0.0015)
+        {
+            _webDockProgress += delta * 0.35;
+            ApplyVmemMorph(_webDockProgress);
+            UpdateAlternateVideoControls();
+            return;
+        }
+        _webDockProgress = _vmemTrackTarget;
+        ApplyVmemMorph(_webDockProgress);
+        // 已经贴住目标，且 140ms 没有新滚动 → 收敛
+        if (Environment.TickCount64 - _vmemLastScrollMs < 140) return;
+        _vmemTrackTimer?.Stop();
+        _vmemTracking = false;
+        StartLegacyWebDockTarget(_webDockProgress >= 0.5 ? 1.0 : 0.0);
     }
 
     /// <summary>
@@ -335,7 +403,15 @@ public partial class PlayerWindow
     private void StartLegacyWebDockTarget(double target)
     {
         if (Math.Abs(target - _webAnimationTo) < 0.0001 && _webRendering) return;
-        if (Math.Abs(target - _webDockProgress) < 0.0001) { _webAnimationTo = target; ApplyWebVideoBounds(); return; }
+        if (Math.Abs(target - _webDockProgress) < 0.0001)
+        {
+            _webAnimationTo = target;
+            ApplyWebVideoBounds();
+            // ★ 跟手停在端点上时（进度已经是 0 或 1），这里直接落位，
+            //   必须把 VmemView 的变换复位，否则会二次缩放。
+            if (_vmemMode) ResetVmemMorph(docked: target >= .5);
+            return;
+        }
         var reversing = (target < _webDockProgress - .0001 && _webAnimationTo > _webDockProgress + .0001)
                         || (target > _webDockProgress + .0001 && _webAnimationTo < _webDockProgress - .0001);
         _webAnimationFrom = _webDockProgress; _webAnimationTo = target; _webAnimationElapsed = 0;
@@ -402,8 +478,12 @@ public partial class PlayerWindow
         if (!_vmemMorphPrepared || _vmemMorphScale == null || _vmemMorphMove == null) return;
         // ★ 画面缩小时，VideoSurface 的黑色底会露出一圈黑框（像"黑盒子在缩"）。
         //   vmem 下把它设成透明，页面/评论从四周透出来 —— 这才是"画面从页面里浮起来"的观感。
-        if (!ReferenceEquals(VideoSurface.Background, Brushes.Transparent))
+        //   p 接近 0（还在内联位）时保持黑底，避免边缘透出一条缝。
+        var wantTransparent = p > 0.02;
+        if (wantTransparent && !ReferenceEquals(VideoSurface.Background, Brushes.Transparent))
             VideoSurface.Background = Brushes.Transparent;
+        else if (!wantTransparent && !ReferenceEquals(VideoSurface.Background, Brushes.Black))
+            VideoSurface.Background = Brushes.Black;
         var sx = 1 + (_vmemScaleX - 1) * p;
         var sy = 1 + (_vmemScaleY - 1) * p;
         _vmemMorphScale.ScaleX = sx;
@@ -628,6 +708,8 @@ public partial class PlayerWindow
     //   原因见 SetWebDockTarget 上方注释。
     private void StopWebVideoAnimation()
     {
+        _vmemTracking = false;
+        _vmemTrackTimer?.Stop();
         if(!_closing){SetVideoHostVisible(true);VideoSurface.Background=Brushes.Black;}
         // ★ vmem：收尾把画面变换复位，圆角按当前是否停靠保留。
         if (_vmemMode) ResetVmemMorph(docked: _webDockProgress >= .5);
@@ -649,7 +731,7 @@ public partial class PlayerWindow
         if (!_webInitialized || ControlBar == null || WebMiniControls == null) return;
         // Both bars belong to the stationary native overlay. Hide them before snapshot
         // capture/motion starts, and keep them hidden until the native surface settles.
-        var moving = _webLayoutMounted && _webRendering;
+        var moving = _webLayoutMounted && (_webRendering || _vmemTracking);
         // The native overlay stays at its original coordinates during snapshot motion.
         // Hide danmaku before capture starts and restore only after the surface settles.
         DanmakuCanvas.Visibility = moving ? Visibility.Hidden : Visibility.Visible;

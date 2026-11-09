@@ -75,9 +75,13 @@ internal static class VmemMorphTests
 
             var scales = new List<double>();
             var coverVisibleDuringMorph = false;
+            var trackingSamples = 0;
             EventHandler onFrame = (_, _) =>
             {
-                if (!Field<bool>(player, "_webRendering")) return;
+                var animating = Field<bool>(player, "_webRendering");
+                var tracking = Field<bool>(player, "_vmemTracking");
+                if (!animating && !tracking) return;
+                if (tracking && !animating) trackingSamples++;
                 if (vmem.RenderTransform is TransformGroup g && g.Children.Count > 0 && g.Children[0] is ScaleTransform st)
                     scales.Add(Math.Round(st.ScaleX, 3));
                 if (cover.Visibility == Visibility.Visible) coverVisibleDuringMorph = true;
@@ -97,6 +101,7 @@ internal static class VmemMorphTests
             check(distinct >= 4, $"video body scales continuously (not a hard cut): {distinct} distinct intermediate scales");
             check(min <= 0.55, $"video body actually shrinks toward the dock: min scale {min:F3}");
             check(!coverVisibleDuringMorph, "the glass cover stays collapsed in vmem mode (no fake card)");
+            check(trackingSamples >= 3, $"scroll drives the morph directly (finger-tracking): {trackingSamples} tracking frames");
             check(Math.Abs(Field<double>(player, "_webDockProgress") - 1) < 0.02,
                 $"docked progress settles at 1: {Field<double>(player, "_webDockProgress"):F3}");
             check(vmem.Clip is RectangleGeometry, "docked video keeps rounded-corner clipping");
