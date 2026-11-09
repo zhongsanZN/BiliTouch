@@ -55,6 +55,14 @@ public partial class PlayerWindow
     private double _webCoverTargetNy = .5;
     private double _webCoverAreaW, _webCoverAreaH;
 
+    // ---- vmem 模式：直接对 VmemView 做 RenderTransform，让**画面本体**连续变形 ─---
+    // 这是和"玻璃片盖在视频上"根本不同的地方：VideoView 是 HwndHost 时只能盖假卡片，
+    // vmem 下画面是普通 Image，可以直接缩放/位移/裁圆角。
+    private double _vmemScaleX = 1, _vmemScaleY = 1, _vmemTx, _vmemTy;
+    private bool _vmemMorphPrepared;
+    private ScaleTransform? _vmemMorphScale;
+    private TranslateTransform? _vmemMorphMove;
+
     // ── 动效参数（2026-11-09 第六轮定稿）────────────────────────────────────
     /// <summary>停靠/还原的基础时长。HyperOS 那种"贵"的手感落在 400ms 上下。</summary>
     internal const double WebMorphDurationMs = 420;
@@ -339,11 +347,88 @@ public partial class PlayerWindow
         // ★ 一次性算好「遮罩该缩到哪」：朝真实的 WebDockAnchor 几何收缩，
         //   而不是硬编码往视频区右上角缩 —— 后者与落点方向不一致，观感就是"缩完瞬移"。
         UpdateWebCoverTargetGeometry();
-        DockTransitionCover.Visibility = Visibility.Visible;
+        if (_vmemMode)
+        {
+            // ★ vmem：不用遮罩，直接算"画面要缩到哪"，逐帧变换 VmemView。
+            PrepareVmemMorph();
+            DockTransitionCover.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            DockTransitionCover.Visibility = Visibility.Visible;
+        }
         // 品牌块正好压在视频中心，过渡期间收起，别挡画面。
         if (BrandMark != null) BrandMark.Visibility = Visibility.Collapsed;
         if (!_webRendering) { _webRendering = true; CompositionTarget.Rendering += OnWebVideoFrame; }
         UpdateAlternateVideoControls();
+    }
+
+    /// <summary>
+    /// 预计算 vmem 变形要用的缩放/位移：从"视频区当前几何"到"真实停靠几何"。
+    /// 全部相对 `PlayerStage` 计算，落地时 `ApplyWebVideoBounds` 把 VideoSurface
+    /// 直接放到同一个矩形，所以 commit 那一帧**位置完全重合、零跳变**。
+    /// </summary>
+    private void PrepareVmemMorph()
+    {
+        _vmemMorphPrepared = false;
+        try
+        {
+            var from = VideoSurface.TransformToAncestor(PlayerStage)
+                .TransformBounds(new Rect(VideoSurface.RenderSize));
+            var to = CalculateWebVideoBounds(1);
+            if (from.Width < 2 || from.Height < 2 || to.IsEmpty || to.Width < 2) return;
+            _vmemScaleX = to.Width / from.Width;
+            _vmemScaleY = to.Height / from.Height;
+            _vmemTx = to.Left - from.Left;
+            _vmemTy = to.Top - from.Top;
+            if (VmemView.RenderTransform is not TransformGroup)
+            {
+                _vmemMorphScale = new ScaleTransform(1, 1);
+                _vmemMorphMove = new TranslateTransform(0, 0);
+                var g = new TransformGroup();
+                g.Children.Add(_vmemMorphScale);
+                g.Children.Add(_vmemMorphMove);
+                VmemView.RenderTransform = g;
+                VmemView.RenderTransformOrigin = new Point(0, 0);
+            }
+            _vmemMorphPrepared = true;
+        }
+        catch { }
+    }
+
+    /// <summary>逐帧把 p 应用到 VmemView：缩放 + 位移 + 圆角裁剪。</summary>
+    private void ApplyVmemMorph(double p)
+    {
+        if (!_vmemMorphPrepared || _vmemMorphScale == null || _vmemMorphMove == null) return;
+        // ★ 画面缩小时，VideoSurface 的黑色底会露出一圈黑框（像"黑盒子在缩"）。
+        //   vmem 下把它设成透明，页面/评论从四周透出来 —— 这才是"画面从页面里浮起来"的观感。
+        if (!ReferenceEquals(VideoSurface.Background, Brushes.Transparent))
+            VideoSurface.Background = Brushes.Transparent;
+        var sx = 1 + (_vmemScaleX - 1) * p;
+        var sy = 1 + (_vmemScaleY - 1) * p;
+        _vmemMorphScale.ScaleX = sx;
+        _vmemMorphScale.ScaleY = sy;
+        _vmemMorphMove.X = _vmemTx * p;
+        _vmemMorphMove.Y = _vmemTy * p;
+        ApplyVmemRadius(14 * p);
+    }
+
+    /// <summary>落位后复位变换；圆角按停靠状态保留（小窗是圆角卡片）。</summary>
+    private void ResetVmemMorph(bool docked)
+    {
+        if (_vmemMorphScale != null) { _vmemMorphScale.ScaleX = _vmemMorphScale.ScaleY = 1; }
+        if (_vmemMorphMove != null) { _vmemMorphMove.X = _vmemMorphMove.Y = 0; }
+        ApplyVmemRadius(docked ? 14 : 0);
+        // 停靠态保持透明（圆角外要透出右栏背景）；回到内联态恢复黑底。
+        VideoSurface.Background = docked ? Brushes.Transparent : Brushes.Black;
+    }
+
+    private void ApplyVmemRadius(double radius)
+    {
+        if (radius <= 0.5) { VmemView.Clip = null; return; }
+        var w = Math.Max(1, VmemView.ActualWidth);
+        var h = Math.Max(1, VmemView.ActualHeight);
+        VmemView.Clip = new RectangleGeometry(new Rect(0, 0, w, h), radius, radius);
     }
 
     /// <summary>
@@ -394,7 +479,9 @@ public partial class PlayerWindow
         var t = Math.Clamp(_webAnimationElapsed / _webAnimationDurationMs, 0, 1);
         var eased = WebMorphEase(_webAnimationElapsed, _webAnimationDurationMs);
         _webDockProgress = _webAnimationFrom + (_webAnimationTo - _webAnimationFrom) * eased;
-        UpdateWebCoverAnimation(_webDockProgress);
+        // ★ vmem 模式走「画面本体变形」；其余走「玻璃卡片」兜底。
+        if (_vmemMode && _vmemMorphPrepared) ApplyVmemMorph(_webDockProgress);
+        else UpdateWebCoverAnimation(_webDockProgress);
         // ★ 曾试过让原生 VideoSurface 跟着平移/分档缩放，真机截图证实 HwndHost 的
         //   WPF 黑底与 vout HWND 会分离、露黑边白边，分档 resize 还会刷出纯白帧。
         //   ⇒ 过渡期间原生窗口一律不动，只有纯 WPF 遮罩连续变形；结束帧才落位一次。
@@ -407,6 +494,9 @@ public partial class PlayerWindow
             // 动画走完的这一帧才把原生窗口**一次性**移到目标几何。此刻它被遮罩完全盖住,
             // 用户看不到这次 SetWindowPos。
             ApplyWebVideoBounds();
+            // ★ vmem：落位后立刻复位 VmemView 的变换/圆角。
+            //   此刻 VideoSurface 已经就是目标矩形，画面尺寸位置完全重合 ⇒ 零跳变。
+            if (_vmemMode) ResetVmemMorph(docked: _webAnimationTo >= .5);
             // ★ 删除截图替身后，commit 的这一次原生 resize 会让 vout 宿主窗口重擦一遍
             //   默认浅色底（屏幕采样能抓到 1 帧 ~236,237,228 的白闪）。立刻刷黑宿主类背景刷。
             ApplyHwndHostBlackBackground();
@@ -539,6 +629,8 @@ public partial class PlayerWindow
     private void StopWebVideoAnimation()
     {
         if(!_closing){SetVideoHostVisible(true);VideoSurface.Background=Brushes.Black;}
+        // ★ vmem：收尾把画面变换复位，圆角按当前是否停靠保留。
+        if (_vmemMode) ResetVmemMorph(docked: _webDockProgress >= .5);
         if (_webRendering) { CompositionTarget.Rendering -= OnWebVideoFrame; _webRendering = false; }
         if (DockTransitionCover != null) DockTransitionCover.Visibility = Visibility.Collapsed;
         // 收尾必须让原生窗口落在最终几何上: 过渡期间它一直没动, 只有这里会动。

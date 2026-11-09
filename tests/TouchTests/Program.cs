@@ -56,6 +56,7 @@ internal static class Program
             else if(args.Contains("--scroll-image-wall")) ScrollRealizationTests.ImageWall(Artifacts, Check);
             else if(args.Contains("--scroll-realization")) ScrollRealizationTests.Run(Check, args.Contains("--cost-only"));
             else if(args.Contains("--enhancement-vsr")) VideoEnhancementTests.Run(Check);
+            else if(args.Contains("--vmem-morph")) VmemMorphTests.Run(Check, Artifacts);
             else if(args.Contains("--vmem-player")) VmemPlayerTests.Run(Check, Artifacts);
             else if(args.Contains("--vmem-view")) VmemViewTests.Run(Check, Artifacts);
             else if(args.Contains("--web-morph-motion")) WebMorphMotionTests.Run(Check, Artifacts);

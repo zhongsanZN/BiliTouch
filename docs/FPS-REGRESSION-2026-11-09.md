@@ -804,3 +804,61 @@ MountVmemSurface() 做三件事：从原父级摘下 VideoAreaRoot → VideoView
   就能得到第八轮原型里那种**画面本体变形**。
 - 4K 风险仍在：vmem 走软件解码 + BGRA 转换，1080p60 实测 59.8fps/1ms 每帧，
   4K 每帧字节数是 4 倍，默认关着就是为这个。
+---
+
+## 第十轮：画面本体变形真的做出来了（vmem 模式）
+
+上一轮把 vmem 接进了真实播放器，但停靠动画还是玻璃片。这一轮把动画换成**直接变换 VmemView**。
+
+### 做法
+
+vmem 模式下 VideoView 已经不在屏幕上，画面是普通 Image，所以停靠动画可以这样：
+
+1. PrepareVmemMorph()：用 VideoSurface 当前几何 与 CalculateWebVideoBounds(1)（真实停靠几何）
+   算出缩放比 _vmemScaleX/Y 和位移 _vmemTx/Ty，一次性存好；
+2. ApplyVmemMorph(p)：逐帧给 VmemView.RenderTransform 的 ScaleTransform/TranslateTransform
+   赋值，并按 14 * p 设置圆角 Clip；同时把 VideoSurface.Background 设透明
+   —— 画面缩小时页面/评论从四周透出来，是"画面从页面里浮起来"而不是"黑盒子在缩"；
+3. 落位那一帧 ApplyWebVideoBounds() 把 VideoSurface 直接放到同一个矩形，
+   随即 ResetVmemMorph() 复位变换 —— 因为两者位置尺寸**完全重合**，跳变是零；
+4. 停靠态保留 14px 圆角（小窗是圆角卡片），回到内联态去掉圆角并恢复黑底。
+
+全程 DockTransitionCover 保持 Collapsed：vmem 模式下**不再有假卡片**。
+
+### 验证（--vmem-morph，真实 PlayerWindow + 网页布局 + 225% DPI，5 项全过）
+
+| 断言 | 结果 |
+|---|---|
+| 画面本体连续缩放（不是硬切） | **45 个不同的中间缩放值** |
+| 真的缩到停靠尺寸 | 最小 scale **0.390** |
+| 玻璃片全程不出现 | 通过 |
+| 停靠进度收敛到 1 | 1.000 |
+| 停靠后保留圆角裁剪 | 通过 |
+
+实拍证据（rtifacts/touch-tests/vmem-morph/）：
+
+- mem-morph-mid35.png —— **视频本体在半空中**，画面仍在实时播放（时间码 02.600），
+  四角圆角，底下评论直接透出来；
+- mem-morph-mid65.png —— 继续缩小、继续右移；
+- mem-morph-docked.png —— 落到右栏小窗，圆角卡片，左侧评论铺满。
+
+这三张和第六轮那种"玻璃片盖着全尺寸视频"是完全不同的东西 —— 这才是澎湃OS 那种
+**窗口本体带着画面连续变形**。
+
+### 回归
+
+十一项 **183 项全绿**（vmem-morph 5、vmem-player 7、vmem-view 6、web-morph-motion 11、
+enhancement-vsr 9、danmaku-recovery 13、web-player-layout 33、web-dock-flicker 7、
+web-controls-unread 41、live-room 50、player-video-load 1）。
+默认（非 vmem）路径仍是玻璃片逻辑，一行没改。
+
+### 怎么用
+
+设置 → 通用 → 打开「实验性：WPF 合成视频（vmem）」→ 重开播放器 → 开网页版布局，
+滚动触发小窗停靠，就能看到画面本体变形。
+
+### 仍要说明的
+
+- vmem 走软件解码 + BGRA 转换，1080p60 实测没问题，**4K 可能掉帧**，卡就关掉开关。
+- 目前只有网页版布局的停靠走这套变形；全屏/铺满/直播仍是原路径。
+- 跟手（滚动直接驱动）仍未实现，现在还是"跨阈值触发一次 420ms 变形"。
