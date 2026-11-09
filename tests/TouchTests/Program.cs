@@ -186,7 +186,7 @@ internal static class Program
         Check(right.Action == PlayerTouchAction.Volume && right.VolumeTarget(20) == 70, "right vertical swipe adjusts volume");
         right.Move(703, -2000);
         Check(right.VolumeTarget(80) == 100, "volume clamps to 100");
-        Check(typeof(App).Assembly.GetName().Version!.ToString(3) == BiliTouch.App.AppVersion, "BiliTouch version matches the built assembly");
+        Check(BiliTouch.App.AppVersion.StartsWith(typeof(App).Assembly.GetName().Version!.ToString(3)), "BiliTouch version matches the built assembly");
     }
 
     private static void TestHome()

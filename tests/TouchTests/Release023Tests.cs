@@ -71,6 +71,11 @@ internal static class Release023Tests
   Call(player,"OnSeasonCloseClick",btnSeasonToggle,new RoutedEventArgs());
   check(seasonList.Visibility==Visibility.Visible && Equals(btnSeasonToggle.Content,"收起合集"),"clicking 展开合集 re-expands the episode list");
   player.Close();Pump(100);
+  Svc.Player.WarmUp();Pump(50);
+  Svc.Player.PlayVideo("BV1warmupTest", "Warmup Test");Pump(150);
+  var warmed=(PlayerWindow)typeof(PlayerService).GetField("_window",Hidden)!.GetValue(Svc.Player)!;
+  check(warmed.IsVisible && warmed.WindowState==WindowState.Maximized && warmed.ShowActivated,"warmed-up player window opens maximized without ShowActivated conflict");
+  warmed.Close();Pump(100);
   var build=typeof(ApiClient).GetMethod("BuildDynamicLikeRequest",BindingFlags.NonPublic|BindingFlags.Static)!;
   foreach(var liked in new[]{true,false})
   {

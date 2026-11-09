@@ -61,7 +61,7 @@ public class PlayerService
             win.Top = wa.Top + Math.Max(0, (wa.Height - 760) / 2);
 
             win.ShowInTaskbar = true;
-            win.ShowActivated = false;
+            win.ShowActivated = true;
             win.Topmost = false;
             win.Owner = null;
 
@@ -182,6 +182,7 @@ public class PlayerService
             //   Show 之后再改会先按 Normal 布局一帧再跳, 那一下闪动正好落在起播画面上)。
             if (!reuse.IsVisible)
             {
+                reuse.ShowActivated = true;
                 reuse.PrepareSeamlessPreShow();
                 reuse.WindowState = WindowState.Maximized;   // ★ 先定状态
                 reuse.Show();                                 // ★ 再显示
@@ -231,6 +232,7 @@ public class PlayerService
         //   这是**窗口最大化**, 不是视频全屏 —— 右栏、控制栏都还在, 用户随时可以还原。
         //   ★ 必须放在 Show() 之前: Show 之后再改 WindowState 会先按 1280×760 布局一帧再跳,
         //     那一下闪动正好落在视频起播的画面上。
+        win.ShowActivated = true;
         win.PrepareSeamlessPreShow();
         win.WindowState = WindowState.Maximized;
         win.Show();

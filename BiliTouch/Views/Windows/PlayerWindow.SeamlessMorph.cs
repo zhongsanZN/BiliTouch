@@ -78,6 +78,7 @@ public partial class PlayerWindow
     internal void PrepareSeamlessPreShow()
     {
         if (_closing) return;
+        ShowActivated = true;
         try
         {
             new WindowInteropHelper(this).EnsureHandle();
