@@ -65,15 +65,18 @@ internal static class WebDockFlickerTests
                     var color = GetPixel(dc, (int)point.X, (int)point.Y);
                     int r = (int)(color & 255), g = (int)((color >> 8) & 255), b = (int)((color >> 16) & 255);
                     var fixtureColor = g > 120 && r < 120 && b > 60 && b < 180;
-                    // 半透明遮罩只压暗 15%，压暗后仍在 fixtureColor 范围内；
+                    // 玻璃卡片背景 #4D000000（30% 黑）会把采样到的 fixture 颜色整体压暗，
+                    // 所以再放行"同一色相、被压暗"的版本：绿通道仍占优、比例关系不变。
+                    var darkenedFixture = g >= 80 && g > r + 20 && b > 30 && b < g;
                     // 窗口落位后的 1~2 帧布局还没刷新，采样点仍钉在原位，会读到
                     // 原位空出来的纯黑底 —— 属正常的过渡收尾，不是黑帧。
                     var coverColor = (Math.Abs(r - 23) < 12 && Math.Abs(g - 23) < 12 && Math.Abs(b - 28) < 12)
                                      || (r < 12 && g < 12 && b < 12);
                     var whiteFlash = r > 230 && g > 230 && b > 230;
-                    var expected = moving ? !whiteFlash : (fixtureColor || coverColor);
+                    var ok = fixtureColor || darkenedFixture || coverColor;
+                    var expected = moving ? !whiteFlash : ok;
                     if (moving) { if (whiteFlash) whiteFlashCount++; }
-                    else { idleTotal++; if (!fixtureColor && !coverColor) idleBad++; }
+                    else { idleTotal++; if (!ok) idleBad++; }
                     samples.Add(new { r, g, b, expected, moving, fixtureColor, x=rect.X, y=rect.Y, width=rect.Width, height=rect.Height, progress=Field<double>(player,"_webDockProgress") });
                 };
                 CompositionTarget.Rendering += observe;

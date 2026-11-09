@@ -47,6 +47,21 @@ public partial class PlayerWindow
     private int _webScrollGeneration;
     private bool _webRestoreScrolling;
     private bool _webApplyingBounds;
+    // 本次过渡的时长与「遮罩该缩到哪」的目标几何（相对视频区归一化）。
+    // 由 StartLegacyWebDockTarget 一次性算好，逐帧只做插值。
+    private double _webAnimationDurationMs = WebMorphDurationMs;
+    private double _webCoverTargetScale = .42;
+    private double _webCoverTargetNx = .5;
+    private double _webCoverTargetNy = .5;
+    private double _webCoverAreaW, _webCoverAreaH;
+
+    // ── 动效参数（2026-11-09 第六轮定稿）────────────────────────────────────
+    /// <summary>停靠/还原的基础时长。HyperOS 那种"贵"的手感落在 400ms 上下。</summary>
+    internal const double WebMorphDurationMs = 420;
+    /// <summary>反向（滚回去打断正在进行的过渡）用更短的时长，减少"追不上手"的迟滞。</summary>
+    internal const double WebMorphReverseDurationMs = 240;
+    /// <summary>临界阻尼固有频率：约 420ms 收敛、**零过冲**。旧曲线 ζ≈0.54 会冲到 1.089。</summary>
+    internal const double WebMorphOmega = 15.5;
     private FrameworkElement[] _webHeaderParts = Array.Empty<FrameworkElement>();
     private readonly StackPanel _webHeaderStack = new();
     private ScrollViewer? _webHeaderScroll;
@@ -75,15 +90,13 @@ public partial class PlayerWindow
         WebHeaderHost.Content = _webHeaderScroll;
         WebMiniTime.SetBinding(TextBlock.TextProperty, new Binding(nameof(TextBlock.Text)) { Source = TimeText });
         WebMiniPlayGlyph.SetBinding(SkinActionIcon.DataProperty, new Binding("Content.Data") { Source = BtnPlay });
-        // 过渡遮罩的变换挂在它的内容上, 而不是它自己: 它自己要被 VideoAreaRoot 的布局约束住,
-        // 挂 Transform 上去会把它从布局里"抬起来", 反而失去裁剪边界。
+        // ★★★ 2026-11-09 第六轮：变换必须挂在**卡片**上，不是外层容器。
+        //   外层 DockTransitionCover 是透明容器（承担裁剪与 Z 序），它自己不能加 Transform
+        //   —— 加了会被移出布局、失去裁剪边界；而它的 Child 才是真正要缩放/位移的卡片。
+        //   以前这里 Child 是 BrandMark，于是"缩小的只是图标、那块板一直满屏"，
+        //   叠加之后又给 brand.RenderTransform 单独赋值把 group 覆盖掉，等于整段动画没生效。
         if (DockTransitionCover.Child is UIElement coverChild && coverChild is FrameworkElement coverElement)
         {
-            // ★★★ 2026-11-09 修隐藏 bug：coverElement 就是 BrandMark(同一个对象)。
-            //   旧代码这里挂好 TransformGroup 后，下面又给 brand.RenderTransform 单独赋值，
-            //   把 group **整个覆盖**了 ⇒ _webCoverScale/_webCoverMove 从来没生效过，
-            //   过渡实际只有"深灰板 + 图标放大 + 结束帧瞬移"，难怪生硬。
-            //   现在三个变换全部并进一个 RenderTransform group（纯渲染变换，不触发布局）。
             var group = new TransformGroup();
             group.Children.Add(_webCoverScale);
             group.Children.Add(_webCoverMove);
@@ -296,20 +309,72 @@ public partial class PlayerWindow
         StartLegacyWebDockTarget(target);
     }
 
+    /// <summary>
+    /// 停靠/还原的进度曲线：临界阻尼弹簧，**零过冲**、单调收敛。
+    /// 旧曲线 1-e^(-7t)(cos11t+.42sin11t) 的阻尼比只有 0.54，会冲到 1.089 ——
+    /// 用户说的"生硬/廉价"主要来自这个可见过冲。
+    /// 抽成静态方法是为了让 --web-morph-motion 能直接断言"不过冲、单调"。
+    /// </summary>
+    internal static double WebMorphEase(double elapsedMs, double durationMs)
+    {
+        if (durationMs <= 0) return 1;
+        if (elapsedMs <= 0) return 0;
+        var x = WebMorphOmega * (elapsedMs / 1000.0);
+        var eased = 1 - Math.Exp(-x) * (1 + x);
+        return elapsedMs >= durationMs ? 1 : Math.Clamp(eased, 0, 1);
+    }
+
     private void StartLegacyWebDockTarget(double target)
     {
         if (Math.Abs(target - _webAnimationTo) < 0.0001 && _webRendering) return;
         if (Math.Abs(target - _webDockProgress) < 0.0001) { _webAnimationTo = target; ApplyWebVideoBounds(); return; }
+        var reversing = (target < _webDockProgress - .0001 && _webAnimationTo > _webDockProgress + .0001)
+                        || (target > _webDockProgress + .0001 && _webAnimationTo < _webDockProgress - .0001);
         _webAnimationFrom = _webDockProgress; _webAnimationTo = target; _webAnimationElapsed = 0;
+        _webAnimationDurationMs = reversing ? WebMorphReverseDurationMs : WebMorphDurationMs;
         // ★ 用绝对墙钟算时长：旧的"每帧累加且 clamp 50ms"在滚动事件链占住 Dispatcher 时
         //   会把 380ms 动画拖到 1.5 秒(真机捕获实测)。墙钟保证总时长恒定。
         _webAnimationWallStart = Stopwatch.GetTimestamp();
         _webSurfaceSettledAt = 0;
+        // ★ 一次性算好「遮罩该缩到哪」：朝真实的 WebDockAnchor 几何收缩，
+        //   而不是硬编码往视频区右上角缩 —— 后者与落点方向不一致，观感就是"缩完瞬移"。
+        UpdateWebCoverTargetGeometry();
         DockTransitionCover.Visibility = Visibility.Visible;
         // 品牌块正好压在视频中心，过渡期间收起，别挡画面。
         if (BrandMark != null) BrandMark.Visibility = Visibility.Collapsed;
         if (!_webRendering) { _webRendering = true; CompositionTarget.Rendering += OnWebVideoFrame; }
         UpdateAlternateVideoControls();
+    }
+
+    /// <summary>
+    /// 计算遮罩应从「铺满视频区」缩到「停靠位」的归一化目标：缩放比 + 目标中心。
+    /// 输出相对视频区（0..1），在 UpdateWebCoverAnimation 里逐帧插值。
+    ///
+    /// ★ 用 CalculateWebVideoBounds(1) 取**逻辑**落点，而不是 PrepareWebDockAnchor(1)：
+    ///   后者会把 WebDockAnchor.Height 真的设成满高，动画一开始右栏内容就会被顶下去
+    ///   ——那是一次新的布局跳变。CalculateWebVideoBounds 只读 ActualWidth、不写布局。
+    /// </summary>
+    private void UpdateWebCoverTargetGeometry()
+    {
+        try
+        {
+            var area = VideoSurface.TransformToAncestor(PlayerStage)
+                .TransformBounds(new Rect(VideoSurface.RenderSize));
+            if (area.Width < 2 || area.Height < 2) return;
+            var dock = CalculateWebVideoBounds(1);
+            if (dock.IsEmpty || dock.Width < 2 || dock.Height < 2) return;
+            var scale = Math.Clamp(dock.Width / area.Width, .18, .95);
+            _webCoverTargetScale = scale;
+            _webCoverAreaW = area.Width;
+            _webCoverAreaH = area.Height;
+            // 目标中心：朝真实停靠位去，但保证收缩后整块仍留在视频区内（否则会被浮层裁掉，
+            // 落位那一跳就盖不住了）。
+            var rawNx = (dock.Left + dock.Width / 2 - area.Left) / area.Width;
+            var rawNy = (dock.Top + dock.Height / 2 - area.Top) / area.Height;
+            _webCoverTargetNx = Math.Clamp(rawNx, scale / 2 + .02, 1 - scale / 2 - .02);
+            _webCoverTargetNy = Math.Clamp(rawNy, scale / 2 + .02, 1 - scale / 2 - .02);
+        }
+        catch { /* 几何拿不到就退回默认，不影响动画 */ }
     }
 
     /// <summary>
@@ -323,10 +388,11 @@ public partial class PlayerWindow
         if (!_webLayoutMounted || _closing) { StopWebVideoAnimation(); return; }
         var now = Stopwatch.GetTimestamp();
         _webAnimationElapsed = Stopwatch.GetElapsedTime(_webAnimationWallStart, now).TotalMilliseconds;
-        // 380ms 弹簧（与 VideoFrameTransition.Spring 同款曲线）：观感对齐原来的截图过渡，
-        // 但只改纯 WPF 变换矩阵，不重采样位图、不隐藏原生窗口、不等 DWM。
-        var t = Math.Clamp(_webAnimationElapsed / 380, 0, 1);
-        var eased = 1 - Math.Exp(-7 * t) * (Math.Cos(11 * t) + .42 * Math.Sin(11 * t));
+        // ★ 临界阻尼弹簧（零过冲）：旧曲线 ζ≈0.54 会冲到 1.089，观感是"弹一下"，
+        //   廉价感主要来自这个过冲。现在用 1 - e^(-ωt)(1+ωt)，单调收敛、末端极轻。
+        //   只改纯 WPF 变换矩阵，不重采样位图、不隐藏原生窗口、不等 DWM。
+        var t = Math.Clamp(_webAnimationElapsed / _webAnimationDurationMs, 0, 1);
+        var eased = WebMorphEase(_webAnimationElapsed, _webAnimationDurationMs);
         _webDockProgress = _webAnimationFrom + (_webAnimationTo - _webAnimationFrom) * eased;
         UpdateWebCoverAnimation(_webDockProgress);
         // ★ 曾试过让原生 VideoSurface 跟着平移/分档缩放，真机截图证实 HwndHost 的
@@ -363,14 +429,21 @@ public partial class PlayerWindow
     private void UpdateWebCoverAnimation(double progress)
     {
         var p = Math.Clamp(progress, 0, 1);
-        // 从 1.0 缩到 0.42: 再小就只剩一块看不清的色块了。
-        var scale = 1 - 0.58 * p;
+        // ★ 卡片自身的不透明度在头 12% 进度内快速淡入：卡片刻意做得比原来的薄纱实，
+        //   如果 p=0 就整块盖上去，手势一开始视频会"闪一下变暗"。淡入后它才读得出是一张卡。
+        if (DockTransitionCard != null) DockTransitionCard.Opacity = Math.Clamp(p / .12, 0, 1);
+        // 缩放与中心位置**同时插值**：遮罩朝真实停靠位收缩，而不是原地缩成一块色块。
+        var scale = 1 + (_webCoverTargetScale - 1) * p;
         _webCoverScale.ScaleX = _webCoverScale.ScaleY = scale;
-        if (WebLeftScroll.ActualWidth > 0)
+        var w = _webCoverAreaW > 2 ? _webCoverAreaW : WebLeftScroll.ActualWidth;
+        var h = _webCoverAreaH > 2 ? _webCoverAreaH : Math.Max(1, WebVideoPlaceholder.ActualHeight);
+        if (w > 0)
         {
-            // 缩放原点在左上角, 所以要补一个位移把缩小的块推到自身上边缘/右边缘之间居中。
-            _webCoverMove.X = (1 - scale) * WebLeftScroll.ActualWidth * 0.5;
-            _webCoverMove.Y = (1 - scale) * Math.Max(1, WebVideoPlaceholder.ActualHeight) * 0.5;
+            var nx = .5 + (_webCoverTargetNx - .5) * p;
+            var ny = .5 + (_webCoverTargetNy - .5) * p;
+            // 变换原点在左上角：把"中心落到 nx,ny"反解成左上角位移。
+            _webCoverMove.X = w * (nx - scale / 2);
+            _webCoverMove.Y = h * (ny - scale / 2);
         }
         if (BrandMark != null)
         {
@@ -475,6 +548,7 @@ public partial class PlayerWindow
         _webCoverMove.X = _webCoverMove.Y = 0;
         _webBrandLayoutScale.ScaleX = _webBrandLayoutScale.ScaleY = 1;
         if (DockTransitionCover != null) DockTransitionCover.Opacity = 1;
+        if (DockTransitionCard != null) DockTransitionCard.Opacity = 1;
         UpdateAlternateVideoControls();
     }
 

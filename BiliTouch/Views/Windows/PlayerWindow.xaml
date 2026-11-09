@@ -850,20 +850,29 @@
                                    垫在它下面。控制栏在它之后声明, 所以仍然压在它上面(可操作)。
                                  ★ 背景用深色渐变(不跟主题走): 它替代的是视频画面, 浅色主题下
                                    用浅底会看着像"画面坏了"。 -->
-                            <Border x:Name="DockTransitionCover" Visibility="Collapsed" Background="#26000000"
-                                    BorderBrush="#80FFFFFF" BorderThickness="1" CornerRadius="14"
+                            <!-- ★★★ 2026-11-09 第六轮：把「卡片」和「容器」拆开。
+                                 以前直接把 TransformGroup 挂在 DockTransitionCover.Child 上，
+                                 而 Child 是 BrandMark —— 所以缩小的从来只是图标，那块板一直满屏。
+                                 现在外层是透明容器(负责裁剪/命中)，内层 DockTransitionCard 才是
+                                 真正被缩放/位移的卡片。见 PlayerWindow.WebLayout.cs 的
+                                 InitializeAlternatePlayerLayout。 -->
+                            <Border x:Name="DockTransitionCover" Visibility="Collapsed" Background="Transparent"
                                     IsHitTestVisible="False" Panel.ZIndex="80">
-                                <!-- ★★★ 2026-11-05 小窗过渡重做: 这块遮罩现在是**动画的主角**。
-                                     原生视频窗口(HwndHost)不参与 WPF 合成, 逐帧改它的宽高等于逐帧让
-                                     libvlc 重建交换链 —— 那正是用户看到的"边框一直在变、画面抖"。
-                                     现在过渡期间原生窗口一次都不动, 由这块纯 WPF 遮罩做等比缩放;
-                                     动画结束的那一帧才把原生窗口一次性移到目标位置(见 PlayerWindow.WebLayout.cs)。
-                                     ★ BrandMark 会被反向缩放, 保证文字图标始终原始大小、不糊。 -->
-                                <StackPanel x:Name="BrandMark" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                            RenderTransformOrigin="0.5,0.5">
-                                    <Image Source="/BiliTouch;component/Assets/app.png" Width="64" Height="64" Stretch="Uniform"/>
-                                    <TextBlock Text="BiliTouch" Foreground="#CCFFFFFF" FontSize="12" HorizontalAlignment="Center" Margin="0,8,0,0"/>
-                                </StackPanel>
+                                <Grid x:Name="DockTransitionCard" RenderTransformOrigin="0,0">
+                                    <!-- 三层廉价阴影：用递减透明度的圆角 Border 叠出来，
+                                         不用 DropShadowEffect（大尺寸模糊每帧重采样，会掉帧）。 -->
+                                    <Border Margin="-22" CornerRadius="34" Background="#14000000"/>
+                                    <Border Margin="-13" CornerRadius="26" Background="#1F000000"/>
+                                    <Border Margin="-6" CornerRadius="20" Background="#2E000000"/>
+                                    <Border Background="#4D000000" BorderBrush="#B3FFFFFF" BorderThickness="2"
+                                            CornerRadius="14">
+                                        <StackPanel x:Name="BrandMark" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                    RenderTransformOrigin="0.5,0.5">
+                                            <Image Source="/BiliTouch;component/Assets/app.png" Width="64" Height="64" Stretch="Uniform"/>
+                                            <TextBlock Text="BiliTouch" Foreground="#CCFFFFFF" FontSize="12" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
                             </Border>
                             <Grid x:Name="ListenOverlay" Visibility="Collapsed" IsHitTestVisible="False">
                                 <Grid.Background>

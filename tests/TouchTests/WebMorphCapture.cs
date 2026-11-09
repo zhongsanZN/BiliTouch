@@ -171,10 +171,18 @@ internal static class WebMorphCapture
                 var legacy = running;
                 var path = Path.Combine(dir, $"f{records.Count:00}.png");
                 Capture(capX, capY, w, h, path);
+                var cover = player.FindName("DockTransitionCover") as FrameworkElement;
+                var card = player.FindName("DockTransitionCard") as FrameworkElement;
+                var coverScale = player.GetType().GetField("_webCoverScale", Hidden)?.GetValue(player) as ScaleTransform;
                 records.Add(new
                 {
                     t = Math.Round(t), running, legacy,
-                    coverScale = (player.GetType().GetField("_webCoverScale", Hidden)?.GetValue(player) as ScaleTransform)?.ScaleX ?? 1,
+                    coverScale = coverScale?.ScaleX ?? 1,
+                    coverVis = cover?.Visibility.ToString(),
+                    coverOpacity = cover?.Opacity,
+                    cardW = card?.ActualWidth,
+                    cardH = card?.ActualHeight,
+                    cardScaleX = (card?.RenderTransform as TransformGroup)?.Children.OfType<ScaleTransform>().FirstOrDefault()?.ScaleX,
                     path = Path.GetFileName(path)
                 });
                 if (records.Count >= 20) CompositionTarget.Rendering -= onFrame;
