@@ -694,3 +694,58 @@ morph-100.png  rect=940,150,320x180  （停靠小窗）
   「改一半就发出去、用户看到更糟」。
 - 下一轮建议：先做 `VmemVideoView` 控件（Image + vmem + 尺寸/宽高比/暂停），
   在**独立测试窗口**里跑通播放与变形，再整体替换 `PlayerWindow` 的视频宿主。
+
+---
+
+## 第八轮：VmemVideoView 落地 —— vmem 从原型变成产品里的控件
+
+上一轮证明了 vmem 可行，这一轮把它做成**产品程序集里的真控件**并在独立窗口里跑通播放。
+
+### 1. 新增 BiliTouch/Helpers/VmemVideoView.cs
+
+Image 的子类，内部接管 libvlc 的 vmem 三件套（format / lock-unlock / display）：
+
+- 格式协商成 `RV32`（BGRA），与 WPF `Bgra32` 一致，省一次色彩转换；
+- 每帧先拷进一块稳定的 `_present`，再在 UI 线程写 `WriteableBitmap`；
+- **帧合并**：上一帧还没画完就不排队（`_pending` 标志），避免 60fps 时把
+  Dispatcher 队列堆爆；
+- 暴露 `DeliveredFrames` / `CoalescedFrames` / `VideoSize` 供诊断；
+- `Stretch=Uniform` + `Linear` 缩放（解码帧直接贴，不让 WPF 再做高质量重采样）。
+
+配套新增 `VlcCore.GetVmem()`：一个**专供 vmem 的 LibVLC 实例**（`--vout=vmem`）。
+`--vout` 是实例级选项，不能污染被普通播放器使用的共享实例；两个实例共用同一份
+libvlccore，代价只是多一份插件状态。
+
+### 2. 踩到并修掉的三个真 bug（都会导致 0xC0000005）
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| 进程退出必崩 | 传给 `SetVideoCallbacks` 的是**方法组**，托管侧没有强引用，GC 回收后原生回调跳进已释放的桩 | 五个委托全部存字段保活 |
+| `Stop()` 之后崩溃 | 停止瞬间原生线程还在 lock/display，缓冲已被释放 | `Stop` 放后台线程执行；释放后 `OnLock` 返回一块**永不释放的垫子内存**，绝不给 0 |
+| `Dispose()` 之后崩溃 | 队列里还压着几帧渲染回调，`_present` 已归零，`CopyMemory` 从空指针读 | 在渲染回调里再次确认 `_present`/`_bytes` 有效，无效直接跳过 |
+
+第三条是最阴的：只在「播完 → 立刻 dispose」这条路径上必现，正常用可能几小时才撞一次。
+
+### 3. 验证（`--vmem-view`，7 项，连跑三次 exit=0）
+
+| 断言 | 结果 |
+|---|---|
+| vmem 通过控件持续交付帧 | 11~12 帧/秒起步正常 |
+| 格式协商 | 640×386 |
+| 交付帧率跟上片源 | **30.0 fps vs 源 30.0 fps** |
+| 画面确实在变（非冻结首帧） | 两次像素哈希不同 |
+| **`RenderTargetBitmap` 能截到画面**（HwndHost 做不到） | 4893/5195 采样点非背景 |
+| **能裁圆角**（澎湃卡片的前提） | 生效 |
+
+截图 `artifacts/touch-tests/vmem-view/vmem-view.png`：视频铺在圆角卡片里，**四角真的被裁掉**
+（露出深色底），这是 VideoView 永远做不到的。
+
+### 4. 现状与下一步
+
+- 控件本身**已可用**，但**还没接进 PlayerWindow**：现有播放器的弹幕/控制栏/手势层
+  都寄生在 VideoView.Content 的独立浮层窗口里，换宿主时必须一并搬回普通 WPF 树。
+- 九项回归 **171 项全绿**（vmem-view 6、web-morph-motion 11、enhancement-vsr 9、
+  danmaku-recovery 13、web-player-layout 33、web-dock-flicker 7、web-controls-unread 41、
+  live-room 50、player-video-load 1）。
+- 下一轮：把 PlayerWindow 的视频宿主换成 VmemVideoView（先做「网页版布局」这一条路径），
+  浮层控件改挂普通 WPF 树，逐项回归。

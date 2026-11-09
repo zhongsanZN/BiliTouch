@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -108,6 +108,43 @@ public static class VlcCore
             return instance;
         }
     }
+
+    /// <summary>
+    /// 取一个**专供 vmem 输出**的 LibVLC 实例（进程内单例，随进程一起存活）。
+    ///
+    /// ★ 为什么要单独一个实例：`--vout=vmem` 是实例级选项，而共享实例
+    ///   (`Get()`) 被普通播放器用着，不能为了 vmem 改它。两个实例共用同一份
+    ///   libvlccore（`Core.Initialize` 是进程级的），代价只是多一份插件状态。
+    /// ★ 用途：把解码帧交给 <see cref="BiliTouch.Helpers.VmemVideoView"/> 画成
+    ///   普通 WPF 元素 —— 只有这样画面才能圆角、阴影、逐帧连续变形（HwndHost 不行）。
+    /// </summary>
+    public static LibVLC GetVmem()
+    {
+        lock (Gate)
+        {
+            if (_vmemInstance != null) return _vmemInstance;
+            var profile = EnhancementProfile.Current;
+            var libvlcDir = LibVlcDirectory;
+            if (Directory.Exists(libvlcDir))
+                Environment.SetEnvironmentVariable("LIBVLC_PATH", libvlcDir);
+            try { Core.Initialize(Directory.Exists(libvlcDir) ? libvlcDir : null); } catch { }
+            VlcPlacePictureGuard.Install();
+            Environment.SetEnvironmentVariable("VLC_PLUGIN_PATH", PluginsDirectory);
+            var caching = BufferPolicy.Resolve(BufferMediaKind.VodSingle, null, shortVideo: false,
+                SettingsStore.Instance.NetworkCachingMs, SettingsStore.Instance.AutoBufferPolicy);
+            // ★ vmem 下不需要 --vout=direct3d11 / 超分参数：帧不经过 D3D 交换链。
+            var options = new List<string>
+            {
+                "--intf=dummy", "--no-osd", "--no-snapshot-preview",
+                "--vout=vmem", "--network-caching=" + caching,
+            };
+            _vmemInstance = new LibVLC(options.ToArray());
+            VideoEnhancement.Observe(_vmemInstance, profile);
+            return _vmemInstance;
+        }
+    }
+
+    private static LibVLC? _vmemInstance;
 
     /// <summary>
     /// 后台预热: 把原生库初始化 + 插件扫描的开销提前到应用启动阶段,
