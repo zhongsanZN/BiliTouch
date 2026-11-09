@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -63,7 +63,19 @@ public sealed class InlineImageGallery:UserControl
     private static Button Button(string label,Action action)
     {
         var button=new Button{Content=new TextBlock{Text=label,Foreground=Brushes.White,FontWeight=FontWeights.SemiBold},MinWidth=44,Height=44,Margin=new Thickness(8),Padding=new Thickness(12,0,12,0),Cursor=Cursors.Hand,Foreground=Brushes.White,Background=new SolidColorBrush(Color.FromArgb(190,30,30,30))};
-        if(label is "‹" or "›")button.Content=new SkinGlyph{Kind=label=="‹"?"Left":"Right",IconSize=22,Tint=Brushes.White,Child=(UIElement)button.Content};
+        if(label is "‹" or "›")
+        {
+            // ★★★ 2026-11-09 修「点开评论图片必崩」（0.2.9 起就坏了）：
+            //   SkinGlyph 是 Decorator，给它的 Child 赋值会走 FrameworkElement.ChangeLogicalParent；
+            //   而 button.Content 那个 TextBlock 的逻辑父级**已经是 Button**，
+            //   直接把同一个实例塞进 Decorator.Child 会抛
+            //   "指定的元素已经是另一个元素的逻辑子元素" —— 构造就直接炸，
+            //   于是 InlineImageGallery 永远建不出来，所有评论图片都点不开。
+            //   ⇒ 先清空 button.Content 断开逻辑父级，再把它作为 SkinGlyph 的 fallback 子元素。
+            var fallback=(UIElement)button.Content;
+            button.Content=null;
+            button.Content=new SkinGlyph{Kind=label=="‹"?"Left":"Right",IconSize=22,Tint=Brushes.White,Child=fallback};
+        }
         button.SetResourceReference(StyleProperty,"SubtleButtonStyle");button.Click+=(_,e)=>{e.Handled=true;action();};return button;
     }
     public async Task OpenAsync(IEnumerable<string> urls,int index)
