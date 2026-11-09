@@ -133,55 +133,89 @@ public static class UpdateInstaller
         using var http = new HttpClient { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
         http.DefaultRequestHeaders.UserAgent.ParseAdd(HttpDefaults.UserAgent);
 
-        try
+        // ★★ 2026-11-09 修「更新下载必失败」：
+        //   GitHub 的 browser_download_url 实测会整站返回 **504**（所有资产、直连和代理都一样），
+        //   而同一时刻 `api.github.com/.../releases/assets/{id}` + `Accept: application/octet-stream`
+        //   仍然是 **206 Partial Content**。所以不能只认一个 URL：
+        //     ① 主链接先重试 3 次（504 有时是瞬时的）；
+        //     ② 仍失败且有 asset id → 切 API 资产端点再试 3 次；
+        //     ③ 全失败才抛，并带上最后一次的状态码，别只留一句"请检查网络"。
+        var candidates = new List<(string Url, string? Accept)>
         {
-            using var resp = await http.GetAsync(info.SetupUrl, HttpCompletionOption.ResponseHeadersRead, ct);
-            if (!resp.IsSuccessStatusCode)
-                throw new HttpRequestException($"下载安装包失败: HTTP {(int)resp.StatusCode}");
+            (info.SetupUrl, null)
+        };
+        if (info.SetupAssetId > 0)
+            candidates.Add((UpdateChecker.AssetDownloadUrl(info.SetupAssetId), "application/octet-stream"));
 
-            // 服务端能报总长度就以它为准(比 GitHub 接口里的 size 更贴近这次实际传输),
-            // 报不出来再退回接口给的 size —— 只是用来算百分比, 不参与校验。
-            var total = resp.Content.Headers.ContentLength ?? (info.SetupSize > 0 ? info.SetupSize : 0);
-
-            await using (var src = await resp.Content.ReadAsStreamAsync(ct))
-            await using (var dst = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None,
-                             81920, useAsync: true))
+        Exception? lastError = null;
+        foreach (var (url, accept) in candidates)
+        {
+            for (var attempt = 1; attempt <= 3; attempt++)
             {
-                var buffer = new byte[81920];
-                long received = 0;
-                long lastReported = 0;
-                int lastPercent = -1;
-                int read;
-                while ((read = await src.ReadAsync(buffer, ct)) > 0)
+                ct.ThrowIfCancellationRequested();
+                try
                 {
-                    await dst.WriteAsync(buffer.AsMemory(0, read), ct);
-                    received += read;
+                    using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                    if (accept != null) req.Headers.Accept.ParseAdd(accept);
+                    using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        lastError = new HttpRequestException($"下载安装包失败: HTTP {(int)resp.StatusCode}");
+                        // 4xx 是"这个地址就是不行"，重试没意义；5xx / 超时才退避重试。
+                        if ((int)resp.StatusCode < 500) break;
+                        await Task.Delay(TimeSpan.FromMilliseconds(700 * attempt), ct);
+                        continue;
+                    }
 
-                    // ★ 别每读一块就回调: 80KB 一块 × 30MB ≈ 380 次, 每次都往 UI 线程派发
-                    //   等于给下载线程加一层无谓的锁竞争。1% 或 256KB, 取"先到者"。
-                    if (total <= 0) continue;
-                    var percent = (int)(received * 100 / total);
-                    if (percent == lastPercent && received - lastReported < ProgressBytesStep) continue;
-                    lastPercent = percent;
-                    lastReported = received;
-                    progress?.Report(Math.Clamp(percent, 0, 100) / 100.0);
+                    // 服务端能报总长度就以它为准(比 GitHub 接口里的 size 更贴近这次实际传输),
+                    // 报不出来再退回接口给的 size —— 只是用来算百分比, 不参与校验。
+                    var total = resp.Content.Headers.ContentLength ?? (info.SetupSize > 0 ? info.SetupSize : 0);
+
+                    await using (var src = await resp.Content.ReadAsStreamAsync(ct))
+                    await using (var dst = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None,
+                                     81920, useAsync: true))
+                    {
+                        var buffer = new byte[81920];
+                        long received = 0;
+                        long lastReported = 0;
+                        int lastPercent = -1;
+                        int read;
+                        while ((read = await src.ReadAsync(buffer, ct)) > 0)
+                        {
+                            await dst.WriteAsync(buffer.AsMemory(0, read), ct);
+                            received += read;
+
+                            // ★ 别每读一块就回调: 80KB 一块 × 30MB ≈ 380 次, 每次都往 UI 线程派发
+                            //   等于给下载线程加一层无谓的锁竞争。1% 或 256KB, 取"先到者"。
+                            if (total <= 0) continue;
+                            var percent = (int)(received * 100 / total);
+                            if (percent == lastPercent && received - lastReported < ProgressBytesStep) continue;
+                            lastPercent = percent;
+                            lastReported = received;
+                            progress?.Report(Math.Clamp(percent, 0, 100) / 100.0);
+                        }
+                    }
+
+                    VerifyOrThrow(temp, info);
+
+                    // ★ File.Move 带 overwrite: 上一版留下的同名文件要能直接替换,
+                    //   否则用户第二次点更新会得到一个 IOException(文件已存在)。
+                    File.Move(temp, target, overwrite: true);
+                    progress?.Report(1.0);
+                    return target;
+                }
+                catch (OperationCanceledException) { TryDelete(temp); throw; }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                    TryDelete(temp);
+                    if (attempt < 3) await Task.Delay(TimeSpan.FromMilliseconds(700 * attempt), ct);
                 }
             }
-
-            VerifyOrThrow(temp, info);
-
-            // ★ File.Move 带 overwrite: 上一版留下的同名文件要能直接替换,
-            //   否则用户第二次点更新会得到一个 IOException(文件已存在)。
-            File.Move(temp, target, overwrite: true);
-            progress?.Report(1.0);
-            return target;
         }
-        catch
-        {
-            // 任何失败(含取消)都不留半成品 —— 见方法注释里"为什么校验失败要删文件"
-            TryDelete(temp);
-            throw;
-        }
+
+        TryDelete(temp);
+        throw lastError ?? new HttpRequestException("下载安装包失败");
     }
 
     /// <summary>

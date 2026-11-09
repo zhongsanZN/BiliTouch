@@ -115,14 +115,27 @@ public static class CoverLoader
     internal static LoadInterest InterestOf(Border border)
     {
         var slot = Interests.GetOrCreateValue(border);
-        slot.Current ??= new LoadInterest();
+        // ★★★ 2026-11-09 修「首页下滑再回滚，原来加载过的卡片全灰」：
+        //   旧写法是 `slot.Current ??= new LoadInterest();` —— 只在 null 时新建。
+        //   而 AbandonInterest 只把当前标记作废、**不清空槽位**，于是容器被虚拟化回收一次之后，
+        //   slot.Current 永远指向那个"已作废"的对象；之后每次换源都把它原样交出去，
+        //   CoverLoader.LoadAsync 看到 IsAbandoned 立刻返回 null ⇒ 这一格再也不会加载封面，
+        //   一直露着灰色占位。实测：同一个 Border 第一次能出图，回收一次之后第二次就永远空。
+        //   ⇒ 作废过的标记必须换新，不能复用。
+        if (slot.Current is null || slot.Current.IsAbandoned) slot.Current = new LoadInterest();
         return slot.Current;
     }
 
     /// <summary>换源/被回收时把这一次的标记作废(UI 线程)。</summary>
     internal static void AbandonInterest(Border border)
     {
-        if (Interests.TryGetValue(border, out var slot)) slot.Current?.Abandon();
+        if (Interests.TryGetValue(border, out var slot) && slot.Current is { } current)
+        {
+            current.Abandon();
+            // ★ 同时清空槽位：正在飞的那个任务手里还握着旧对象，照样能看到 IsAbandoned；
+            //   而下一次 InterestOf 必然新建，不会再把"已作废"传下去。
+            slot.Current = null;
+        }
     }
 
     private static long _clock;

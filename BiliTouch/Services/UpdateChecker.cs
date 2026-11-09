@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -37,6 +37,14 @@ public sealed class UpdateInfo
 
     /// <summary>安装器字节数(GitHub 给的 size)。0 = 没拿到, 此时只能靠 sha256 或干脆不校验</summary>
     public long SetupSize { get; init; }
+
+    /// <summary>
+    /// GitHub Release 资产 id。用来在 rowser_download_url 不可用时（实测会整站 504）
+    /// 改走 pi.github.com/repos/{owner}/{repo}/releases/assets/{id} + 
+    /// Accept: application/octet-stream 这个官方备选端点。
+    /// 0 = 没拿到 id，此时只能走主链接。
+    /// </summary>
+    public long SetupAssetId { get; init; }
 
     /// <summary>
     /// 安装器的 SHA-256(小写 hex, 已去掉 GitHub 的 "sha256:" 前缀)。
@@ -80,7 +88,7 @@ public sealed class UpdateInfo
     /// ★ 属性是 init 的(构造后不可变, 别处不用担心被谁改了一半), 所以"补附件"只能是**换一个新实例**;
     ///   弹窗拿到新实例后整体替换引用即可, 不会出现"版本号是新的、下载地址还是旧版本"这种撕裂状态。
     /// </summary>
-    public UpdateInfo WithInstaller(string setupUrl, long setupSize, string? setupSha256) => new()
+    public UpdateInfo WithInstaller(string setupUrl, long setupSize, string? setupSha256, long setupAssetId = 0) => new()
     {
         // ★ 写 this.Version: 对象初始化器里裸写 `Version = Version` 虽然合法(左边是新对象的成员,
         //   右边解析到外层实例的属性), 但同一行里出现两个同名标识符极易被后续改动读错 ——
@@ -91,7 +99,8 @@ public sealed class UpdateInfo
         ReleaseUrl = this.ReleaseUrl,
         SetupUrl = setupUrl,
         SetupSize = setupSize,
-        SetupSha256 = setupSha256
+        SetupSha256 = setupSha256,
+        SetupAssetId = setupAssetId
     };
 }
 
@@ -127,6 +136,14 @@ public static class UpdateChecker
     /// <summary>releases/latest 网页地址(弹窗里「前往 GitHub 下载」按钮的落点)。</summary>
     public const string ReleasePageUrl =
         $"https://github.com/{RepoOwner}/{RepoName}/releases/latest";
+
+    /// <summary>
+    /// Release 资产的官方下载端点（需配合 `Accept: application/octet-stream`）。
+    /// ★ 2026-11-09 实测：`browser_download_url` 会整站 504，而这个端点同一时刻返回 206。
+    ///   两台端点最终都 302 到同一个签名地址，所以下载内容完全一致，SHA-256 校验不受影响。
+    /// </summary>
+    public static string AssetDownloadUrl(long assetId) =>
+        $"https://api.github.com/repos/{RepoOwner}/{RepoName}/releases/assets/{assetId}";
 
     // ★ 这里曾经有一个"微云高速下载"镜像按钮(WeiYunShareUrl / WeiYunSharePwd 两个常量)。
     //   2026-10-01 用户要求**下载全部走 GitHub**, 两个常量与那个按钮一起删掉了。
@@ -229,7 +246,7 @@ public static class UpdateChecker
             var release = await FetchLatestAsync();
             if (release == null || !release.HasSetup) return null;
             if (!SameVersion(release.Version, info.Version)) return null;
-            return info.WithInstaller(release.SetupUrl, release.SetupSize, release.SetupSha256);
+            return info.WithInstaller(release.SetupUrl, release.SetupSize, release.SetupSha256, release.SetupAssetId);
         }
         catch (Exception ex)
         {
@@ -277,7 +294,8 @@ public static class UpdateChecker
                 : ReleasePageUrl,
             SetupUrl = asset?.Url ?? "",
             SetupSize = asset?.Size ?? 0,
-            SetupSha256 = asset?.Sha256
+            SetupSha256 = asset?.Sha256,
+            SetupAssetId = asset?.Id ?? 0
         };
     }
 
@@ -308,11 +326,12 @@ public static class UpdateChecker
             if (string.IsNullOrWhiteSpace(url)) continue;
 
             var size = asset.TryGetProperty("size", out var sizeEl) && sizeEl.TryGetInt64(out var bytes) ? bytes : 0;
+            var assetId = asset.TryGetProperty("id", out var idEl) && idEl.TryGetInt64(out var id) ? id : 0;
             var sha256 = asset.TryGetProperty("digest", out var digestEl) && digestEl.ValueKind == JsonValueKind.String
                 ? NormalizeSha256(digestEl.GetString())
                 : null;
 
-            return new InstallerAsset { Url = url!, Size = size, Sha256 = sha256 };
+            return new InstallerAsset { Url = url!, Size = size, Sha256 = sha256, Id = assetId };
         }
         return null;
     }
@@ -411,6 +430,8 @@ public static class UpdateChecker
         public string Url { get; init; } = "";
         public long Size { get; init; }
         public string? Sha256 { get; init; }
+        /// <summary>GitHub 资产 id（主链接 504 时用来改走 API 端点）。</summary>
+        public long Id { get; init; }
     }
 
     /// <summary>
@@ -426,6 +447,14 @@ public static class UpdateChecker
         public string ReleaseUrl { get; init; } = "";
         public string SetupUrl { get; init; } = "";
         public long SetupSize { get; init; }
+
+        /// <summary>
+        /// GitHub Release 资产 id。用于在 browser_download_url 不可用时改走
+        /// api.github.com/repos/{owner}/{repo}/releases/assets/{id} +
+        /// Accept: application/octet-stream 这个官方备选端点（实测主链接会整站 504，
+        /// 备选端点同一时刻仍是 206）。0 = 没拿到 id，只能走主链接。
+        /// </summary>
+        public long SetupAssetId { get; init; }
         public string? SetupSha256 { get; init; }
 
         public bool HasSetup => SetupUrl.Length > 0;
@@ -440,7 +469,8 @@ public static class UpdateChecker
             ReleaseUrl = this.ReleaseUrl,
             SetupUrl = this.SetupUrl,
             SetupSize = this.SetupSize,
-            SetupSha256 = this.SetupSha256
+            SetupSha256 = this.SetupSha256,
+            SetupAssetId = this.SetupAssetId
         };
     }
 }
