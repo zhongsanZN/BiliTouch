@@ -55,6 +55,7 @@ internal static class Program
             else if(args.Contains("--scroll-ab")) ScrollAbTests.Run(Artifacts, Check);
             else if(args.Contains("--scroll-image-wall")) ScrollRealizationTests.ImageWall(Artifacts, Check);
             else if(args.Contains("--scroll-realization")) ScrollRealizationTests.Run(Check, args.Contains("--cost-only"));
+            else if(args.Contains("--enhancement-vsr")) VideoEnhancementTests.Run(Check);
             else if(args.Contains("--web-morph-capture")) WebMorphCapture.Run(Artifacts);
             else if(args.Contains("--player-comments-scroll")) PlayerCommentsScrollTests.Run(Check);
             else if(args.Contains("--scroll-text-host-cost")) PlayerCommentsScrollTests.TextHostCost(Check);

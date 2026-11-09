@@ -42,7 +42,6 @@ public partial class PlayerWindow
     private double _webSavedScroll, _webSavedBodyScroll, _webLegacyInfoScroll;
     private double _webDockProgress, _webAnimationFrom, _webAnimationTo;
     private double _webAnimationElapsed;
-    private long _webAnimationStarted;
     private long _webAnimationWallStart;
     private long _webSurfaceSettledAt;
     private int _webScrollGeneration;
@@ -301,7 +300,7 @@ public partial class PlayerWindow
     {
         if (Math.Abs(target - _webAnimationTo) < 0.0001 && _webRendering) return;
         if (Math.Abs(target - _webDockProgress) < 0.0001) { _webAnimationTo = target; ApplyWebVideoBounds(); return; }
-        _webAnimationFrom = _webDockProgress; _webAnimationTo = target; _webAnimationStarted = 0; _webAnimationElapsed = 0;
+        _webAnimationFrom = _webDockProgress; _webAnimationTo = target; _webAnimationElapsed = 0;
         // ★ 用绝对墙钟算时长：旧的"每帧累加且 clamp 50ms"在滚动事件链占住 Dispatcher 时
         //   会把 380ms 动画拖到 1.5 秒(真机捕获实测)。墙钟保证总时长恒定。
         _webAnimationWallStart = Stopwatch.GetTimestamp();
@@ -347,8 +346,11 @@ public partial class PlayerWindow
             ApplyHwndHostBlackBackground();
             UpdateWebCoverAnimation(_webDockProgress);
             if (_webSurfaceSettledAt == 0) _webSurfaceSettledAt = now;
-            // 原生 vout 的新表面需要几帧才能出画面, 遮罩再压一会儿(140ms)才撤。
-            if (Stopwatch.GetElapsedTime(_webSurfaceSettledAt, now).TotalMilliseconds >= 140) StopWebVideoAnimation();
+            // ★ 交叉淡化：落位那一帧原生窗口尺寸从大跳到小，用 140ms 把遮罩从 0.65
+            //   线性淡出，让跳变藏在渐隐里而不是硬切；同时给 vout 新表面几帧恢复时间。
+            var settleMs = Stopwatch.GetElapsedTime(_webSurfaceSettledAt, now).TotalMilliseconds;
+            DockTransitionCover.Opacity = Math.Max(0, 0.65 * (1 - Math.Clamp(settleMs / 140, 0, 1)));
+            if (settleMs >= 140) StopWebVideoAnimation();
         }
     }
 

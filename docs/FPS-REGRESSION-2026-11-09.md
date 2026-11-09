@@ -509,3 +509,47 @@ WPF 元素与原生 vout 是两套合成树。在过渡期间动原生窗口—�
 `SetVideoFormatCallbacks` / `SetVideoCallbacks` 把解码帧接到自定义 vout（vmem / DirectComposition），
 让画面变成 WPF 可合成的图层，才能真正做澎湃OS 那种内容本体连续变形。
 代价是要重做硬解、色彩空间与音画同步，属于独立大改，不是本轮能顺手带上的。
+
+---
+
+## 第五轮（下一次会话）：VSR 抖动治理 + 落位交叉淡化
+
+### 1. 真机日志暴露的独立问题：VSR 每秒级 ON/OFF
+
+用户 `%LocalAppData%\BiliTouch\video-enhancement.log` 最后 40 行里有 **33 次
+`turning VSR ON/OFF`**，间隔 1~2 秒。原因是驱动按「当前帧是否需要放大」做的瞬态判定，
+而旧代码把 `turning VSR OFF` 也解析成用户可见状态「超分待机：当前画面无需放大」，
+于是每切换一次：`State` 变一次 → `Changed?.Invoke()` → 播放器 `UpdateEnhancementButton`
+重刷按钮颜色 / ToolTip，播放中每 1~2 秒抖一下。
+
+修复（`BiliTouch/Services/VideoEnhancement.cs`）：
+
+- 抽出 `ParseState(string)`：`turning VSR OFF` 返回 `null` —— 它是瞬态，不覆盖已确认状态。
+- 抽出 `ShouldLogVsrToggle()`：同类 VSR 瞬态日志 2 秒内只落一条（真机 1~2 秒一次切换，
+  原来会把日志文件刷爆，并且每条都走 `ThreadPool` 写盘）。
+- `Observe` 改为调用这两个函数；`Status/core` 的公开行为不变。
+
+回归：新增 `tests/TouchTests/VideoEnhancementTests.cs`（`--enhancement-vsr`），
+7 项断言，其中「20 次 ON/OFF 交替只产生 2 次状态变更」和「20 次切换只写 1 条日志」
+直接锁死该问题。
+
+### 2. 落位那一帧的硬切 → 交叉淡化
+
+`OnWebVideoFrame` 在 `t >= 1` 时把原生窗口从内联几何一次性落到右栏小窗（尺寸大跳变），
+原来遮罩在 140ms 后直接收起，视觉上是一次硬切。改成在 settle 的 140ms 内把
+`DockTransitionCover.Opacity` 从 0.65 线性淡到 0 —— 跳变藏在渐隐里。
+
+### 验证
+
+八项回归 **154 项全绿**：
+`--enhancement-vsr` 9、`--danmaku-recovery` 13、`--web-player-layout` 33、
+`--web-dock-flicker` 7（0/134 离群、零白闪、41 档遮罩缩放）、`--web-controls-unread` 41、
+`--live-room` 50、`--player-video-load` 1、`--web-morph-capture` 通过。
+
+### 仍然没做到的（如实记录）
+
+- **跟手**：仍是「跨滞回阈值 → 430ms 自动动画」，不是手指拖多少走多少。
+- **内容本体连续变形**：受 `HwndHost` 架构限制，见第四轮结论；需要换 vout 才能突破。
+- **柔和投影**：遮罩只有圆角描边，没有澎湃OS 那种外发光阴影。
+- **VSR 本身的开销**：本轮只治了它引起的 UI 抖动与日志风暴，驱动侧反复重协商的 GPU 成本仍在；
+  想彻底避免只能让用户关掉「自动厂商增强」或改默认档位。
