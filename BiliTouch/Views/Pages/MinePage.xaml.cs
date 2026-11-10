@@ -18,7 +18,6 @@ namespace BiliTouch.Views.Pages;
 public partial class MinePage : UserControl
 {
     private const double SwipePageRatio = 0.50;
-    private const double SwipeFlingVelocity = 2.2;
     private const double SwipeEdgeResist = 0.35;
 
     public Func<PageKey, FrameworkElement>? SectionFactory { get; set; }
@@ -27,8 +26,7 @@ public partial class MinePage : UserControl
     internal int CurrentTabIndex { get; private set; }
     private readonly TranslateTransform _slide = new();
     private Point _start;
-    private long _started;
-    private bool _armed, _horizontal, _decided, _moving, _suppressClick;
+    private bool _armed, _horizontal, _decided, _suppressClick;
     private int _pendingWheel;
     private double _dx;
     private VideoCard? _gestureCard;
@@ -36,7 +34,28 @@ public partial class MinePage : UserControl
     private PanningMode _panning;
     private double _frozenOffset;
     private FrameworkElement? _peerSection;
-    private Action? _activeSnapComplete;
+    private Action? _activeSnapComplete, _cancelActiveSnap;
+    private int _snapTarget = -1;
+    private double _wheelContactDx;
+    private double _touchDragOrigin, _wheelDragOrigin;
+    private bool _wheelPreviewActive;
+
+    private double TakeOverSnap()
+    {
+        var target = _snapTarget; var previous = CurrentTabIndex;
+        _cancelActiveSnap?.Invoke();
+        if (target >= 0 && target != previous)
+        {
+            var width = Math.Max(1, SectionHost.ActualWidth);
+            var x = _slide.X + (target - previous) * width;
+            ClearPeerSection();
+            Tabs[target].IsChecked = true;
+            EnsurePeerSectionVisible(previous, previous < target ? -width : width);
+            _slide.X = x;
+            MineTabs?.PreviewSwipeProgress(target, previous, Math.Abs(x) / width);
+        }
+        return _slide.X;
+    }
 
     public MinePage()
     {
@@ -135,12 +154,13 @@ public partial class MinePage : UserControl
     private void OnTabChecked(object sender, RoutedEventArgs e)
     {
         if (SectionHost == null || sender is not RadioButton tab || !int.TryParse(tab.Tag?.ToString(), out var index)) return;
+        _cancelActiveSnap?.Invoke();
+        _snapTarget = -1;
         _activeSnapComplete = null;
         _armed = false;
         RestorePanning();
         _slide.BeginAnimation(TranslateTransform.XProperty, null);
         _slide.X = 0;
-        _moving = false;
         CurrentTabIndex = index;
         _pendingWheel = 0;
         _peerSection = null;
@@ -163,12 +183,12 @@ public partial class MinePage : UserControl
 
     internal void SwipeDown(Point point, DependencyObject? source)
     {
-        CompleteActiveSnap();
+        _touchDragOrigin = TakeOverSnap();
+        _wheelPreviewActive = false;
         _gestureCard = source == null ? null : VisualTreeUtil.FindAncestor<VideoCard>(source);
         _suppressClick = false;
         _start = point;
-        _started = Environment.TickCount64;
-        _dx = 0;
+        _dx = _touchDragOrigin;
         _decided = false;
         _horizontal = false;
         _armed = true;
@@ -184,8 +204,8 @@ public partial class MinePage : UserControl
         if (!_decided)
         {
             if (Math.Max(Math.Abs(_dx), Math.Abs(dy)) < 12) return false;
-            _decided = true;
             _horizontal = Math.Abs(_dx) > Math.Abs(dy) * 1.3;
+            _decided = _horizontal;
             if (_horizontal) CompleteActiveSnap();
         }
         if (!_horizontal) return false;
@@ -206,6 +226,7 @@ public partial class MinePage : UserControl
         if (_frozen != null && Math.Abs(_frozen.VerticalOffset - _frozenOffset) > 0.5)
             _frozen.ScrollToVerticalOffset(_frozenOffset);
 
+        _dx += _touchDragOrigin;
         var width = Math.Max(1, SectionHost.ActualWidth);
         ApplyDisplacement(_dx, width);
         return true;
@@ -234,14 +255,14 @@ public partial class MinePage : UserControl
         if (!_armed) return false;
         _armed = false;
         RestorePanning();
-        if (!_horizontal) return false;
+        var horizontal = _horizontal;
+        _horizontal = false;
+        if (!horizontal) { if (Math.Abs(_touchDragOrigin) > .5) Snap(CurrentTabIndex); return false; }
         _gestureCard?.FinishGestureTap();
         _gestureCard = null;
         _suppressClick = true;
-        var elapsed = Math.Max(1, Environment.TickCount64 - _started);
-        var velocity = Math.Abs(_dx) / elapsed;
         var width = Math.Max(1, SectionHost.ActualWidth);
-        var change = Math.Abs(_dx) >= width * SwipePageRatio || (Math.Abs(_dx) >= 80 && velocity >= SwipeFlingVelocity);
+        var change = Math.Abs(_dx) >= width * SwipePageRatio;
         Snap(change ? Math.Clamp(CurrentTabIndex + (_dx < 0 ? 1 : -1), 0, 4) : CurrentTabIndex);
         return true;
     }
@@ -262,19 +283,31 @@ public partial class MinePage : UserControl
     internal void PreviewHorizontalWheel(double progress)
     {
         if (_horizontal) return;
-        CompleteActiveSnap();
+        if (!_wheelPreviewActive) { _wheelDragOrigin = TakeOverSnap(); _wheelPreviewActive = true; }
         var width = Math.Max(1, SectionHost.ActualWidth);
-        var dx = -progress * width;
+        _wheelContactDx = -Math.Clamp(progress, -1, 1) * width;
+        var dx = Math.Clamp(_wheelDragOrigin + _wheelContactDx, -width * .999, width * .999);
         _dx = dx;
         ApplyDisplacement(dx, width);
     }
 
     internal void SettleHorizontalWheelPreview(bool commit)
+        => SettleWheelPreview(commit, false);
+
+    internal void SettlePrecisionTouchpadPreview(bool commit)
+        => SettleWheelPreview(commit, true);
+
+    internal bool ContainsSwipePoint(Point screenPoint) => PrecisionTouchpadInput.ContainsViewportPoint(SectionHost, screenPoint);
+
+    private void SettleWheelPreview(bool commit, bool physicalContact)
     {
         if (_horizontal) return;
+        _wheelPreviewActive = false;
         if (Math.Abs(_slide.X) < 0.5 && _peerSection == null) return;
         var target = Math.Clamp(CurrentTabIndex + (_dx < 0 ? 1 : -1), 0, 4);
-        Snap(commit ? target : CurrentTabIndex);
+        _wheelPreviewActive = false;
+        var distance = physicalContact ? (Math.Sign(_wheelContactDx) == Math.Sign(_dx) ? Math.Abs(_wheelContactDx) : 0) : Math.Abs(_dx);
+        Snap(commit && distance >= SectionHost.ActualWidth * SwipePageRatio ? target : CurrentTabIndex);
     }
 
     internal void HandleHorizontalWheel(int direction)
@@ -287,7 +320,6 @@ public partial class MinePage : UserControl
     private void Snap(int target)
     {
         CompleteActiveSnap();
-        _moving = true;
         var width = Math.Max(1, SectionHost.ActualWidth);
         if (target != CurrentTabIndex)
             EnsurePeerSectionVisible(target, target > CurrentTabIndex ? width : -width, createIfMissing: true);
@@ -301,6 +333,7 @@ public partial class MinePage : UserControl
         };
 
         var done = false;
+        _snapTarget = target != CurrentTabIndex ? target : -1;
         var fallback = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Input)
         {
             Interval = TimeSpan.FromMilliseconds(170)
@@ -311,6 +344,8 @@ public partial class MinePage : UserControl
             if (done) return;
             done = true;
             _activeSnapComplete = null;
+            _cancelActiveSnap = null;
+            _snapTarget = -1;
             fallback.Stop();
             _slide.BeginAnimation(TranslateTransform.XProperty, null);
             _slide.X = 0;
@@ -322,11 +357,20 @@ public partial class MinePage : UserControl
             if (Tabs[target].IsChecked != true) Tabs[target].IsChecked = true;
             if (CurrentTabIndex != target) OnTabChecked(Tabs[target], new RoutedEventArgs());
             else MineTabs?.SnapToSelected(true);
-            _moving = false;
             if (pending != 0) HandleHorizontalWheel(pending);
         }
 
         _activeSnapComplete = Complete;
+        _cancelActiveSnap = () =>
+        {
+            var x = _slide.X;
+            done = true;
+            fallback.Stop();
+            _activeSnapComplete = _cancelActiveSnap = null;
+            _snapTarget = -1;
+            _slide.BeginAnimation(TranslateTransform.XProperty, null);
+            _slide.X = x;
+        };
         fallback.Tick += (_, _) => Complete();
         animation.Completed += (_, _) => Complete();
         fallback.Start();

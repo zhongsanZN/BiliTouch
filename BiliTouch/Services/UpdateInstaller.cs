@@ -408,7 +408,7 @@ public static class UpdateInstaller
             //   "实际落盘的名字"对不上 —— 结果是刚下好的包被自己删掉。
             var keepName = keepVersion == null
                 ? ""
-                : $"BiliTouch-{keepVersion.Major}.{keepVersion.Minor}.{Math.Max(keepVersion.Build, 0)}-setup.exe";
+                : $"BiliTouch-{UpdateChecker.FormatVersion(keepVersion)}-setup.exe";
             foreach (var file in Directory.EnumerateFiles(InstallersDir))
             {
                 var name = Path.GetFileName(file);

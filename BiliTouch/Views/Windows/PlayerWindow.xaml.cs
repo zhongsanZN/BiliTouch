@@ -541,6 +541,7 @@ public partial class PlayerWindow : FluentWindow
         VideoAreaRoot.SetResourceReference(System.Windows.Documents.TextElement.FontFamilyProperty,AppTypography.ResourceKey);
         AppTypography.Changed+=OnPlayerFontChanged;
         Closed += OnClosed;
+        SourceInitialized += (_, _) => AttachPlayerTouchpadInput(PresentationSource.FromVisual(this) as HwndSource);
         Loaded += OnLoaded;
         SizeChanged += OnWindowSizeChangedForInfoPanel;
         PreviewKeyDown += OnPreviewKeyDown;
@@ -1137,6 +1138,17 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void ResetForNewMedia()
     {
+        _playerTouchpad?.Cancel(); _overlayTouchpad?.Cancel();
+        _infoSettleTarget = -1; _infoWheelContactDx = _precisionVideoProgress = 0;
+        _pageWheelIdle?.Stop();
+        _pageWheelAccum = 0;
+        _horizontalWheelRegion = HorizontalWheelRegion.None;
+        _videoWheelStartMs = _videoWheelTargetMs = 0;
+        _cancelInfoSettle?.Invoke();
+        if (_infoDraggingPage) { FinishPageDrag(false, PageIndex); CompleteInfoPageSettle(); }
+        _infoSwipeArmed = _infoHorizontalDecided = _infoDraggingPage = false;
+        _infoPageAnimating = _infoGestureMoved = _infoPageSwitching = _infoWheelPreviewActive = false;
+        _infoDragDx = _infoTouchOrigin = _infoWheelOrigin = 0;
         ThemeReactions?.Clear();
         StopWebVideoAnimation();
         OnWebMediaChanging();
@@ -1338,6 +1350,11 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private static readonly string[] PerMediaStateFields =
     {
+        nameof(_pageWheelAccum), nameof(_horizontalWheelRegion), nameof(_videoWheelStartMs), nameof(_videoWheelTargetMs),
+        nameof(_infoSettleTarget), nameof(_infoWheelContactDx), nameof(_precisionVideoProgress),
+        nameof(_infoSwipeArmed), nameof(_infoHorizontalDecided), nameof(_infoDraggingPage),
+        nameof(_infoPageAnimating), nameof(_infoGestureMoved), nameof(_infoPageSwitching), nameof(_infoWheelPreviewActive),
+        nameof(_infoDragDx), nameof(_infoTouchOrigin), nameof(_infoWheelOrigin),
         // 三连 / 关注 / 稍后再看等"上一条视频"的态
         nameof(_isLiked), nameof(_isFollowed), nameof(_isFavorited), nameof(_favBusy),
         nameof(_isInWatchLater), nameof(_watchLaterBusy), nameof(_isCoined),
@@ -1878,7 +1895,7 @@ public partial class PlayerWindow : FluentWindow
     private void SetVideoHostVisible(bool visible)
     {
         if (_vmemMode) VmemView.Visibility = visible ? Visibility.Visible : Visibility.Hidden;
-        else VideoView.Visibility = visible ? Visibility.Visible : Visibility.Hidden;
+        else VideoView.Visibility = visible && !_seamless.IsRunning && !_seamless.PreShowPrepared ? Visibility.Visible : Visibility.Hidden;
     }
 
     private void CreateNativeVideoPlayer()
@@ -7114,6 +7131,7 @@ public partial class PlayerWindow : FluentWindow
             var prop = typeof(VideoView).GetProperty("ForegroundWindow",
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
             if (prop?.GetValue(VideoView) is not Window fw) return;
+            AttachVideoOverlayWheelHook(fw);
             if (ReferenceEquals(fw, _overlayKeyboardWindow)) return;
             _overlayKeyboardWindow = fw;
             fw.PreviewKeyDown += OnPreviewKeyDown;
@@ -7457,6 +7475,7 @@ public partial class PlayerWindow : FluentWindow
     {
         _pinchWheelIdle?.Stop();
         _closing = true;
+        _playerTouchpad?.Dispose(); _overlayTouchpad?.Dispose();
         CancelDanmakuFiltering();
         DisposeAlternatePlayerLayout();
         // 直播弹幕: 关窗必须断开 WebSocket, 否则后台线程会一直重连

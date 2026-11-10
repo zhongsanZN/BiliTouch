@@ -53,7 +53,7 @@ public partial class UpdatePromptWindow : FluentWindow
         InitializeComponent();
         _info = info;
 
-        Headline.Text = $"发现新版本 v{info.Version}";
+        Headline.Text = $"发现新版本 v{UpdateChecker.FormatVersion(info.Version)}";
         Subline.Text = $"当前版本 v{App.AppVersion} · {info.Title}";
         NotesText.Text = string.IsNullOrWhiteSpace(info.Notes)
             ? "(这个版本没有填写发布说明)"
@@ -419,7 +419,7 @@ public partial class UpdatePromptWindow : FluentWindow
             : "";
         ProgressText.Text = percent >= 100
             ? "下载完成, 正在校验并启动安装程序…"
-            : $"正在下载 v{_info.Version} · {percent}%{total}";
+            : $"正在下载 v{UpdateChecker.FormatVersion(_info.Version)} · {percent}%{total}";
     }
 
     /// <summary>

@@ -33,7 +33,7 @@ internal static class Release023Tests
   {
    window.Content=page;if(!window.IsVisible)window.Show();Pump(100);var g=Gestures(page);var tabs=(FrameworkElement)page.FindName("ModuleTabs");
    check(Selected(g)==0,page.GetType().Name+" starts in its first module");
-   Call(g,"Begin",new Point(600,250),page.FindName("ModuleContent"));check((bool)Call(g,"Move",new Point(300,254)),"horizontal touch drag claims the module gesture");Call(g,"End");Pump(220);
+   Call(g,"Begin",new Point(600,250),page.FindName("ModuleContent"));check((bool)Call(g,"Move",new Point(600-((FrameworkElement)page.FindName("ModuleContent")).ActualWidth*.65,254)),"horizontal touch drag claims the module gesture");Call(g,"End");Pump(220);
    check(Selected(g)==1,"horizontal touch release changes exactly one module");
    Call(g,"Begin",new Point(500,200),page.FindName("ModuleContent"));check(!(bool)Call(g,"Move",new Point(503,410)) && !(bool)Call(g,"End") && Selected(g)==1,"vertical touch remains available to the content scroller");
    Call(g,"Begin",new Point(500,200),new Slider());check(!(bool)Call(g,"Move",new Point(100,200)),"slider interaction cannot trigger a module swipe");
@@ -43,11 +43,14 @@ internal static class Release023Tests
   }
   window.Close();
   var main=new MainWindow();main.Show();App.MainVm.Navigate(PageKey.Settings);Pump(500);
-  Call(main,"OnHorizontalWheel",60);Call(main,"OnHorizontalWheel",60);Call(main,"OnHorizontalWheel",120);Pump(230);
-  var settings=Call(main,"PageOf",PageKey.Settings);check(Selected(Gestures(settings))==1,"native horizontal touchpad packets reach settings and commit once");
+  var settings=Call(main,"PageOf",PageKey.Settings);
+  var settingGestures=Gestures(settings);
+  Call(main,"OnHorizontalWheel",60);Call(main,"OnHorizontalWheel",60);Call(main,"OnHorizontalWheel",120);
+  Pump(420);
+  check(Selected(Gestures(settings))==1,"native horizontal touchpad packets reach settings and commit once");
   Call(main,"OnPreviewMouseDown",main,new MouseButtonEventArgs(Mouse.PrimaryDevice,Environment.TickCount,MouseButton.XButton2){RoutedEvent=Mouse.PreviewMouseDownEvent});Pump(220);check(Selected(Gestures(settings))==2,"forward mouse side button selects the next settings module");
   Call(main,"OnPreviewMouseDown",main,new MouseButtonEventArgs(Mouse.PrimaryDevice,Environment.TickCount,MouseButton.XButton1){RoutedEvent=Mouse.PreviewMouseDownEvent});Pump(220);check(Selected(Gestures(settings))==1,"back mouse side button selects the previous settings module");
-  App.MainVm.Navigate(PageKey.Messages);Pump(500);Call(main,"OnHorizontalWheel",120);Pump(220);var messages=Call(main,"PageOf",PageKey.Messages);check(Selected(Gestures(messages))==1,"native horizontal touchpad packets also reach message modules");
+  App.MainVm.Navigate(PageKey.Messages);Pump(500);Call(main,"OnHorizontalWheel",240);Pump(420);var messages=Call(main,"PageOf",PageKey.Messages);check(Selected(Gestures(messages))==1,"native horizontal touchpad packets also reach message modules");
   App.MainVm.Navigate(PageKey.Home);Pump(500);var home=(HomePage)Call(main,"PageOf",PageKey.Home);
   SkinService.Instance.Configure("",true,true);Pump(80);var partition=(Button)home.FindName("HomePartitionButton");var icon=(FrameworkElement)partition.Content;
   var center=icon.TranslatePoint(new Point(icon.ActualWidth/2,icon.ActualHeight/2),partition);

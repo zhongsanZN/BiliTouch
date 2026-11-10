@@ -12,12 +12,15 @@ public partial class SettingsPage : UserControl
     internal TabNavigationGestures ModuleGestures {get;}
     private SettingsViewModel? _vm;
     private bool _subscribed;
+    private System.Windows.Threading.DispatcherTimer? _retainedPreparation;
 
     public SettingsPage()
     {
         InitializeComponent();
         ModuleGestures = new TabNavigationGestures(this, ModuleContent, ModuleTabs, CreatePeerPreview);
         Loaded += OnLoaded;
+        IsVisibleChanged += (_, _) => { if (IsVisible && IsLoaded) PrepareRetainedTabs(); else _retainedPreparation?.Stop(); };
+        Unloaded += (_, _) => _retainedPreparation?.Stop();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -26,6 +29,7 @@ public partial class SettingsPage : UserControl
         if (_vm == null) return;
 
         _vm.OnNavigated();
+        PrepareRetainedTabs();
 
         if (!_subscribed)
         {
@@ -39,6 +43,22 @@ public partial class SettingsPage : UserControl
         }
         _ = LoadAvatarAsync(_vm.UserFace);
         HookPalette();
+    }
+
+    private void PrepareRetainedTabs()
+    {
+        _retainedPreparation?.Stop();
+        var keys = new Queue<string>(new[] { "GeneralTabTemplate", "PlaybackTabTemplate", "DataTabTemplate", "AboutTabTemplate" });
+        _retainedPreparation = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background)
+        { Interval = TimeSpan.FromMilliseconds(32) };
+        _retainedPreparation.Tick += (_, _) =>
+        {
+            if (!IsVisible || !IsLoaded || keys.Count == 0) { _retainedPreparation.Stop(); return; }
+            if (ModuleGestures.IsInteracting) return;
+            if (SettingsTabContent.TryFindResource(keys.Dequeue()) is DataTemplate template)
+                SettingsTabContent.PrepareTemplate(template);
+        };
+        _retainedPreparation.Start();
     }
 
     /// <summary>在当前可视树里找调色盘并接上拖动事件(找不到就是"通用"Tab 不在前, 静默跳过)。</summary>

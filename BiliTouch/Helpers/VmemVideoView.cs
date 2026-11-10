@@ -166,7 +166,7 @@ public sealed class VmemVideoView : Image, IDisposable
         try
         {
             if (_disposed || !ReferenceEquals(format, Volatile.Read(ref _format))) return;
-            if (!ReferenceEquals(_bitmapFormat, format))
+            if (!ReferenceEquals(_bitmapFormat, format) || _bitmap == null || _bitmap.IsFrozen)
             {
                 _bitmap = new WriteableBitmap(format.Width, format.Height, 96, 96, PixelFormats.Bgra32, null);
                 _bitmapFormat = format;

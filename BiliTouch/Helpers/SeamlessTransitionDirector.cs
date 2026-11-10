@@ -80,7 +80,7 @@ internal static class SeamlessTransitionDirector
             }
 
             var (img, fallback) = ExtractVisualCover(imageCarrier ?? visualTarget);
-            var backdrop = CaptureWindowSnapshotBrush(win);
+            var backdrop = CaptureWindowSnapshotBrush(win, visualTarget);
 
             var anchor = new SeamlessAnchor
             {
@@ -106,22 +106,32 @@ internal static class SeamlessTransitionDirector
     }
 
     /// <summary>捕获宿主窗口当前客户区快照画刷，用于跨窗口一镜到底底层连续过渡。</summary>
-    internal static Brush? CaptureWindowSnapshotBrush(Window? win)
+    internal static Brush? CaptureWindowSnapshotBrush(Window? win, FrameworkElement? exclude = null)
     {
         if (win == null || !win.IsVisible || win.WindowState == WindowState.Minimized) return null;
         if (win.ActualWidth < 32 || win.ActualHeight < 32) return null;
         try
         {
-            int w = Math.Clamp((int)Math.Round(win.ActualWidth), 64, 1920);
-            int h = Math.Clamp((int)Math.Round(win.ActualHeight), 64, 1200);
-            double scaleX = w / win.ActualWidth;
-            double scaleY = h / win.ActualHeight;
-            var rtb = new RenderTargetBitmap(
-                w, h, 96.0 * scaleX, 96.0 * scaleY, PixelFormats.Pbgra32);
-            if (win.Content is Visual contentVisual)
-                rtb.Render(contentVisual);
-            else
-                rtb.Render(win);
+            var content = win.Content as FrameworkElement;
+            var width = content?.ActualWidth ?? win.ActualWidth;
+            var height = content?.ActualHeight ?? win.ActualHeight;
+            int w = Math.Clamp((int)Math.Round(width), 64, 1920);
+            int h = Math.Clamp((int)Math.Round(height), 64, 1200);
+            var rtb = new RenderTargetBitmap(w, h, 96.0 * w / width, 96.0 * h / height, PixelFormats.Pbgra32);
+            var visual = new DrawingVisual();
+            var opacity = exclude?.Opacity ?? 1;
+            try
+            {
+                exclude?.SetCurrentValue(UIElement.OpacityProperty, 0.0);
+                using (var dc = visual.RenderOpen())
+                {
+                    dc.DrawRectangle(win.Background ?? Brushes.Black, null, new Rect(0, 0, width, height));
+                    dc.DrawRectangle(new VisualBrush(content ?? (Visual)win) { Stretch = Stretch.Fill, ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(0, 0, width, height) }, null,
+                        new Rect(0, 0, width, height));
+                }
+                rtb.Render(visual);
+            }
+            finally { exclude?.SetCurrentValue(UIElement.OpacityProperty, opacity); }
             if (rtb.CanFreeze) rtb.Freeze();
             var brush = new ImageBrush(rtb)
             {

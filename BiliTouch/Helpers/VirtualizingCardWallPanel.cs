@@ -1,4 +1,5 @@
 using System.Collections.Specialized;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -13,6 +14,7 @@ namespace BiliTouch.Helpers;
 /// </summary>
 public sealed class VirtualizingCardWallPanel : VirtualizingPanel
 {
+    internal static Action<string>? MeasureTrace;
     private ScrollViewer? _scroll;
     private int _columns=1;
     private double _rowHeight=240, _slotWidth=252, _lastWidth;
@@ -21,6 +23,8 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
     private double _anchorFraction;
     private double _anchorOffset;
     private int _firstRow = -1, _lastRow = -1, _rows;
+    private bool _realizationQueued;
+    private DispatcherTimer? _preparationResume;
     public int RealizedCount => InternalChildren.Count;
     internal int MeasurePasses { get; private set; }
     public double RowHeight => _rowHeight;
@@ -28,7 +32,7 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
     public VirtualizingCardWallPanel()
     {
         Loaded+=(_,_)=>HookScroll();
-        Unloaded+=(_,_)=> {if(_scroll!=null)_scroll.ScrollChanged-=OnScroll;_scroll=null;};
+        Unloaded+=(_,_)=> { _preparationResume?.Stop(); if(_scroll!=null)_scroll.ScrollChanged-=OnScroll;_scroll=null;};
         IsVisibleChanged+=(_,_)=> {if(IsVisible)InvalidateMeasure();};
     }
     private void HookScroll()
@@ -124,11 +128,18 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
         var first = _firstRow * cols;
         var last = Math.Min(count - 1, (_lastRow + 1) * cols - 1);
         CleanOutside(first,last);
+        if (_scroll is TabViewportScrollViewer { CanPrepareHidden: true, IsPreparationSuspended: true })
+        {
+            QueueRealization();
+            return new Size(width, _rows * rowHeight);
+        }
         if(last>=first)
         {
             var generator=ItemContainerGenerator;
             var position=generator.GeneratorPositionFromIndex(first);
             var childIndex=0;
+            var started = Stopwatch.GetTimestamp();
+            int generated = 0;
             using(generator.StartAt(position,GeneratorDirection.Forward,true))
             {
                 for(int index=first;index<=last;index++,childIndex++)
@@ -140,6 +151,7 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
                         if(childIndex>=InternalChildren.Count)AddInternalChild(child);
                         else InsertInternalChild(childIndex,child);
                         generator.PrepareItemContainer(child);
+                        generated++;
                     }
                     else if(existing!=childIndex)
                     {
@@ -151,11 +163,43 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
                     if (CardWall.GetCoverHeight(child) != itemWidth / aspect)
                         child.SetValue(CardWall.CoverHeightProperty, itemWidth / aspect);
                     child.Measure(new Size(slot,rowHeight));
+                    // A newly visible tab must not build an entire viewport of XAML cards
+                    // in one input frame. Keep its full extent and continue in later layouts.
+                    if (generated > 0 && index < last && Stopwatch.GetElapsedTime(started).TotalMilliseconds >= 4)
+                    {
+                        QueueRealization();
+                        break;
+                    }
                 }
             }
+            var elapsedMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (elapsedMs > 8)
+                MeasureTrace?.Invoke($"{Environment.TickCount64} cards.measure owner={owner.Name} ms={elapsedMs:F2} generated={generated} realized={RealizedCount}");
         }
         return new Size(width,_rows*rowHeight);
     }
+    private void QueueRealization()
+    {
+        if (_realizationQueued) return;
+        _realizationQueued = true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+        {
+            _realizationQueued = false;
+            if (!IsLoaded) return;
+            if (_scroll is TabViewportScrollViewer { CanPrepareHidden: true, IsPreparationSuspended: true })
+            {
+                if (_preparationResume == null)
+                {
+                    _preparationResume = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(32) };
+                    _preparationResume.Tick += (_, _) => { _preparationResume.Stop(); QueueRealization(); };
+                }
+                _preparationResume.Start();
+                return;
+            }
+            if (IsVisible || _scroll is TabViewportScrollViewer { CanPrepareHidden: true }) InvalidateMeasure();
+        }));
+    }
+
     private void CleanOutside(int first,int last)
     {
         var generator=ItemContainerGenerator;

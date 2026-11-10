@@ -136,9 +136,9 @@ internal static class MineExperienceTests
         var mine=(MinePage)typeof(MainWindow).GetMethod("PageOf",Private)!.Invoke(main,new object[]{PageKey.Mine})!;
         mine.SectionFactory=key=>new TextBox {Text=key.ToString()};
         var wheel=typeof(MainWindow).GetMethod("OnHorizontalWheel",Private)!;
-        wheel.Invoke(main,new object[]{120});Pump(230);
+        wheel.Invoke(main,new object[]{240});Pump(390);
         check(mine.CurrentTabIndex==1,"native horizontal wheel reaches Mine instead of returning at the home-only guard");
-        wheel.Invoke(main,new object[]{-120});Pump(230);check(mine.CurrentTabIndex==0,"horizontal wheel can return to personal home");
+        wheel.Invoke(main,new object[]{-240});Pump(390);check(mine.CurrentTabIndex==0,"horizontal wheel can return to personal home");
         mine.HandleHorizontalWheel(1);mine.HandleHorizontalWheel(1);Pump(450);
         check(mine.CurrentTabIndex==2,"a second horizontal wheel input survives the tab animation");
         App.IsExiting=true;main.Close();App.IsExiting=false;

@@ -183,8 +183,8 @@ public class PlayerService
             if (!reuse.IsVisible)
             {
                 reuse.ShowActivated = true;
-                reuse.PrepareSeamlessPreShow();
-                reuse.WindowState = WindowState.Maximized;   // ★ 先定状态
+                reuse.WindowState = WindowState.Maximized;
+                reuse.PrepareSeamlessPreShow();   // ★ 先定状态
                 reuse.Show();                                 // ★ 再显示
             }
             else if (reuse.WindowState == WindowState.Minimized)
@@ -233,8 +233,8 @@ public class PlayerService
         //   ★ 必须放在 Show() 之前: Show 之后再改 WindowState 会先按 1280×760 布局一帧再跳,
         //     那一下闪动正好落在视频起播的画面上。
         win.ShowActivated = true;
-        win.PrepareSeamlessPreShow();
         win.WindowState = WindowState.Maximized;
+        win.PrepareSeamlessPreShow();
         win.Show();
         return win;
     }

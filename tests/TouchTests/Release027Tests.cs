@@ -23,7 +23,7 @@ internal static class Release027Tests
         check(startup.IndexOf("Svc.Settings.Load();") < startup.IndexOf("RenderPolicy.ApplyProcessRenderMode();") &&
             startup.IndexOf("RenderPolicy.ApplyProcessRenderMode();") < startup.IndexOf("var main = new MainWindow();"),
             "startup applies saved render preference after loading settings and before opening main window");
-        var vm = new HomeViewModel();
+        var vm = new HomeViewModel(new EmptyFeeds());
         for (int i = 0; i < 600; i++)
             vm.RecommendItems.Add(new VideoItem { Bvid = $"BV{i:D10}", Title = $"Card {i}", Author = "UP" });
         var page = new HomePage { DataContext = vm };
@@ -38,10 +38,18 @@ internal static class Release027Tests
                 $"actual home XAML bounds realized cards: {wall.RealizedCount}/600");
             var scroll = (ScrollViewer)page.FindName("RecommendScroll");
             check(!Descendants<ScrollViewer>(list).Any(), "home wall shares the page scroll owner");
-            scroll.ScrollToVerticalOffset(scroll.ScrollableHeight / 2);
+            // Data publication is incremental. Jump into the completed fixture's
+            // middle, rather than the middle of its first incomplete viewport.
+            var waitStarted = Environment.TickCount64;
+            while ((list.Items.Count != 600 || scroll.ScrollableHeight < 10000)
+                && Environment.TickCount64 - waitStarted < 10000) Pump();
+            check(list.Items.Count == 600 && vm.RecommendItems.Count == 600, "the virtualized fixture finishes publication without real-network additions");
+            var middle = scroll.ScrollableHeight / 2;
+            scroll.ScrollToVerticalOffset(middle);
             Pump();
             check(wall.RealizedCount > 0 && wall.RealizedCount < 60, "actual home remains virtualized after scrolling");
             var items = Descendants<BiliTouch.Views.Controls.VideoCard>(wall).ToArray();
+            check(Math.Abs(scroll.VerticalOffset - middle) < wall.RowHeight, "the completed wall retains its requested middle scroll position");
             check(items.Any(c => c.DataContext is VideoItem item && int.Parse(item.Bvid[2..]) > 200),
                 "actual home realizes middle rows through the page viewport");
             check(items.All(c => c.ActualWidth > 150 && c.ActualWidth < 600), "actual home card widths remain usable");
@@ -53,6 +61,17 @@ internal static class Release027Tests
                 "application and assembly report the same released version");
         }
         finally { window.Close(); }
+    }
+
+    private sealed class EmptyFeeds : IHomeFeedSource
+    {
+        private static Task<(bool ok, string? err, List<VideoItem>? items)> Empty() => Task.FromResult((true, (string?)null, (List<VideoItem>?)new List<VideoItem>()));
+        public Task<(bool ok, string? err, List<VideoItem>? items)> Recommend(bool reset) => Empty();
+        public Task<(bool ok, string? err, List<VideoItem>? items)> Popular(int page) => Empty();
+        public Task<(bool ok, string? err, List<VideoItem>? items)> Ranking() => Empty();
+        public Task<(bool ok, string? err, List<VideoItem>? items)> Live(int page) => Empty();
+        public Task<(bool ok, string? err, List<BangumiItem>? items, bool hasNext)> Bangumi(int page)
+            => Task.FromResult((true, (string?)null, (List<BangumiItem>?)new List<BangumiItem>(), false));
     }
 
     private static void Pump()

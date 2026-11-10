@@ -23,8 +23,13 @@ internal static class ViewportImageQueue
             element.Loaded += handler;
             await loaded.Task;
         }
-        if (VisualTreeUtil.FindAncestor<VideoCard>(element) == null) return true;
         var viewer = VisualTreeUtil.FindAncestor<ScrollViewer>(element);
+        // Retained home tabs have real dimensions while hidden. Their explicit
+        // two-slot preloader owns cold images; layout must not start another
+        // foreground burst. Keep a waiter so an early reveal can still load it.
+        if (viewer is TabViewportScrollViewer { CanPrepareHidden: true })
+            return await Queues.GetValue(viewer, v => new Queue(v)).Add(element);
+        if (VisualTreeUtil.FindAncestor<VideoCard>(element) == null) return true;
         if (viewer == null || viewer.ViewportHeight <= 0) return true;
         return await Queues.GetValue(viewer, v => new Queue(v)).Add(element);
     }
@@ -44,6 +49,7 @@ internal static class ViewportImageQueue
         {
             _viewer = viewer;
             viewer.ScrollChanged += (_, _) => { _remaining = _pending.Count; Schedule(); };
+            viewer.IsVisibleChanged += (_, _) => { _remaining = _pending.Count; Schedule(); };
             viewer.Unloaded += (_, _) => { foreach (var p in _pending) p.Completion.TrySetResult(false); _pending.Clear(); };
         }
         public Task<bool> Add(Border element)
@@ -68,7 +74,7 @@ internal static class ViewportImageQueue
                 var pending = _pending[_cursor]; var element = pending.Element;
                 bool? ready = null;
                 if (!element.IsLoaded) ready = false;
-                else try
+                else if (_viewer.IsVisible) try
                 {
                     var bounds = element.TransformToAncestor(_viewer).TransformBounds(new Rect(element.RenderSize));
                     var prefetch = _viewer.ViewportHeight * .75;

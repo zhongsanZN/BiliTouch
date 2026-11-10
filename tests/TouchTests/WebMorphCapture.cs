@@ -71,7 +71,16 @@ internal static class WebMorphCapture
         return null;
     }
 
-    private static void Capture(int x0, int y0, int w, int h, string path)
+    internal static void Capture(int x0, int y0, int w, int h, string path)
+    {
+        var source = CaptureBitmap(x0, y0, w, h);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(source));
+        using var fs = File.Create(path);
+        encoder.Save(fs);
+    }
+
+    internal static BitmapSource CaptureBitmap(int x0, int y0, int w, int h)
     {
         var screen = GetDC(IntPtr.Zero);
         var mem = CreateCompatibleDC(screen);
@@ -90,10 +99,8 @@ internal static class WebMorphCapture
             if (GetDIBits(mem, bmp, 0, (uint)h, buffer, ref bi, 0) == 0)
                 throw new InvalidOperationException("GetDIBits failed");
             var source = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, buffer, stride);
-            var encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(source));
-            using var fs = File.Create(path);
-            encoder.Save(fs);
+            source.Freeze();
+            return source;
         }
         finally
         {

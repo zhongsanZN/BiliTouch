@@ -54,7 +54,7 @@ public partial class HomePage : UserControl
             //   才建 —— 那一刻先量到一屏空内容、再被卡片顶开, 视觉上就是"闪一下"。
             //   现在启动时就把**所有 tab** 的填充器挂好(每个内部是分帧填, 不会卡启动),
             //   等用户切过去时列表里已经有内容、有正确高度。
-            //   ★ 数据请求仍是各 tab 自己的 VM 懒加载, 这里只保证"容器与首屏已就绪"。
+            // 数据、封面与首屏虚拟化控件由 StartHomePreparation 提前准备。
             foreach (var t in new[]
                      {
                          HomeTabKind.Recommend, HomeTabKind.Popular, HomeTabKind.Ranking,
@@ -67,6 +67,7 @@ public partial class HomePage : UserControl
             UpdateBackToTop(ScrollOf(CurrentTabFromVm() ?? HomeTabKind.Recommend));
             // DataContext 是外面赋进来的, 构造函数里还拿不到 VM, 所以订阅放在这里
             HookSearchCard();
+            StartHomePreparation();
             // 分段标签的下划线要等布局出来才摆得对(首次布局前 ActualWidth 都是 0);
             // 派到 Loaded 优先级 = 排在本次布局之后, 且首次摆放不带动画
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
@@ -75,6 +76,7 @@ public partial class HomePage : UserControl
                 MoveTabIndicator(CurrentTabFromVm() ?? HomeTabKind.Recommend, animate: false);
             }));
         };
+        Unloaded += (_, _) => StopHomePreparation();
         // 屏蔽把一屏内容筛空后要补下一页, 否则底部会留一大片空白(刷新不会触发滚动事件)
         FilterService.Instance.Changed += OnFilterApplied;
         // 窗口缩放时若搜索卡正开着, 要让它重新对中(RenderTransform 是绝对位移, 不跟布局走)
@@ -232,11 +234,7 @@ public partial class HomePage : UserControl
         HomeTabKind.Popular => PopularList,
         HomeTabKind.Ranking => RankingList,
         HomeTabKind.Live => LiveList,
-        // 追番页是**三段分区**(我的追番 / 番剧推荐 / 国创推荐), 没有"一个列表"可填。
-        // 返回 null 让 EnsureFill 直接返回 —— 不给哪一段挂填充器, 三段就都按普通
-        // ItemsControl 生成。代价是切到该页时一次生成 ~75 张卡; 可以接受, 因为海报卡
-        // 的标题走 TextTrimming(不换行), 没有 VideoCard 那种"换行排版"的昂贵测量
-        // —— 那才是 CardWallPanel 要把全墙重测摊开的主因。
+        // 追番的两段列表分别虚拟化, 不使用单列表 DeferredFill。
         _ => null,
     };
 
@@ -259,8 +257,8 @@ public partial class HomePage : UserControl
         _ => null,
     };
 
-    /// <summary>每批补多少张卡片: 首屏一批(约 4~5 列 × 5 行), 之后每帧一批。</summary>
-    private const int FillChunkSize = 24;
+    /// <summary>每批最多四张卡片，避免一次创建整屏控件形成长帧。</summary>
+    private const int FillChunkSize = 4;
 
     /// <summary>
     /// 切换 tab: **只切显隐 + 摆下划线**, 不重建列表(见 _fills 的说明)。
@@ -311,13 +309,12 @@ public partial class HomePage : UserControl
         var src = ItemsOf(tab, vm);
         if (src == null) return;
 
-        // 分帧挂载: 首批在下一帧(Background 优先级, 点击的布局/渲染先走), 其余按帧补。
-        // 为什么必须这样: 四个列表都是 ItemsControl + WrapPanel(外层还有自己的 ScrollViewer),
-        // **没有任何虚拟化** —— ItemsSource 一挂, 几十上百张 VideoCard 容器在一次布局里同步生成,
-        // 表现就是"点热门/排行榜/直播入口卡一下"。把生成时机接管成分帧。
+        // 数据分批进入视图；视口中的控件由 VirtualizingCardWallPanel 分批实现。
+        // 横向拖动和吸附期间暂停批量数据更新，避免新卡片的布局抢占输入帧。
         // 注意 XAML 里四份 ItemsSource 是初始绑定好的: 折叠状态的 ItemsControl 没被测量过,
         // 容器其实还没生成, 所以这里把绑定替换成代理视图没有浪费。
-        var fill = new DeferredFill(list, src, FillChunkSize);
+        var fill = new DeferredFill(list, src, FillChunkSize, () => _swipeArmed || _wheelPreviewActive || _activeSnapComplete != null);
+        fill.Progress += (_, _) => QueuePreparedTabs();
         _fills[tab] = fill;
         fill.Start();
     }
@@ -452,6 +449,7 @@ public partial class HomePage : UserControl
     /// <summary>通用: 滚动到底部 / 内容不够一屏时, 自动加载更多</summary>
     private async Task TriggerAutoLoad(ScrollViewer sv, HomeViewModel vm)
     {
+        if (CurrentTabFromVm() is not { } current || !ReferenceEquals(sv, ScrollOf(current)) || IsHomeGestureActive) return;
         if (_autoFillCount > 5) return; // 防止死循环
         if (vm.LoadingMore || vm.Loading || !sv.IsVisible || vm.Error.Length>0) return;
         // 手指还按在列表上时不往列表里加卡: 加卡会让整墙重新测量/重排, 拖动中掉帧。
@@ -1059,8 +1057,7 @@ public partial class HomePage : UserControl
 
 
 /// <summary>
-/// 分帧挂载器: 把"ItemsSource 一挂就在一次布局里同步生成全部卡片容器"拆成
-/// 首屏一批 + 之后每帧一批。
+/// 将数据变更分批接入视图，支持在手势期间暂停；保留源集合顺序与刷新时的滚动几何。
 ///
 /// 为什么需要它: 首页四个列表是 ItemsControl + WrapPanel(外面还套了自己的 ScrollViewer),
 /// 这种结构**没有虚拟化**, 挂上几百条数据就同步生成几百张 VideoCard —— 用户点
@@ -1080,6 +1077,8 @@ internal sealed class DeferredFill
     private readonly IList _source;
     private readonly ObservableCollection<object> _view = new();
     private readonly int _chunk;
+    private readonly Func<bool>? _suspend;
+    private DispatcherTimer? _resumeTimer;
     private DispatcherOperation? _pending;
     private int _index;
     private bool _completed;
@@ -1088,11 +1087,12 @@ internal sealed class DeferredFill
     /// <summary>每补完一批(含最后一批)触发一次; 页面用它逐步尝试恢复滚动位置</summary>
     public event EventHandler? Progress;
 
-    public DeferredFill(ItemsControl list, IEnumerable source, int chunk)
+    public DeferredFill(ItemsControl list, IEnumerable source, int chunk, Func<bool>? suspend = null)
     {
         _list = list;
         _source = (IList)source;
         _chunk = chunk;
+        _suspend = suspend;
     }
 
     public ItemsControl List => _list;
@@ -1113,6 +1113,7 @@ internal sealed class DeferredFill
         if (_disposed) return;
         _disposed = true;
         _pending?.Abort();
+        _resumeTimer?.Stop();
         if (_source is INotifyCollectionChanged ncc) ncc.CollectionChanged -= OnSourceChanged;
     }
 
@@ -1122,10 +1123,14 @@ internal sealed class DeferredFill
         switch (e.Action)
         {
             case NotifyCollectionChangedAction.Add:
-                // 填充中: 不动, 游标会自然扫到(直接塞会乱序 —— 游标后面还有没扫完的旧数据);
-                // 已填完: 这就是普通的滚动加载/刷新追加, 直接补进视图
-                if (_completed && e.NewItems != null)
-                    foreach (var item in e.NewItems) _view.Add(item!);
+                // 所有追加都经同一游标分批处理；插入游标之前时重新按源集合顺序构建。
+                if (e.NewStartingIndex < _index)
+                {
+                    _index = 0;
+                    _rebuildPending = true;
+                }
+                _completed = false;
+                Pump();
                 break;
             case NotifyCollectionChangedAction.Reset:
                 _index = 0;
@@ -1193,6 +1198,17 @@ internal sealed class DeferredFill
         _pending = _list.Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
         {
             _pending = null;
+            if (_suspend?.Invoke() == true)
+            {
+                if (_resumeTimer == null)
+                {
+                    _resumeTimer = new DispatcherTimer(DispatcherPriority.Background)
+                    { Interval = TimeSpan.FromMilliseconds(32) };
+                    _resumeTimer.Tick += (_, _) => { _resumeTimer.Stop(); Pump(); };
+                }
+                _resumeTimer.Start();
+                return;
+            }
             FillChunk();
             if (!_completed) Pump();   // 还有存货, 继续排下一帧
         });

@@ -554,6 +554,16 @@ public static class CoverLoader
 /// </summary>
 public static class Cover
 {
+    internal static bool TryApplyCached(Border border)
+    {
+        var url = GetSource(border);
+        if (string.IsNullOrWhiteSpace(url) || border.ActualWidth <= 0) return false;
+        var width = CoverLoader.DecodeWidthFor(border.ActualWidth, VisualTreeHelper.GetDpi(border).DpiScaleX);
+        if (!CoverLoader.TryGetCached(url, width, out var image) || image == null) return false;
+        if (border.Background is ImageBrush brush && ReferenceEquals(brush.ImageSource, image) && border.Opacity >= 1) return true;
+        ApplyDecoded(border, url, image, width, fade: false);
+        return true;
+    }
     public static readonly DependencyProperty SourceProperty = DependencyProperty.RegisterAttached(
         "Source", typeof(string), typeof(Cover),
         new PropertyMetadata(null, OnSourceChanged));

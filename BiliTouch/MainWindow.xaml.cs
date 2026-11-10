@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
@@ -36,13 +37,19 @@ public partial class MainWindow : FluentWindow
     private readonly Dictionary<PageKey, FrameworkElement> _pages = new();
 
     private DispatcherTimer? _toastTimer;
+    private PrecisionTouchpadInput? _precisionTouchpad;
 
     public MainWindow()
     {
         InitializeComponent();
         RefreshSidebarTheme();
         Svc.Theme.ThemeChanged+=RefreshSidebarTheme;
-        Closed+=(_,_)=>Svc.Theme.ThemeChanged-=RefreshSidebarTheme;
+        Closed+=(_,_)=> { _precisionTouchpad?.Dispose(); FinishHorizontalWheel(false); Svc.Theme.ThemeChanged-=RefreshSidebarTheme; _vm.PageChanged -= OnPageChanged; };
+        SourceInitialized += (_, _) =>
+        {
+            if (PresentationSource.FromVisual(this) is HwndSource source)
+                _precisionTouchpad = new PrecisionTouchpadInput(source, ResolvePrecisionTouchpadTarget);
+        };
         DataContext = _vm;
 
         // DataContext 在构造时就赋好了, 导航栏的 RadioButton 绑的就是 Current,
@@ -79,123 +86,87 @@ public partial class MainWindow : FluentWindow
         SidebarTheme.ToolTip=Svc.Theme.IsDark?"切换到浅色主题":"切换到深色主题";
     }
 
-    /// <summary>
-    /// 取某个页面的实例, 没有就现建一个并缓存(见 _pages 的说明)。
-    ///
-    /// 页面的 DataContext 必须跟着实例一起建: 各页 VM 的构造里会订阅服务(搜索历史变更、
-    /// 推荐算法变更…), 那些是"页面活着就一直听着"的, 分开建会让订阅时机变得难以推理。
-    /// </summary>
-    /// <summary>
-    /// 触控板横向双指滑动 → 首页切 tab(2026-11-04)。
-    ///
-    /// ★ 为什么在窗口层接: 精确触控板的横滑发的是 **WM_MOUSEHWHEEL**, 不进 WPF 的
-    ///   MouseWheel 事件流(那个只有纵向 Delta)。只能在 FluentWindow 的 WndProc 里抓。
-    /// ★ 只在首页时转发; 其它页面横向滚动该交给它们自己的横向滚动条。
-    /// ★ 攒余量: 触控板一次手势会发很多个小 delta, 累加到一格(120)才切一次,
-    ///   否则轻轻一划就翻好几页 —— 正是用户抱怨首页翻页"一拖到底"的同款问题。
-    /// </summary>
-    protected override void OnHorizontalWheel(int delta)
+    // WM_MOUSEHWHEEL carries distance but no trustworthy finger-up or device identity.
+    // Keep one signed displacement until the stream goes quiet, including reversals.
+    private const double TouchpadSwipeFullDelta = 420.0;
+    private const int HandWheelIdleMs = 180;
+    private int _hWheelAccum;
+    private DispatcherTimer? _hWheelIdleTimer;
+    private Action<double>? _wheelPreview;
+    private Action<bool>? _wheelSettle;
+
+    protected override void OnHorizontalWheelAt(int delta, Point screenPoint)
     {
-        if (delta == 0) return;
-        if (_vm.Current is not (PageKey.Home or PageKey.Mine or PageKey.Follow or PageKey.Search or PageKey.Settings or PageKey.Messages)) return;
-
-        // 反向时清掉余量(与纵向滚轮同款约定)
-        if (_hWheelAccum != 0 && Math.Sign(delta) != Math.Sign(_hWheelAccum))
-        {
-            _hWheelAccum = 0;
-            _hWheelPacketCount = 0;
-        }
-        if (_hWheelConsumed && Math.Sign(delta) != _hWheelConsumedDir) _hWheelConsumed = false;
-        _hWheelAccum += delta;
-        _hWheelPacketCount++;
-
-        // 只要还有 delta 进来, 就把"滚动流结束"的判定往后推
-        RestartWheelIdleTimer();
-
-        // 本滚动流已经切过一页 ⇒ 剩余 delta 只累计不切(等定时器解锁)
-        if (_hWheelConsumed) { return; }
-
-        // 连续双页跟手中间态:
-        // 精确触控板一次完整横划累计约 360~520 delta, 映射到 [-1, 1] 整页宽度跟手预览,
-        // 让相邻两个子页面并排跟手滑动, 直到松手(90ms 空档)按自然过半(>= 0.50)判定切页或回弹。
-        var signedAccum = _hWheelInvert ? -_hWheelAccum : _hWheelAccum;
-        var progress = Math.Clamp(signedAccum / TouchpadSwipeFullDelta, -1.0, 1.0);
-        if (CurrentModuleGestures is { } previewGestures) previewGestures.PreviewHorizontalWheel(progress);
-        else if (_vm.Current == PageKey.Mine && PageOf(PageKey.Mine) is MinePage previewMine)
-            previewMine.PreviewHorizontalWheel(progress);
-        else if (_vm.Current == PageKey.Follow && PageOf(PageKey.Follow) is FollowPage previewFollow)
-            previewFollow.PreviewHorizontalWheel(progress);
-        else if (PageOf(PageKey.Home) is HomePage previewHome)
-            previewHome.PreviewHorizontalWheel(progress);
+        if (ResolvePrecisionTouchpadTarget(screenPoint) == null) return;
+        OnHorizontalWheel(delta);
     }
 
-    /// <summary>
-    /// 重置"滚动流结束"定时器。90ms 内没有新的横向 delta ⇒ 认定这次滚动流结束,
-    /// 按是否自然过半(>= 0.50)或单次鼠标侧滚轮(120)决定提交切页还是回弹。
-    /// </summary>
-    private void RestartWheelIdleTimer()
+    internal PrecisionTouchpadInput.Target? ResolvePrecisionTouchpadTarget(Point screenPoint)
     {
+        if (PartitionPanel.Visibility == Visibility.Visible) return null;
+        Action begin = () => FinishHorizontalWheel(false);
+        if (CurrentModuleGestures is { } module && module.ContainsSwipePoint(screenPoint))
+            return new(begin, module.PreviewHorizontalWheel, module.SettlePrecisionTouchpadPreview, _vm.Current.ToString());
+        if (_vm.Current == PageKey.Home && PageOf(PageKey.Home) is HomePage home && home.ContainsSwipePoint(screenPoint))
+            return new(begin, home.PreviewHorizontalWheel, home.SettlePrecisionTouchpadPreview, "Home");
+        if (_vm.Current == PageKey.Mine && PageOf(PageKey.Mine) is MinePage mine && mine.ContainsSwipePoint(screenPoint))
+            return new(begin, mine.PreviewHorizontalWheel, mine.SettlePrecisionTouchpadPreview, "Mine");
+        if (_vm.Current == PageKey.Follow && PageOf(PageKey.Follow) is FollowPage follow && follow.ContainsSwipePoint(screenPoint))
+            return new(begin, follow.PreviewHorizontalWheel, follow.SettlePrecisionTouchpadPreview, "Follow");
+        return null;
+    }
+
+    protected override void OnHorizontalWheel(int delta)
+    {
+        if (_precisionTouchpad?.SuppressHorizontalWheel == true) return;
+        if (delta == 0) return;
+        if (_wheelPreview == null)
+        {
+            if (CurrentModuleGestures is { } modules)
+            {
+                _wheelPreview = modules.PreviewHorizontalWheel;
+                _wheelSettle = modules.SettleHorizontalWheelPreview;
+            }
+            else if (_vm.Current == PageKey.Home && PageOf(PageKey.Home) is HomePage home)
+            {
+                _wheelPreview = home.PreviewHorizontalWheel;
+                _wheelSettle = home.SettleHorizontalWheelPreview;
+            }
+            else if (_vm.Current == PageKey.Mine && PageOf(PageKey.Mine) is MinePage mine)
+            {
+                _wheelPreview = mine.PreviewHorizontalWheel;
+                _wheelSettle = mine.SettleHorizontalWheelPreview;
+            }
+            else if (_vm.Current == PageKey.Follow && PageOf(PageKey.Follow) is FollowPage follow)
+            {
+                _wheelPreview = follow.PreviewHorizontalWheel;
+                _wheelSettle = follow.SettleHorizontalWheelPreview;
+            }
+            else return;
+        }
+        _hWheelAccum += delta;
+        _wheelPreview(Math.Clamp(_hWheelAccum / TouchpadSwipeFullDelta, -1.0, 1.0));
         if (_hWheelIdleTimer == null)
         {
             _hWheelIdleTimer = new DispatcherTimer(DispatcherPriority.Input)
             {
                 Interval = TimeSpan.FromMilliseconds(HandWheelIdleMs)
             };
-            _hWheelIdleTimer.Tick += (_, _) =>
-            {
-                // 滚动流结束: 停表 + 解锁下一次切页
-                _hWheelIdleTimer!.Stop();
-                var accum = _hWheelAccum;
-                var packets = _hWheelPacketCount;
-                var consumed = _hWheelConsumed;
-                _hWheelConsumed = false;
-                _hWheelConsumedDir = 0;
-                _hWheelAccum = 0;
-                _hWheelPacketCount = 0;
-                if (!consumed && accum != 0)
-                {
-                    var progress = Math.Abs(accum) / TouchpadSwipeFullDelta;
-                    var isDiscreteMouseTilt = packets == 1 && Math.Abs(accum) >= Notch;
-                    var commit = progress >= 0.50 || isDiscreteMouseTilt;
-                    if (CurrentModuleGestures is { } settleGestures) settleGestures.SettleHorizontalWheelPreview(commit);
-                    else if (_vm.Current == PageKey.Mine && PageOf(PageKey.Mine) is MinePage settleMine)
-                        settleMine.SettleHorizontalWheelPreview(commit);
-                    else if (_vm.Current == PageKey.Follow && PageOf(PageKey.Follow) is FollowPage settleFollow)
-                        settleFollow.SettleHorizontalWheelPreview(commit);
-                    else if (PageOf(PageKey.Home) is HomePage settleHome)
-                        settleHome.SettleHorizontalWheelPreview(commit);
-                }
-            };
+            _hWheelIdleTimer.Tick += (_, _) => FinishHorizontalWheel(true);
         }
-        _hWheelIdleTimer.Stop();     // Stop+Start 就是"重置"
+        _hWheelIdleTimer.Stop();
         _hWheelIdleTimer.Start();
     }
 
-    private DispatcherTimer? _hWheelIdleTimer;
-
-    /// <summary>一格滚轮的标准 delta</summary>
-    private const int Notch = 120;
-
-    /// <summary>触控板横滑映射整页宽度的累计 delta 基准(过半即 >= 210)</summary>
-    private const double TouchpadSwipeFullDelta = 420.0;
-
-    /// <summary>判定"滚动流已结束"的空闲时长(ms)。见 RestartWheelIdleTimer 的说明。</summary>
-    private const int HandWheelIdleMs = 90;
-
-    /// <summary>
-    /// 方向开关: true = 把 delta 符号取反后再用。
-    /// ★ 前两版都是"取反"且两次都说反, 所以默认 **false**(不取反)。
-    ///   若换机器发现又反了, 只改这一个常量。
-    /// </summary>
-    private const bool _hWheelInvert = false;
-
-    /// <summary>本次滚动流是否已经切过一页(滚动流结束后由定时器清掉)</summary>
-    private bool _hWheelConsumed;
-    private int _hWheelConsumedDir;
-
-    /// <summary>本次滚动流累计的 delta 余量与包数</summary>
-    private int _hWheelAccum;
-    private int _hWheelPacketCount;
+    private void FinishHorizontalWheel(bool commit)
+    {
+        _hWheelIdleTimer?.Stop();
+        var settle = _wheelSettle;
+        _wheelPreview = null;
+        _wheelSettle = null;
+        _hWheelAccum = 0;
+        settle?.Invoke(commit);
+    }
 
     private FrameworkElement PageOf(PageKey key)
     {
@@ -293,6 +264,8 @@ public partial class MainWindow : FluentWindow
 
     private void OnPageChanged()
     {
+        _precisionTouchpad?.Cancel();
+        FinishHorizontalWheel(false);
         // 任何一次导航都意味着"离开内嵌页" —— 点导航栏里的任意一项(包括当前项)都会回到导航页,
         // 所以这里先无条件关掉它, 不要去猜用户想不想要那个覆盖层留着。
         HideEmbedded();

@@ -17,20 +17,47 @@ namespace BiliTouch.Views.Pages;
 public partial class HomePage
 {
     private Point _swipeStart;
-    private long _swipeStartTick;
     private bool _swipeArmed, _swipeDirKnown, _swipeHorizontal, _swipeConsumed;
     /// <summary>这次按下之后有没有移动过(判定"点击 vs 拖动")</summary>
     private bool _swipeMoved;
     private double _swipeDx;
     private TranslateTransform? _tabTrans;
-    private Action? _activeSnapComplete;
+    private Action? _activeSnapComplete, _cancelActiveSnap;
+    private int _snapTarget = -1;
+    private double _touchDragOrigin, _wheelDragOrigin;
+    private double _touchContactDx, _touchCommittedShift;
+    private double _wheelContactDx;
+    private bool _wheelPreviewActive;
+    private bool _contactActive, _ownsTouchCapture;
+    private StylusDevice? _pendingSwipeStylus;
+    internal static Action<string>? InputTrace;
+    private void TraceInput(string route) => InputTrace?.Invoke($"{Environment.TickCount64} {route} tab={CurrentTabIndex} x={TabTrans.X:F2} armed={_swipeArmed} horizontal={_swipeHorizontal}");
+
+    private double TakeOverSnap()
+    {
+        var target = _snapTarget;
+        var previous = CurrentTabIndex;
+        _cancelActiveSnap?.Invoke();
+        if (target >= 0 && target != previous)
+        {
+            // The previous release already chose this target. Rebase onto it
+            // without moving either visible page, so another contact starts
+            // from that decision rather than repeatedly repaying the same page.
+            var width = Math.Max(1, TabHost.ActualWidth);
+            var x = TabTrans.X + (target - previous) * width;
+            ClearPeerPreview();
+            SwitchTabTo(target);
+            EnsurePeerVisible(previous, previous < target ? -width : width);
+            TabTrans.X = x;
+            PreviewTabIndicator(target, previous, Math.Abs(x) / width);
+        }
+        return TabTrans.X;
+    }
 
     /// <summary>起手要超过这个位移才判定方向(避免手指微抖就锁成横向)。</summary>
     private const double SwipeSlop = 12;
     /// <summary>松手时位移需自然过半（内容宽度的 50%）才触发翻页。</summary>
     private const double SwipePageRatio = 0.50;
-    /// <summary>高速轻扫的速度阈值(px/ms)，需同时满足最小位移 80px。</summary>
-    private const double SwipeFlingVelocity = 2.2;
     /// <summary>到头了还拖的橡皮筋系数。</summary>
     private const double SwipeEdgeResist = 0.35;
     /// <summary>被 <see cref="FreezeVertical"/> 关掉平移的那个 tab(null = 没冻)</summary>
@@ -53,13 +80,13 @@ public partial class HomePage
 
     private void HookTabSwipe()
     {
-        TabHost.PreviewTouchDown += OnSwipeTouchDown;
-        TabHost.PreviewTouchMove += OnSwipeTouchMove;
-        TabHost.PreviewTouchUp += OnSwipeTouchUp;
+        TabHost.AddHandler(PreviewTouchDownEvent, new EventHandler<TouchEventArgs>(OnSwipeTouchDown), true);
+        TabHost.AddHandler(PreviewTouchMoveEvent, new EventHandler<TouchEventArgs>(OnSwipeTouchMove), true);
+        TabHost.AddHandler(PreviewTouchUpEvent, new EventHandler<TouchEventArgs>(OnSwipeTouchUp), true);
         TabHost.LostTouchCapture += OnSwipeLostTouchCapture;
-        TabHost.PreviewStylusDown += OnSwipeStylusDown;
-        TabHost.PreviewStylusMove += OnSwipeStylusMove;
-        TabHost.PreviewStylusUp += OnSwipeStylusUp;
+        TabHost.AddHandler(PreviewStylusDownEvent, new StylusDownEventHandler(OnSwipeStylusDown), true);
+        TabHost.AddHandler(PreviewStylusMoveEvent, new StylusEventHandler(OnSwipeStylusMove), true);
+        TabHost.AddHandler(PreviewStylusUpEvent, new StylusEventHandler(OnSwipeStylusUp), true);
         TabHost.PreviewMouseLeftButtonUp += OnSwipeMouseUp;
     }
 
@@ -102,8 +129,10 @@ public partial class HomePage
         if (!ReferenceEquals(_peerScroll, peer))
         {
             ClearPeerPreview();
+            ApplyReadyCovers(peer);
             _peerScroll = peer;
             _peerIndex = targetIndex;
+            if (peer is Helpers.TabViewportScrollViewer preview) preview.IsGesturePreview = true;
             peer.SetCurrentValue(VisibilityProperty, Visibility.Visible);
         }
         var pt = PeerTrans(peer);
@@ -115,6 +144,7 @@ public partial class HomePage
     {
         if (_peerScroll == null) return;
         var peer = _peerScroll;
+        if (peer is Helpers.TabViewportScrollViewer preview) preview.IsGesturePreview = false;
         _peerScroll = null;
         _peerIndex = -1;
         var pt = PeerTrans(peer);
@@ -151,16 +181,17 @@ public partial class HomePage
 
     internal void SwipeDown(Point p, DependencyObject? source)
     {
-        CompleteActiveSnap();
+        _touchDragOrigin = TakeOverSnap();
+        _wheelPreviewActive = false;
         _swipeStart = p;
-        _swipeStartTick = Environment.TickCount64;
         _swipeArmed = SwipeAllowed(source);
         _swipeDirKnown = false;
         _swipeHorizontal = false;
         _swipeConsumed = false;
         _swipeMoved = false;
         _verticalFrozenOnce = false;
-        _swipeDx = 0;
+        _swipeDx = _touchDragOrigin;
+        _touchContactDx = _touchCommittedShift = 0;
         _tapCard = FindCard(source);
     }
 
@@ -183,6 +214,7 @@ public partial class HomePage
     /// <summary>Returns true when the move was consumed by the page drag.</summary>
     internal bool SwipeMove(Point p)
     {
+        if (!_swipeArmed) return false;
         var dx = p.X - _swipeStart.X;
         var dy = p.Y - _swipeStart.Y;
         if (Math.Abs(dx) > 10 || Math.Abs(dy) > 10) _swipeMoved = true;
@@ -190,8 +222,8 @@ public partial class HomePage
         if (!_swipeDirKnown)
         {
             if (Math.Max(Math.Abs(dx), Math.Abs(dy)) < SwipeSlop) return false;
-            _swipeDirKnown = true;
             _swipeHorizontal = _swipeArmed && Math.Abs(dx) > Math.Abs(dy) * 1.2;
+            _swipeDirKnown = _swipeHorizontal;
             if (!_swipeHorizontal)
             {
                 UnfreezeVertical();
@@ -201,8 +233,11 @@ public partial class HomePage
             if (_pendingSwipeTouch != null)
             {
                 try { TabHost.CaptureTouch(_pendingSwipeTouch); } catch { }
-                _pendingSwipeTouch = null;
+                _ownsTouchCapture = ReferenceEquals(_pendingSwipeTouch.Captured, TabHost);
             }
+            else if (_pendingSwipeStylus != null)
+                _pendingSwipeStylus.Capture(TabHost);
+            Helpers.TouchSupport.CancelPendingTap();
         }
         if (!_swipeHorizontal || _swipeConsumed) return false;
 
@@ -216,10 +251,34 @@ public partial class HomePage
             sv.ScrollToVerticalOffset(_frozenOffset);
         }
 
-        _swipeDx = dx;
+        dx += _touchDragOrigin;
         var width = Math.Max(1, TabHost.ActualWidth);
+        var shift = RebaseDisplacement(ref dx, width);
+        _touchDragOrigin += shift;
+        _touchCommittedShift += shift;
+        _touchContactDx = p.X - _swipeStart.X + _touchCommittedShift;
+        _swipeDx = dx;
         ApplySwipeDisplacement(dx, width);
         return true;
+    }
+
+    // Once the peer completely fills the viewport, make it the origin before
+    // continuing. Carry the same shift into the contact's absolute coordinate
+    // baseline; otherwise the next packet jumps back to the previous page.
+    private double RebaseDisplacement(ref double dx, double width)
+    {
+        double shift = 0;
+        while ((dx <= -width && CurrentTabIndex < 4) || (dx >= width && CurrentTabIndex > 0))
+        {
+            var step = dx < 0 ? 1 : -1;
+            UnfreezeVertical();
+            ClearPeerPreview();
+            SwitchTabTo(CurrentTabIndex + step);
+            dx += step * width;
+            shift += step * width;
+            if (_swipeHorizontal) FreezeVertical();
+        }
+        return shift;
     }
 
     private void ApplySwipeDisplacement(double dx, double width)
@@ -228,6 +287,14 @@ public partial class HomePage
         var target = current + (dx < 0 ? 1 : -1);
         var trans = TabTrans;
         trans.BeginAnimation(TranslateTransform.XProperty, null);
+
+        if (Math.Abs(dx) < .01)
+        {
+            ClearPeerPreview();
+            trans.X = 0;
+            MoveTabIndicator(KindOfIndex(current), animate: false);
+            return;
+        }
 
         if (target is >= 0 and < 5)
         {
@@ -238,7 +305,7 @@ public partial class HomePage
         else
         {
             ClearPeerPreview();
-            trans.X = dx * SwipeEdgeResist;
+            trans.X = Math.Sign(dx) * width * SwipeEdgeResist * (1 - Math.Exp(-Math.Abs(dx) / width));
         }
     }
 
@@ -269,19 +336,25 @@ public partial class HomePage
         sv.SetCurrentValue(ScrollViewer.PanningModeProperty, _frozenPanMode);
     }
 
-    /// <summary>手指抬起: 按自然过半位移(>=50%)或高速轻扫决定翻页还是弹回。</summary>
+    /// <summary>手指抬起: 按自然过半位移(>=50%)决定翻页还是弹回。</summary>
     internal bool SwipeUp()
     {
+        if (!_swipeArmed) return false;
+        _swipeArmed = false;
         UnfreezeVertical();
-        if (!_swipeHorizontal) return false;
-        var elapsed = Math.Max(1, Environment.TickCount64 - _swipeStartTick);
-        var velocity = Math.Abs(_swipeDx) / elapsed;
+        if (!_swipeHorizontal)
+        {
+            if (Math.Abs(_touchDragOrigin) > .5) AnimateSnap(false, CurrentTabIndex, Math.Max(1, TabHost.ActualWidth));
+            return false;
+        }
+        _swipeHorizontal = false;
         var width = Math.Max(1, TabHost.ActualWidth);
         var target = CurrentTabIndex + (_swipeDx < 0 ? 1 : -1);
         var valid = target is >= 0 and < 5;
 
         var shouldSwitch = valid && !_swipeConsumed &&
-            (Math.Abs(_swipeDx) >= width * SwipePageRatio || (Math.Abs(_swipeDx) >= 80 && velocity >= SwipeFlingVelocity));
+            (Math.Abs(_swipeDx) >= width * SwipePageRatio ||
+             (Math.Sign(_touchContactDx) == Math.Sign(_swipeDx) && Math.Abs(_touchContactDx) >= width * SwipePageRatio));
 
         _swipeConsumed = true;
         AnimateSnap(shouldSwitch, target, width);
@@ -297,19 +370,31 @@ public partial class HomePage
         var duration = TimeSpan.FromMilliseconds(SwipeSnapMs);
 
         var done = false;
+        _snapTarget = switchPage ? target : -1;
         void Finish()
         {
             if (done) return;
             done = true;
             _activeSnapComplete = null;
+            _cancelActiveSnap = null;
+            _snapTarget = -1;
             trans.BeginAnimation(TranslateTransform.XProperty, null);
             trans.X = 0;
             ClearPeerPreview();
             if (switchPage) SwitchTabTo(target);
             else MoveTabIndicator(CurrentTabFromVm() ?? HomeTabKind.Recommend);
-            _wheelSwitching = false;
+            TraceInput($"snap.finish switch={switchPage}");
         }
         _activeSnapComplete = Finish;
+        _cancelActiveSnap = () =>
+        {
+            var x = trans.X;
+            done = true;
+            _activeSnapComplete = _cancelActiveSnap = null;
+            _snapTarget = -1;
+            trans.BeginAnimation(TranslateTransform.XProperty, null);
+            trans.X = x;
+        };
 
         if (!switchPage)
         {
@@ -351,6 +436,7 @@ public partial class HomePage
         var order = TabButtons;
         if (index < 0 || index >= order.Length) return;
         order[index].IsChecked = true;
+        QueuePreparedTabs();
     }
 
     private bool SwipeAllowed(DependencyObject? source)
@@ -372,26 +458,48 @@ public partial class HomePage
     internal void PreviewHorizontalWheel(double progress)
     {
         if (_swipeHorizontal) return;
-        CompleteActiveSnap();
+        if (!_wheelPreviewActive)
+        {
+            _wheelDragOrigin = TakeOverSnap();
+            _wheelPreviewActive = true;
+        }
         var width = Math.Max(1, TabHost.ActualWidth);
-        var dx = -progress * width;
+        // One wheel/contact session owns one origin and its two neighbours.
+        // Never rebase/commit here: arbitrarily many packets, reversals, or a
+        // displacement beyond a whole page must wait for this session's release.
+        progress = Math.Clamp(progress, -1, 1);
+        var dx = Math.Clamp(_wheelDragOrigin - progress * width, -width * .999, width * .999);
+        _wheelContactDx = -progress * width;
         _swipeDx = dx;
         ApplySwipeDisplacement(dx, width);
+        TraceInput($"wheel progress={progress:F3}");
     }
 
     /// <summary>
     /// 触控板双指横滑抬手停顿时, 按跟手进度(自然过半)收尾吸附或弹回。
     /// </summary>
     internal void SettleHorizontalWheelPreview(bool commit)
+        => SettleWheelPreview(commit, physicalContact: false);
+
+    internal void SettlePrecisionTouchpadPreview(bool commit)
+        => SettleWheelPreview(commit, physicalContact: true);
+
+    internal bool ContainsSwipePoint(Point screenPoint)
+        => Helpers.PrecisionTouchpadInput.ContainsViewportPoint(TabHost, screenPoint);
+
+    private void SettleWheelPreview(bool commit, bool physicalContact)
     {
         if (_swipeHorizontal) return;
+        _wheelPreviewActive = false;
+        TraceInput($"wheel.settle commit={commit}");
         if (Math.Abs(TabTrans.X) < 0.5 && _peerScroll == null) return;
         var width = Math.Max(1, TabHost.ActualWidth);
         var target = CurrentTabIndex + (_swipeDx < 0 ? 1 : -1);
         var valid = target is >= 0 and < 5;
-        if (commit && valid)
+        _wheelPreviewActive = false;
+        if (commit && valid && ((!physicalContact && Math.Abs(_swipeDx) >= width * SwipePageRatio) ||
+            (Math.Sign(_wheelContactDx) == Math.Sign(_swipeDx) && Math.Abs(_wheelContactDx) >= width * SwipePageRatio)))
         {
-            _wheelSwitching = true;
             AnimateSnap(true, target, width);
         }
         else
@@ -414,18 +522,16 @@ public partial class HomePage
             if (Math.Abs(TabTrans.X) > 0.5) AnimateSnap(false, CurrentTabIndex, width);
             return;
         }
-        _wheelSwitching = true;
         _swipeDx = direction > 0 ? -1 : 1;
         AnimateSnap(true, target, width);
     }
 
-    /// <summary>触控板切页进行中</summary>
-    private bool _wheelSwitching;
 
     private void OnSwipeTouchDown(object? sender, TouchEventArgs e)
     {
         _pendingSwipeTouch = e.TouchDevice;
-        SwipeDown(RootPoint(e), e.OriginalSource as DependencyObject);
+        BeginContact(RootPoint(e), e.OriginalSource as DependencyObject);
+        TraceInput("touch.down");
     }
 
     private Point RootPoint(TouchEventArgs e) => e.GetTouchPoint(null).Position;
@@ -435,31 +541,35 @@ public partial class HomePage
         try
         {
             var pts = e.GetStylusPoints(null);
-            if (pts != null && pts.Count > 0) return pts[0].ToPoint();
+            if (pts != null && pts.Count > 0) return pts[pts.Count - 1].ToPoint();
         }
         catch { /* 取不到就退回下面 */ }
-        return e.GetPosition(TabHost);
+        return e.GetPosition(null);
     }
 
     private void OnSwipeTouchMove(object? sender, TouchEventArgs e)
     {
         if (SwipeMove(RootPoint(e))) e.Handled = true;
+        TraceInput("touch.move");
     }
 
     private void OnSwipeTouchUp(object? sender, TouchEventArgs e)
     {
-        var moved = _swipeMoved;
-        if (SwipeUp()) e.Handled = true;
-        if (!moved && _tapCard != null) _tapCard.OpenVideo();
-        _tapCard = null;
-        _swipeDirKnown = false;
-        _swipeHorizontal = false;
-        _pendingSwipeTouch = null;
-        try { TabHost.ReleaseTouchCapture(e.TouchDevice); } catch { }
+        TraceInput("touch.up");
+        if (EndContact()) e.Handled = true;
     }
 
     private void OnSwipeLostTouchCapture(object? sender, TouchEventArgs e)
     {
+        // A child losing capture to this host bubbles through the same event route.
+        if (ReferenceEquals(e.TouchDevice.Captured, TabHost)) return;
+        TraceInput("touch.lost");
+        // ScrollViewer captures on down before a horizontal drag belongs to us.
+        // Its child-to-child transfer must not cancel the page's pending contact.
+        if (!_ownsTouchCapture) return;
+        _ownsTouchCapture = false;
+        _contactActive = false;
+        _swipeArmed = false;
         if (_swipeHorizontal && !_swipeConsumed)
         {
             _swipeConsumed = true;
@@ -471,22 +581,53 @@ public partial class HomePage
         _pendingSwipeTouch = null;
     }
 
-    private void OnSwipeStylusDown(object? sender, StylusEventArgs e) =>
-        SwipeDown(RootPoint(e), e.OriginalSource as DependencyObject);
+    private void OnSwipeStylusDown(object? sender, StylusEventArgs e)
+    {
+        _pendingSwipeStylus = e.StylusDevice;
+        BeginContact(RootPoint(e), e.OriginalSource as DependencyObject);
+        TraceInput("stylus.down");
+    }
 
     private void OnSwipeStylusMove(object? sender, StylusEventArgs e)
     {
         if (SwipeMove(RootPoint(e))) e.Handled = true;
+        TraceInput("stylus.move");
     }
 
     private void OnSwipeStylusUp(object? sender, StylusEventArgs e)
     {
+        TraceInput("stylus.up");
+        if (EndContact()) e.Handled = true;
+    }
+
+    private void BeginContact(Point point, DependencyObject? source)
+    {
+        // A physical finger can produce both stylus and touch down. They are
+        // two routes for one contact, not a new baseline midway through a drag.
+        if (_contactActive) return;
+        _contactActive = true;
+        _ownsTouchCapture = false;
+        SwipeDown(point, source);
+    }
+
+    private bool EndContact()
+    {
+        if (!_contactActive) return _swipeMoved;
+        _contactActive = false;
         var moved = _swipeMoved;
-        if (SwipeUp()) e.Handled = true;
+        var consumed = SwipeUp();
+        _ownsTouchCapture = false;
+        var touch = _pendingSwipeTouch;
+        var stylus = _pendingSwipeStylus;
+        _pendingSwipeTouch = null;
+        _pendingSwipeStylus = null;
+        try { if (touch?.Captured == TabHost) touch.Capture(null); } catch { }
+        try { if (stylus?.Captured == TabHost) stylus.Capture(null); } catch { }
         if (!moved && _tapCard != null) _tapCard.OpenVideo();
         _tapCard = null;
         _swipeDirKnown = false;
         _swipeHorizontal = false;
+        return consumed || moved;
     }
 
     private void OnSwipeMouseUp(object? sender, MouseButtonEventArgs e)

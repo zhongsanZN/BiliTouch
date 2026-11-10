@@ -29,12 +29,12 @@
         <ScrollViewer x:Name="ModuleContent" FocusVisualStyle="{x:Null}" Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,8,0">
         <StackPanel Margin="36,12,36,32">
             <!-- ============ 内容区 ============
-                 Tab 切换 = ContentControl + DataTriggers 换 ContentTemplate。
+                 DataTriggers 选择 ContentTemplate；RetainedTemplateContent 保留各模板的控件，切回时复用。
                  ★ Content 必须保持是 **VM 本身**({Binding}): 模板里所有 Command / 属性绑定
                    都以 Content 为数据源 —— 之前把它设成 "{Binding TabIndex}"(一个 int),
                    所有按钮的绑定就全落空了(真机症状: 四个 Tab 的功能全没反应)。
                    Triggers 只负责读 TabIndex 换模板, 不动 Content。 -->
-            <ContentControl x:Name="SettingsTabContent" Margin="0,4,0,0" HorizontalAlignment="Stretch"
+            <helpers:RetainedTemplateContent x:Name="SettingsTabContent" Margin="0,4,0,0" HorizontalAlignment="Stretch"
                             Focusable="False"
                             Content="{Binding}">
                 <ContentControl.Resources>
@@ -60,7 +60,7 @@
                         </Style.Triggers>
                     </Style>
                 </ContentControl.Style>
-            </ContentControl>
+            </helpers:RetainedTemplateContent>
         </StackPanel>
     </ScrollViewer>
     </Grid>

@@ -1,5 +1,8 @@
 using System;
+using System.Windows;
 using System.Windows.Threading;
+using System.Windows.Interop;
+using BiliTouch.Helpers;
 
 namespace BiliTouch.Views;
 
@@ -8,95 +11,213 @@ namespace BiliTouch.Views;
 /// </summary>
 public partial class PlayerWindow
 {
-    /// <summary>一格滚轮的标准 delta</summary>
-    private const int PageWheelNotch = 120;
-
     /// <summary>触控板完整翻一页对应的累计 delta</summary>
     private const double PageFullSwipeWheelDelta = 420.0;
 
     /// <summary>判定"滚动流已结束"的空闲时长(ms), 与首页保持一致</summary>
-    private const int PageWheelIdleMs = 90;
+    private const int PageWheelIdleMs = 180;
 
-    /// <summary>
-    /// 方向开关: false = 不取反（WM_MOUSEHWHEEL 正 delta 对应手指向左滑 → 切向右侧页 +1）。
-    /// </summary>
-    private const bool PageWheelInvert = false;
-
+    private enum HorizontalWheelRegion { None, Info, Video }
+    private HorizontalWheelRegion _horizontalWheelRegion;
     private DispatcherTimer? _pageWheelIdle;
-    private bool _pageWheelConsumed;
     private int _pageWheelAccum;
+    private long _videoWheelStartMs, _videoWheelTargetMs;
+    private PrecisionTouchpadInput? _playerTouchpad, _overlayTouchpad;
+    private double _precisionVideoProgress;
+
+    private void AttachPlayerTouchpadInput(HwndSource? source)
+    {
+        if (source != null) _playerTouchpad ??= new PrecisionTouchpadInput(source, ResolvePrecisionTouchpadTarget);
+    }
+
+    internal PrecisionTouchpadInput.Target? ResolvePrecisionTouchpadTarget(Point point)
+    {
+        if (_closing || _isLive || _videoTouches.Count > 0 || AnyPlayerPopupOpen) return null;
+        if (ContainsScreenPoint(VideoSurface, point))
+            return new(BeginPrecisionVideo, PreviewPrecisionVideo, EndPrecisionVideo, "Player.Video");
+        if (!_isFullscreen && !_isFillWindow && ContainsScreenPoint(InfoPanel, point))
+            return new(() => { ResetLegacyPageWheel(); _infoWheelPreviewActive = false; },
+                PreviewPrecisionInfo, EndPrecisionInfo, "Player.Info");
+        return null;
+    }
+
+    private void ResetLegacyPageWheel()
+    {
+        _pageWheelIdle?.Stop(); _pageWheelAccum = 0;
+        _horizontalWheelRegion = HorizontalWheelRegion.None;
+    }
+
+    private void PreviewPrecisionInfo(double progress)
+    {
+        if (_closing || _infoSwipeArmed || _pendingCaptureDevice != null) return;
+        if (!_infoWheelPreviewActive) { _infoWheelOrigin = TakeOverInfoSettle(); _infoWheelPreviewActive = true; }
+        var width = Math.Max(1, PageHost.ActualWidth);
+        _infoWheelContactDx = -Math.Clamp(progress, -1, 1) * width;
+        _infoDragDx = Math.Clamp(_infoWheelOrigin + _infoWheelContactDx, -width * .999, width * .999);
+        if (!_infoDraggingPage) _infoDraggingPage = BeginPageDrag();
+        if (_infoDraggingPage) ApplyPageDrag(_infoDragDx);
+    }
+
+    private void EndPrecisionInfo(bool commit)
+    {
+        _infoWheelPreviewActive = false;
+        if (_closing || !_infoDraggingPage) return;
+        var target = PageIndex + (_infoDragDx < 0 ? 1 : -1);
+        var shouldSwitch = commit && target is 0 or 1 && Math.Sign(_infoWheelContactDx) == Math.Sign(_infoDragDx)
+            && Math.Abs(_infoWheelContactDx) >= PageHost.ActualWidth * PageSwitchRatio;
+        FinishPageDrag(shouldSwitch, shouldSwitch ? target : PageIndex);
+    }
+
+    private void BeginPrecisionVideo()
+    {
+        ResetLegacyPageWheel();
+        _precisionVideoProgress = 0;
+        _videoWheelStartMs = _videoWheelTargetMs = Math.Max(0, _mp.Time);
+    }
+
+    private void PreviewPrecisionVideo(double progress)
+    {
+        if (_closing || _mp.Length <= 0) return;
+        _precisionVideoProgress = progress;
+        var range = Math.Clamp(_mp.Length * .1, 30_000, 120_000);
+        _videoWheelTargetMs = (long)Math.Clamp(_videoWheelStartMs - progress * range, 0, Math.Max(0, _mp.Length - 250));
+        if (!TouchUiDue()) return;
+        _updatingSlider = true;
+        ProgressSlider.Value = _videoWheelTargetMs * 1000.0 / _mp.Length;
+        _updatingSlider = false;
+        ShowSpeedHint($"{TouchTime(_videoWheelTargetMs)} / {TouchTime(_mp.Length)} · 松手跳转", true);
+    }
+
+    private void EndPrecisionVideo(bool commit)
+    {
+        if (_closing) return;
+        if (commit && Math.Abs(_precisionVideoProgress) > .00001 && _mp.Length > 0) SeekTo(_videoWheelTargetMs);
+        SyncProgressNow(); ShowSpeedHint("进度手势结束", false);
+    }
 
     protected override void OnHorizontalWheel(int delta)
     {
-        if (delta == 0 || _closing || _isLive || _isFullscreen || _isFillWindow) return;
-        if (InfoPanel == null || !InfoPanel.IsVisible) return;
+        var cursor = System.Windows.Forms.Cursor.Position;
+        HandleHorizontalWheelAt(delta, new Point(cursor.X, cursor.Y));
+    }
 
-        var wasFreshStream = _pageWheelAccum == 0;
-        if (_pageWheelAccum != 0 && Math.Sign(delta) != Math.Sign(_pageWheelAccum))
+    protected override void OnHorizontalWheelAt(int delta, Point screenPoint) => HandleHorizontalWheelAt(delta, screenPoint);
+
+    internal void HandleHorizontalWheelAt(int delta, Point screenPoint)
+    {
+        if (_playerTouchpad?.SuppressHorizontalWheel == true || _overlayTouchpad?.SuppressHorizontalWheel == true) return;
+        if (delta == 0 || _closing || _isLive || _videoTouches.Count > 0 || AnyPlayerPopupOpen) return;
+        if (_horizontalWheelRegion == HorizontalWheelRegion.None)
         {
-            _pageWheelAccum = 0;
-            _pageWheelConsumed = false;
-            wasFreshStream = true;
+            // The web video overlaps the upper part of the right column. Hit-test it first.
+            if (ContainsScreenPoint(VideoSurface, screenPoint))
+            {
+                _horizontalWheelRegion = HorizontalWheelRegion.Video;
+                _videoWheelStartMs = _videoWheelTargetMs = Math.Max(0, _mp.Time);
+            }
+            else if (!_isFullscreen && !_isFillWindow && ContainsScreenPoint(InfoPanel, screenPoint))
+                _horizontalWheelRegion = HorizontalWheelRegion.Info;
+            else return;
         }
         _pageWheelAccum += delta;
         RestartPageWheelIdle();
-
-        if (_pageWheelConsumed) return;
-        if (_infoPageAnimating) CompleteInfoPageSettle();
-
-        var signedAccum = PageWheelInvert ? -_pageWheelAccum : _pageWheelAccum;
-        var dir = Math.Sign(signedAccum);
-        if (dir == 0) return;
-
-        // 单次标准鼠标侧滚轮整格(120)或达到全幅(>=420)时，若尚未满幅则先走连续全幅跟手预览
-        var progress = Math.Clamp(signedAccum / PageFullSwipeWheelDelta, -1.0, 1.0);
-        if (Math.Abs(progress) < 0.999)
+        if (_horizontalWheelRegion == HorizontalWheelRegion.Video)
         {
-            if (PageHost != null && PageHost.ActualWidth > 1)
+            if (_mp.Length <= 0) return;
+            var range = Math.Clamp(_mp.Length * 0.1, 30_000, 120_000);
+            _videoWheelTargetMs = (long)Math.Clamp(_videoWheelStartMs - _pageWheelAccum / PageFullSwipeWheelDelta * range, 0, Math.Max(0, _mp.Length - 250));
+            if (TouchUiDue())
             {
-                var width = Math.Max(1, PageHost.ActualWidth);
-                _infoDragDx = -progress * width;
-                if (!_infoDraggingPage) _infoDraggingPage = BeginPageDrag();
-                if (_infoDraggingPage) ApplyPageDrag(_infoDragDx);
+                _updatingSlider = true;
+                ProgressSlider.Value = _videoWheelTargetMs * 1000.0 / _mp.Length;
+                _updatingSlider = false;
+                ShowSpeedHint($"{TouchTime(_videoWheelTargetMs)} / {TouchTime(_mp.Length)} · 松手跳转", true);
             }
             return;
         }
-
-        _pageWheelAccum = 0;
-        _pageWheelConsumed = true;
-        _ = wasFreshStream;
-
-        var step = PageWheelInvert ? -Math.Sign(delta) : Math.Sign(delta);
-        if (step == 0) step = dir;
-        SwitchInfoPageByWheel(step);
+        if (_infoSwipeArmed || _pendingCaptureDevice != null) return;
+        if (!_infoWheelPreviewActive) { _infoWheelOrigin = TakeOverInfoSettle(); _infoWheelPreviewActive = true; }
+        var progress = Math.Clamp(_pageWheelAccum / PageFullSwipeWheelDelta, -1.0, 1.0);
+        if (PageHost != null && PageHost.ActualWidth > 1)
+        {
+            _infoDragDx = Math.Clamp(_infoWheelOrigin - progress * PageHost.ActualWidth, -PageHost.ActualWidth * .999, PageHost.ActualWidth * .999);
+            if (!_infoDraggingPage) _infoDraggingPage = BeginPageDrag();
+            if (_infoDraggingPage) ApplyPageDrag(_infoDragDx);
+        }
     }
 
-    /// <summary>滚动流空闲检测</summary>
+    private static bool ContainsScreenPoint(FrameworkElement element, Point screenPoint)
+    {
+        if (!element.IsVisible || element.ActualWidth <= 0 || element.ActualHeight <= 0) return false;
+        try { return new Rect(element.RenderSize).Contains(element.PointFromScreen(screenPoint)); }
+        catch { return false; }
+    }
+
+    private HwndSource? _overlayWheelSource;
+
+    private void AttachVideoOverlayWheelHook(Window window)
+    {
+        var handle = new WindowInteropHelper(window).Handle;
+        if (handle == IntPtr.Zero)
+        {
+            window.SourceInitialized -= OnVideoOverlaySourceInitialized;
+            window.SourceInitialized += OnVideoOverlaySourceInitialized;
+            return;
+        }
+        var source = HwndSource.FromHwnd(handle);
+        if (ReferenceEquals(source, _overlayWheelSource)) return;
+        _overlayWheelSource?.RemoveHook(OnVideoOverlayHorizontalWheel);
+        _overlayTouchpad?.Dispose();
+        _overlayWheelSource = source;
+        _overlayTouchpad = source != null ? new PrecisionTouchpadInput(source, ResolvePrecisionTouchpadTarget) : null;
+        source?.AddHook(OnVideoOverlayHorizontalWheel);
+    }
+
+    private void OnVideoOverlaySourceInitialized(object? sender, EventArgs e)
+    {
+        if (sender is not Window window) return;
+        window.SourceInitialized -= OnVideoOverlaySourceInitialized;
+        AttachVideoOverlayWheelHook(window);
+    }
+
+    private IntPtr OnVideoOverlayHorizontalWheel(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (message == 0x020E || (message == 0x020A && (wParam.ToInt64() & 4) != 0))
+        {
+            var delta = (short)((wParam.ToInt64() >> 16) & 0xffff);
+            HandleHorizontalWheelAt(message == 0x020A ? -delta : delta, WheelScreenPoint(lParam));
+            handled = true;
+        }
+        return IntPtr.Zero;
+    }
+
     private void RestartPageWheelIdle()
     {
         if (_pageWheelIdle == null)
         {
-            _pageWheelIdle = new DispatcherTimer
+            _pageWheelIdle = new DispatcherTimer(DispatcherPriority.Input)
             {
                 Interval = TimeSpan.FromMilliseconds(PageWheelIdleMs)
             };
             _pageWheelIdle.Tick += (_, _) =>
             {
-                _pageWheelIdle!.Stop();
-                var accum = _pageWheelAccum;
-                var consumed = _pageWheelConsumed;
-                _pageWheelConsumed = false;
+                _pageWheelIdle.Stop();
+                var region = _horizontalWheelRegion;
+                _horizontalWheelRegion = HorizontalWheelRegion.None;
+                var distance = _pageWheelAccum;
                 _pageWheelAccum = 0;
-
-                if (!consumed && _infoDraggingPage && _pendingCaptureDevice == null)
+                if (region == HorizontalWheelRegion.Video)
                 {
-                    var width = Math.Max(1, PageHost?.ActualWidth ?? 360);
+                    if (distance != 0 && !_closing && _mp.Length > 0) SeekTo(_videoWheelTargetMs);
+                    SyncProgressNow();
+                    ShowSpeedHint("进度手势结束", false);
+                    return;
+                }
+                _infoWheelPreviewActive = false;
+                if (_infoDraggingPage && _pendingCaptureDevice == null)
+                {
                     var target = PageIndex + (_infoDragDx < 0 ? 1 : -1);
-                    // 自然过半（>= 50% 页面宽度）或单次鼠标侧滚轮 120 整格触发切页
-                    var singleNotchClick = Math.Abs(accum) == PageWheelNotch;
-                    var shouldSwitch = (target is 0 or 1) &&
-                        (Math.Abs(_infoDragDx) >= width * 0.50 || singleNotchClick);
-                    FinishPageDrag(shouldSwitch, target);
+                    FinishPageDrag((target is 0 or 1) && Math.Abs(_infoDragDx) >= PageHost.ActualWidth * PageSwitchRatio, target);
                 }
             };
         }

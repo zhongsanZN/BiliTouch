@@ -266,7 +266,7 @@
             </StackPanel>
 
             <!-- ===== 热门 ===== -->
-            <ScrollViewer x:Name="PopularScroll" VerticalScrollBarVisibility="Auto"
+            <helpers:TabViewportScrollViewer x:Name="PopularScroll" VerticalScrollBarVisibility="Auto"
                           ScrollChanged="PopularScroll_OnScrollChanged"
                           Visibility="{Binding IsPopularTab, Converter={StaticResource BoolToVis}}">
                 <!-- 右边不再留 58px(那是给右上角工具列让位的, 工具列已挪到右下角)。
@@ -279,12 +279,12 @@
                     <Border Margin="20,4,20,0" Padding="14,10" CornerRadius="8"
                             Background="{DynamicResource InfoBarBackgroundBrush}"
                             BorderBrush="{DynamicResource AccentBorderFillBrush}" BorderThickness="1"
-                            Visibility="{Binding Error, Converter={StaticResource StrToVis}}">
+                            Visibility="{Binding PopularError, Converter={StaticResource StrToVis}}">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE7BA;" Foreground="{DynamicResource AccentTextBrush}"
                                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                        FontSize="14" VerticalAlignment="Center" />
-                            <TextBlock Text="{Binding Error}" Margin="10,0,0,0"
+                            <TextBlock Text="{Binding PopularError}" Margin="10,0,0,0"
                                        VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <Button Content="重试" Style="{StaticResource SubtleButtonStyle}"
                                     Margin="16,0,0,0" Padding="10,4"
@@ -319,22 +319,22 @@
                                    Visibility="{Binding PopularHasMore, Converter={StaticResource InvBoolToVis}}" />
                     </StackPanel>
                 </StackPanel>
-            </ScrollViewer>
+            </helpers:TabViewportScrollViewer>
 
             <!-- ===== 推荐(个性化) ===== -->
-            <ScrollViewer x:Name="RecommendScroll" VerticalScrollBarVisibility="Auto"
+            <helpers:TabViewportScrollViewer x:Name="RecommendScroll" VerticalScrollBarVisibility="Auto"
                           ScrollChanged="RecommendScroll_OnScrollChanged"
                           Visibility="{Binding IsRecommendTab, Converter={StaticResource BoolToVis}}">
                 <StackPanel Margin="0,0,0,250">
                     <Border Margin="20,4,20,0" Padding="14,10" CornerRadius="8"
                             Background="{DynamicResource InfoBarBackgroundBrush}"
                             BorderBrush="{DynamicResource AccentBorderFillBrush}" BorderThickness="1"
-                            Visibility="{Binding Error, Converter={StaticResource StrToVis}}">
+                            Visibility="{Binding RecommendError, Converter={StaticResource StrToVis}}">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE7BA;" Foreground="{DynamicResource AccentTextBrush}"
                                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                        FontSize="14" VerticalAlignment="Center" />
-                            <TextBlock Text="{Binding Error}" Margin="10,0,0,0"
+                            <TextBlock Text="{Binding RecommendError}" Margin="10,0,0,0"
                                        VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <Button Content="重试" Style="{StaticResource SubtleButtonStyle}"
                                     Margin="16,0,0,0" Padding="10,4"
@@ -383,10 +383,10 @@
                                那两条是对的。 -->
                     </StackPanel>
                 </StackPanel>
-            </ScrollViewer>
+            </helpers:TabViewportScrollViewer>
 
             <!-- ===== 排行榜 ===== -->
-            <ScrollViewer x:Name="RankingScroll" VerticalScrollBarVisibility="Auto"
+            <helpers:TabViewportScrollViewer x:Name="RankingScroll" VerticalScrollBarVisibility="Auto"
                           ScrollChanged="RankingScroll_OnScrollChanged"
                           Visibility="{Binding IsRankingTab, Converter={StaticResource BoolToVis}}">
                 <StackPanel Margin="0,0,0,250">
@@ -398,7 +398,7 @@
                             <TextBlock Text="&#xE7BA;" Foreground="{DynamicResource AccentTextBrush}"
                                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                        FontSize="14" VerticalAlignment="Center" />
-                            <TextBlock Text="{Binding Error}" Margin="10,0,0,0" VerticalAlignment="Center"
+                            <TextBlock Text="{Binding RankingError}" Margin="10,0,0,0" VerticalAlignment="Center"
                                        Foreground="{DynamicResource TextSecondaryBrush}" />
                             <Button Content="打开网页版排行榜" Style="{StaticResource AccentButtonStyle}"
                                     Margin="16,0,0,0" Padding="12,5"
@@ -419,25 +419,25 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                 </StackPanel>
-            </ScrollViewer>
+            </helpers:TabViewportScrollViewer>
 
             <!-- ===== 直播 =====
                  卡片复用的是视频卡片: 直播间同样有封面/标题/UP 主, 差别只在
                  "N 播放"要显示成"N 人气"、以及点击后走直播流(见 VideoCard 里的分支)。
                  列表会滚动加载下一页, 直播不做"已经到底啦"提示 —— 直播是滚不到底的。 -->
-            <ScrollViewer x:Name="LiveScroll" VerticalScrollBarVisibility="Auto"
+            <helpers:TabViewportScrollViewer x:Name="LiveScroll" VerticalScrollBarVisibility="Auto"
                           ScrollChanged="LiveScroll_OnScrollChanged"
                           Visibility="{Binding IsLiveTab, Converter={StaticResource BoolToVis}}">
                 <StackPanel Margin="0,0,0,250">
                     <Border Margin="20,4,20,0" Padding="14,10" CornerRadius="8"
                             Background="{DynamicResource InfoBarBackgroundBrush}"
                             BorderBrush="{DynamicResource AccentBorderFillBrush}" BorderThickness="1"
-                            Visibility="{Binding Error, Converter={StaticResource StrToVis}}">
+                            Visibility="{Binding LiveError, Converter={StaticResource StrToVis}}">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE7BA;" Foreground="{DynamicResource AccentTextBrush}"
                                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                        FontSize="14" VerticalAlignment="Center" />
-                            <TextBlock Text="{Binding Error}" Margin="10,0,0,0"
+                            <TextBlock Text="{Binding LiveError}" Margin="10,0,0,0"
                                        VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <Button Content="重试" Style="{StaticResource SubtleButtonStyle}"
                                     Margin="16,0,0,0" Padding="10,4"
@@ -467,7 +467,7 @@
                         </StackPanel>
                     </StackPanel>
                 </StackPanel>
-            </ScrollViewer>
+            </helpers:TabViewportScrollViewer>
 
             <!-- ===== 追番 =====
                  与其它四个 tab 的结构不同: 这里是**两段分区**(我的追番 / 番剧推荐),
@@ -478,7 +478,7 @@
 
                  海报是**竖版 3:4**, 所以两面墙都挂 Aspect="0.75" —— 卡片只读 CoverHeight,
                  高度由 CardWall 按这个比例算(见 Helpers/CardWall.cs 的 Aspect)。 -->
-            <ScrollViewer x:Name="BangumiScroll" VerticalScrollBarVisibility="Auto"
+            <helpers:TabViewportScrollViewer x:Name="BangumiScroll" VerticalScrollBarVisibility="Auto"
                           ScrollChanged="BangumiScroll_OnScrollChanged"
                           Visibility="{Binding IsBangumiTab, Converter={StaticResource BoolToVis}}">
                 <StackPanel Margin="0,0,0,250">
@@ -486,12 +486,12 @@
                     <Border Margin="20,4,20,0" Padding="14,10" CornerRadius="8"
                             Background="{DynamicResource InfoBarBackgroundBrush}"
                             BorderBrush="{DynamicResource AccentBorderFillBrush}" BorderThickness="1"
-                            Visibility="{Binding Error, Converter={StaticResource StrToVis}}">
+                            Visibility="{Binding BangumiError, Converter={StaticResource StrToVis}}">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE7BA;" Foreground="{DynamicResource AccentTextBrush}"
                                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                        FontSize="14" VerticalAlignment="Center" />
-                            <TextBlock Text="{Binding Error}" Margin="10,0,0,0"
+                            <TextBlock Text="{Binding BangumiError}" Margin="10,0,0,0"
                                        VerticalAlignment="Center" Foreground="{DynamicResource TextSecondaryBrush}" />
                             <Button Content="重试" Style="{StaticResource SubtleButtonStyle}"
                                     Margin="16,0,0,0" Padding="10,4"
@@ -575,7 +575,7 @@
                         </StackPanel>
                     </StackPanel>
                 </StackPanel>
-            </ScrollViewer>
+            </helpers:TabViewportScrollViewer>
         </Grid>
 
 

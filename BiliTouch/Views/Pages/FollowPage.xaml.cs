@@ -295,17 +295,35 @@ public partial class FollowPage : UserControl
     // ------------------------------------------------------------ 综合 / 视频 双页并排横滑与触控板跟手
 
     private const double FeedSwipeRatio = 0.50;
-    private const double FeedSwipeFlingVelocity = 2.2;
     private const double FeedEdgeResist = 0.35;
 
     private Point _feedSwipeStart;
-    private long _feedSwipeStartTick;
     private double _feedSwipeDx;
     private bool _feedSwipeArmed, _feedSwipeDecided, _feedSwipeHorizontal, _feedSuppressClick;
     private ScrollViewer? _feedFrozenScroll;
     private PanningMode _feedSavedPanning;
     private double _feedFrozenOffset;
-    private Action? _feedActiveSettle;
+    private Action? _feedActiveSettle, _cancelFeedSettle;
+    private int _feedSettleTarget = -1;
+    private double _feedWheelContactDx;
+    private double _feedTouchOrigin, _feedWheelOrigin;
+    private bool _feedWheelPreviewActive;
+
+    private double TakeOverFeedSettle()
+    {
+        var target = _feedSettleTarget;
+        _cancelFeedSettle?.Invoke();
+        if (DataContext is not FollowViewModel vm) return 0;
+        if (target >= 0 && target != (vm.VideoOnly ? 1 : 0))
+        {
+            var first = FeedTransform(DynamicList).X; var second = FeedTransform(VideoFeedScroll).X;
+            if (target == 1) vm.ShowVideoFeedCommand.Execute(null); else vm.ShowAllFeedCommand.Execute(null);
+            DynamicList.SetCurrentValue(VisibilityProperty, Visibility.Visible);
+            VideoFeedScroll.SetCurrentValue(VisibilityProperty, Visibility.Visible);
+            FeedTransform(DynamicList).X = first; FeedTransform(VideoFeedScroll).X = second;
+        }
+        return FeedTransform(vm.VideoOnly ? (FrameworkElement)VideoFeedScroll : DynamicList).X;
+    }
 
     private void HookFeedSwipe()
     {
@@ -334,12 +352,12 @@ public partial class FollowPage : UserControl
 
     internal void FeedSwipeDown(Point p, DependencyObject? source)
     {
-        CompleteFeedSettle();
+        _feedTouchOrigin = TakeOverFeedSettle();
+        _feedWheelPreviewActive = false;
         RestoreFeedPanning();
         _feedSuppressClick = false;
         _feedSwipeStart = p;
-        _feedSwipeStartTick = Environment.TickCount64;
-        _feedSwipeDx = 0;
+        _feedSwipeDx = _feedTouchOrigin;
         _feedSwipeDecided = false;
         _feedSwipeHorizontal = false;
         _feedSwipeArmed = DataContext is FollowViewModel;
@@ -361,8 +379,8 @@ public partial class FollowPage : UserControl
         if (!_feedSwipeDecided)
         {
             if (Math.Max(Math.Abs(_feedSwipeDx), Math.Abs(dy)) < 12) return false;
-            _feedSwipeDecided = true;
             _feedSwipeHorizontal = Math.Abs(_feedSwipeDx) > Math.Abs(dy) * 1.3;
+            _feedSwipeDecided = _feedSwipeHorizontal;
         }
         if (!_feedSwipeHorizontal) return false;
 
@@ -381,6 +399,7 @@ public partial class FollowPage : UserControl
         if (_feedFrozenScroll != null && Math.Abs(_feedFrozenScroll.VerticalOffset - _feedFrozenOffset) > 0.5)
             _feedFrozenScroll.ScrollToVerticalOffset(_feedFrozenOffset);
 
+        _feedSwipeDx += _feedTouchOrigin;
         ApplyFeedDrag(vm, _feedSwipeDx);
         return true;
     }
@@ -390,16 +409,17 @@ public partial class FollowPage : UserControl
         if (!_feedSwipeArmed) return false;
         _feedSwipeArmed = false;
         RestoreFeedPanning();
-        if (!_feedSwipeHorizontal || DataContext is not FollowViewModel vm) return false;
+        var horizontal = _feedSwipeHorizontal;
+        _feedSwipeHorizontal = false;
+        if (DataContext is not FollowViewModel vm) return false;
+        if (!horizontal) { if (Math.Abs(_feedTouchOrigin) > .5) FinishFeedDrag(vm, false, vm.VideoOnly ? 1 : 0); return false; }
 
         _feedSuppressClick = true;
-        var elapsed = Math.Max(1, Environment.TickCount64 - _feedSwipeStartTick);
         var width = Math.Max(1, FollowFeedHost.ActualWidth);
-        var velocity = Math.Abs(_feedSwipeDx) / elapsed;
         var currentIndex = vm.VideoOnly ? 1 : 0;
         var target = currentIndex + (_feedSwipeDx < 0 ? 1 : -1);
         var commit = (target is 0 or 1) &&
-            (Math.Abs(_feedSwipeDx) >= width * FeedSwipeRatio || (Math.Abs(_feedSwipeDx) >= 80 && velocity >= FeedSwipeFlingVelocity));
+            (Math.Abs(_feedSwipeDx) >= width * FeedSwipeRatio);
         FinishFeedDrag(vm, commit, target);
         return true;
     }
@@ -407,21 +427,33 @@ public partial class FollowPage : UserControl
     internal void PreviewHorizontalWheel(double progress)
     {
         if (_feedSwipeHorizontal || DataContext is not FollowViewModel vm || FollowFeedHost == null) return;
-        CompleteFeedSettle();
+        if (!_feedWheelPreviewActive) { _feedWheelOrigin = TakeOverFeedSettle(); _feedWheelPreviewActive = true; }
         var width = Math.Max(1, FollowFeedHost.ActualWidth);
-        _feedSwipeDx = -progress * width;
+        _feedWheelContactDx = -Math.Clamp(progress, -1, 1) * width;
+        _feedSwipeDx = Math.Clamp(_feedWheelOrigin + _feedWheelContactDx, -width * .999, width * .999);
         ApplyFeedDrag(vm, _feedSwipeDx);
     }
 
     internal void SettleHorizontalWheelPreview(bool commit)
+        => SettleFeedWheel(commit, false);
+
+    internal void SettlePrecisionTouchpadPreview(bool commit)
+        => SettleFeedWheel(commit, true);
+
+    internal bool ContainsSwipePoint(Point screenPoint) => PrecisionTouchpadInput.ContainsViewportPoint(FollowFeedHost, screenPoint);
+
+    private void SettleFeedWheel(bool commit, bool physicalContact)
     {
         if (_feedSwipeHorizontal || DataContext is not FollowViewModel vm || FollowFeedHost == null) return;
+        _feedWheelPreviewActive = false;
         var current = vm.VideoOnly ? (FrameworkElement)VideoFeedScroll : DynamicList;
         var other = vm.VideoOnly ? (FrameworkElement)DynamicList : VideoFeedScroll;
         if (Math.Abs(FeedTransform(current).X) < 0.5 && other.Visibility != Visibility.Visible) return;
         var currentIndex = vm.VideoOnly ? 1 : 0;
         var target = currentIndex + (_feedSwipeDx < 0 ? 1 : -1);
-        FinishFeedDrag(vm, commit && (target is 0 or 1), target);
+        _feedWheelPreviewActive = false;
+        var distance = physicalContact ? (Math.Sign(_feedWheelContactDx) == Math.Sign(_feedSwipeDx) ? Math.Abs(_feedWheelContactDx) : 0) : Math.Abs(_feedSwipeDx);
+        FinishFeedDrag(vm, commit && (target is 0 or 1) && distance >= FollowFeedHost.ActualWidth * FeedSwipeRatio, target);
     }
 
     internal void HandleHorizontalWheel(int direction)
@@ -479,11 +511,14 @@ public partial class FollowPage : UserControl
         var dur = TimeSpan.FromMilliseconds(160);
 
         var done = false;
+        _feedSettleTarget = switchPage ? target : -1;
         void Complete()
         {
             if (done) return;
             done = true;
             _feedActiveSettle = null;
+            _cancelFeedSettle = null;
+            _feedSettleTarget = -1;
             c.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
             o.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
             c.X = 0;
@@ -498,6 +533,16 @@ public partial class FollowPage : UserControl
             _feedSwipeDx = 0;
         }
         _feedActiveSettle = Complete;
+        _cancelFeedSettle = () =>
+        {
+            var cx = c.X; var ox = o.X;
+            done = true;
+            _feedActiveSettle = _cancelFeedSettle = null;
+            _feedSettleTarget = -1;
+            c.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
+            o.BeginAnimation(System.Windows.Media.TranslateTransform.XProperty, null);
+            c.X = cx; o.X = ox;
+        };
 
         if (switchPage)
         {

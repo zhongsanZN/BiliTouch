@@ -30,6 +30,8 @@ public partial class PlayerWindow
         public bool IsClosingMorph;
         public bool FrameAttached;
         public bool PreShowPrepared;
+        public bool HasPresented;
+        public bool PresentationHooked;
         public double Progress;
         public double Velocity;
         public double Target = 1.0;
@@ -79,6 +81,15 @@ public partial class PlayerWindow
     {
         if (_closing) return;
         ShowActivated = true;
+        if (!_seamless.PresentationHooked)
+        {
+            _seamless.PresentationHooked = true;
+            ContentRendered += (_, _) =>
+            {
+                _seamless.HasPresented = true;
+                if (_seamless.IsRunning && !_closing) AttachSeamlessFrameClock();
+            };
+        }
         try
         {
             new WindowInteropHelper(this).EnsureHandle();
@@ -91,14 +102,11 @@ public partial class PlayerWindow
         if (anchor == null) return;
 
         _seamless.PreShowPrepared = true;
-        if (SeamlessWindowSnapshot != null)
-        {
-            SeamlessWindowSnapshot.Background = anchor.SourceWindowBackdrop;
-            SeamlessWindowSnapshot.Opacity = anchor.SourceWindowBackdrop != null ? 1.0 : 0.0;
-        }
+        ApplySeamlessWindowSnapshot(anchor.SourceWindowBackdrop,
+            anchor.SourceWindow?.TryGetTarget(out var sourceWindow) == true ? sourceWindow : null);
         if (SeamlessBackdrop != null) SeamlessBackdrop.Opacity = 0;
         if (SeamlessMorphOverlay != null) SeamlessMorphOverlay.Visibility = Visibility.Visible;
-        if (!_vmemMode && VideoView != null) VideoView.Visibility = Visibility.Hidden;
+        if (!_vmemMode && VideoView != null) { DetachVideoOverlay(); VideoView.Visibility = Visibility.Hidden; }
         if (LoadingPoster != null) LoadingPoster.Opacity = 0;
         if (TopBar != null) TopBar.Opacity = 0;
         if (InfoPanel != null) InfoPanel.Opacity = 0;
@@ -123,11 +131,8 @@ public partial class PlayerWindow
 
         _seamless.PreShowPrepared = false;
         _seamless.IsClosingMorph = false;
-        if (SeamlessWindowSnapshot != null)
-        {
-            SeamlessWindowSnapshot.Background = anchor.SourceWindowBackdrop;
-            SeamlessWindowSnapshot.Opacity = anchor.SourceWindowBackdrop != null ? 1.0 : 0.0;
-        }
+        ApplySeamlessWindowSnapshot(anchor.SourceWindowBackdrop,
+            anchor.SourceWindow?.TryGetTarget(out var sourceWindow) == true ? sourceWindow : null);
         ApplySharedCoverArtwork(anchor.CoverImage, anchor.FallbackBrush);
         return StartSeamlessMorph(startRect, ResolveVideoStageTargetRect(), anchor.CornerRadius, ResolveVideoStageTargetRadius(), reverse: false);
     }
@@ -156,22 +161,26 @@ public partial class PlayerWindow
         StopDanmakuClock();
         DetachVideoOverlay();
 
-        var backdrop = SeamlessTransitionDirector.CaptureWindowSnapshotBrush(srcWin) ?? anchor?.SourceWindowBackdrop;
-        if (SeamlessWindowSnapshot != null)
-        {
-            SeamlessWindowSnapshot.Background = backdrop;
-            SeamlessWindowSnapshot.Opacity = 0;
-        }
+        FrameworkElement? sourceCard = null;
+        anchor?.SourceElement?.TryGetTarget(out sourceCard);
+        var backdrop = SeamlessTransitionDirector.CaptureWindowSnapshotBrush(srcWin, sourceCard) ?? anchor?.SourceWindowBackdrop;
+        ApplySeamlessWindowSnapshot(backdrop, srcWin);
+        SeamlessWindowSnapshot.Opacity = 0;
 
-        if (_vmemMode && VmemView?.Source != null)
+        if (_vmemMode && VmemView?.Source is System.Windows.Media.Imaging.BitmapSource liveFrame)
         {
-            var frameBrush = new ImageBrush(VmemView.Source)
+            // ★ VmemView.Source 是解码线程持续 Lock/写入的 WriteableBitmap：
+            //   直接包进 ImageBrush 再 Freeze 会把它连带冻结，之后每一帧 PresentFrame
+            //   都抛 "IsFrozen 必须为 false"（关闭时那一串报错）。这里只冻结一份拷贝。
+            System.Windows.Media.Imaging.BitmapSource still = liveFrame;
+            try { still = liveFrame.Clone(); if (still.CanFreeze) still.Freeze(); } catch { still = liveFrame; }
+            var frameBrush = new ImageBrush(still)
             {
                 Stretch = Stretch.UniformToFill,
                 AlignmentX = AlignmentX.Center,
                 AlignmentY = AlignmentY.Center
             };
-            if (frameBrush.CanFreeze) frameBrush.Freeze();
+            if (still.IsFrozen && frameBrush.CanFreeze) frameBrush.Freeze();
             SeamlessHeroCard.Background = frameBrush;
         }
         else if (anchor?.CoverImage != null)
@@ -199,7 +208,7 @@ public partial class PlayerWindow
             return false;
 
         _seamless.IsClosingMorph = true;
-        if (!_vmemMode && VideoView != null) VideoView.Visibility = Visibility.Hidden;
+        if (!_vmemMode && VideoView != null) { DetachVideoOverlay(); VideoView.Visibility = Visibility.Hidden; }
         var started = StartSeamlessMorph(
             cardRect,
             ResolveVideoStageTargetRect(),
@@ -265,11 +274,14 @@ public partial class PlayerWindow
         SeamlessMorphOverlay.Visibility = Visibility.Visible;
 
         if (!_vmemMode && VideoView != null)
+        {
+            DetachVideoOverlay();
             VideoView.Visibility = Visibility.Hidden;
+        }
 
         _seamless.IsRunning = true;
         ApplySeamlessMorphFrame(0);
-        AttachSeamlessFrameClock();
+        if (_seamless.HasPresented || !_seamless.PresentationHooked) AttachSeamlessFrameClock();
         return true;
     }
 
@@ -362,13 +374,35 @@ public partial class PlayerWindow
             var posterReveal = SpringMotion.StageProgress(p, 0.68, 0.96);
             if (LoadingPoster != null) LoadingPoster.Opacity = posterReveal;
             if (!_vmemMode && VideoView != null)
-                VideoView.Visibility = p >= 0.86 ? Visibility.Visible : Visibility.Hidden;
+                VideoView.Visibility = Visibility.Hidden;
 
             // 5. 飞跃卡片在末段 [0.76, 1.0] 与底层已就位的视频/海报面无缝溶入
             var dissolve = SpringMotion.StageProgress(p, 0.76, 1.0);
             SeamlessHeroCard.Opacity = 1.0 - dissolve * 0.94;
             SeamlessHeroShade.Opacity = dissolve * 0.30;
         }
+    }
+
+    private void ApplySeamlessWindowSnapshot(Brush? brush, Window? source)
+    {
+        SeamlessWindowSnapshot.Background = brush;
+        SeamlessWindowSnapshot.Opacity = brush != null ? 1 : 0;
+        SeamlessWindowSnapshot.HorizontalAlignment = HorizontalAlignment.Stretch;
+        SeamlessWindowSnapshot.VerticalAlignment = VerticalAlignment.Stretch;
+        SeamlessWindowSnapshot.Width = SeamlessWindowSnapshot.Height = double.NaN;
+        SeamlessWindowSnapshot.Margin = new Thickness(0);
+        if (source?.Content is not FrameworkElement content || !IsVisible) return;
+        try
+        {
+            var topLeft = RootGrid.PointFromScreen(content.PointToScreen(new Point()));
+            var bottomRight = RootGrid.PointFromScreen(content.PointToScreen(new Point(content.ActualWidth, content.ActualHeight)));
+            SeamlessWindowSnapshot.HorizontalAlignment = HorizontalAlignment.Left;
+            SeamlessWindowSnapshot.VerticalAlignment = VerticalAlignment.Top;
+            SeamlessWindowSnapshot.Width = Math.Max(1, bottomRight.X - topLeft.X);
+            SeamlessWindowSnapshot.Height = Math.Max(1, bottomRight.Y - topLeft.Y);
+            SeamlessWindowSnapshot.Margin = new Thickness(topLeft.X, topLeft.Y, 0, 0);
+        }
+        catch { }
     }
 
     private void RestorePlayerChromeAfterSeamless()
@@ -380,7 +414,11 @@ public partial class PlayerWindow
         if (WebLeftPane != null) WebLeftPane.Opacity = 1;
         if (LoadingPoster != null) LoadingPoster.Opacity = 1;
         if (!_vmemMode && VideoView != null && !_closing)
+        {
+            VideoView.Content = VideoAreaRoot;
             VideoView.Visibility = Visibility.Visible;
+            HookOverlayKeyboard();
+        }
         if (SeamlessMorphOverlay != null) SeamlessMorphOverlay.Visibility = Visibility.Collapsed;
         if (SeamlessHeroCard != null) SeamlessHeroCard.Opacity = 1;
         if (SeamlessBackdrop != null) SeamlessBackdrop.Opacity = 0;
@@ -482,13 +520,18 @@ public partial class PlayerWindow
     {
         if (image != null)
         {
+            // 同理：不能冻结别人还在写的 WriteableBitmap（例如封面来自活的视频帧）。
+            if (image is System.Windows.Media.Imaging.WriteableBitmap { IsFrozen: false } live)
+            {
+                try { var copy = live.Clone(); copy.Freeze(); image = copy; } catch { }
+            }
             var brush = new ImageBrush(image)
             {
                 Stretch = Stretch.UniformToFill,
                 AlignmentX = AlignmentX.Center,
                 AlignmentY = AlignmentY.Center
             };
-            if (brush.CanFreeze) brush.Freeze();
+            if (image.IsFrozen && brush.CanFreeze) brush.Freeze();
 
             if (SeamlessHeroCard != null) SeamlessHeroCard.Background = brush;
             if (LoadingPoster != null)

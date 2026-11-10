@@ -18,14 +18,38 @@ public partial class PlayerWindow
     private const double PageSwitchDistance = 70;
     private const double PageSwitchRatio = 0.50;
     private const double PageEdgeResistance = 0.35;
-    private const double PageFlingVelocity = 2.2; // px/ms (需同时满足最小位移 75px)
 
     private Point _infoSwipeStart;
-    private long _infoSwipeStartTick;
     private bool _infoSwipeArmed, _infoHorizontalDecided, _infoDraggingPage;
     private bool _infoPageAnimating, _infoGestureMoved, _infoPageSwitching;
     private double _infoDragDx;
-    private Action? _infoActiveSettle;
+    private Action? _infoActiveSettle, _cancelInfoSettle;
+    private int _infoSettleTarget = -1;
+    private double _infoWheelContactDx;
+    private double _infoTouchOrigin, _infoWheelOrigin;
+    private bool _infoWheelPreviewActive;
+
+    private double TakeOverInfoSettle()
+    {
+        var target = _infoSettleTarget;
+        var previous = PageIndex;
+        _cancelInfoSettle?.Invoke();
+        if (target >= 0 && target != previous)
+        {
+            var old = CurrentPagePanel(); var next = OtherPagePanel();
+            if (old != null && next != null)
+            {
+                var oldX = TransformOf(old).X; var nextX = TransformOf(next).X;
+                _infoPageSwitching = true;
+                try { if (target == 1) SecondaryPageButton().IsChecked = true; else TabIntro.IsChecked = true; }
+                finally { _infoPageSwitching = false; }
+                old.Visibility = next.Visibility = Visibility.Visible;
+                TransformOf(old).X = oldX; TransformOf(next).X = nextX;
+            }
+        }
+        var current = CurrentPagePanel();
+        return current != null ? TransformOf(current).X : 0;
+    }
 
     private void CompleteInfoPageSettle()
     {
@@ -37,14 +61,17 @@ public partial class PlayerWindow
 
     internal void InfoDown(Point p, DependencyObject? source)
     {
-        CompleteInfoPageSettle();
+        _pageWheelIdle?.Stop();
+        _pageWheelAccum = 0;
+        _horizontalWheelRegion = HorizontalWheelRegion.None;
+        _infoTouchOrigin = TakeOverInfoSettle();
+        _infoWheelPreviewActive = false;
         _infoSwipeStart = p;
-        _infoSwipeStartTick = Environment.TickCount64;
         _infoSwipeArmed = InfoSwipeAllowed(source);
         _infoHorizontalDecided = false;
         _infoDraggingPage = false;
         _infoGestureMoved = false;
-        _infoDragDx = 0;
+        _infoDragDx = _infoTouchOrigin;
     }
 
     private void OnInfoTouchDownCapture(object? sender, TouchEventArgs e)
@@ -58,6 +85,7 @@ public partial class PlayerWindow
     /// <summary>Returns true when the move was consumed by the page drag.</summary>
     internal bool InfoMove(Point p)
     {
+        if (!_infoSwipeArmed) return false;
         if (_infoPageAnimating) CompleteInfoPageSettle();
         var dx = p.X - _infoSwipeStart.X;
         var dy = p.Y - _infoSwipeStart.Y;
@@ -68,7 +96,6 @@ public partial class PlayerWindow
             if (Math.Max(Math.Abs(dx), Math.Abs(dy)) < PageDragSlop) return false;
             if (Math.Abs(dx) <= Math.Abs(dy) * 1.2)
             {
-                _infoHorizontalDecided = true; // 竖直: 放给 ScrollViewer
                 return false;
             }
             _infoHorizontalDecided = true;
@@ -81,21 +108,20 @@ public partial class PlayerWindow
             }
             _infoDraggingPage = BeginPageDrag();
         }
-        _infoDragDx = dx;
+        _infoDragDx = dx + _infoTouchOrigin;
         if (!_infoDraggingPage) return true;
-        ApplyPageDrag(dx);
+        ApplyPageDrag(_infoDragDx);
         return true;
     }
 
     /// <summary>Returns true when the release was consumed (page animation or click suppression).</summary>
     internal bool InfoUp()
     {
+        if (!_infoSwipeArmed) return false;
+        _infoSwipeArmed = false;
         var width = Math.Max(1, PageHost?.ActualWidth ?? 360);
         var switchThreshold = Math.Max(PageSwitchDistance, width * PageSwitchRatio);
-        var elapsed = Math.Max(1, Environment.TickCount64 - _infoSwipeStartTick);
-        var velocity = Math.Abs(_infoDragDx) / elapsed;
-        var crossesThreshold = Math.Abs(_infoDragDx) >= switchThreshold
-            || (Math.Abs(_infoDragDx) >= 75 && velocity >= PageFlingVelocity);
+        var crossesThreshold = Math.Abs(_infoDragDx) >= switchThreshold;
 
         if (!_infoDraggingPage)
         {
@@ -113,6 +139,7 @@ public partial class PlayerWindow
                 finally { _infoPageSwitching = false; }
                 return true;
             }
+            if (Math.Abs(_infoTouchOrigin) > .5) FinishPageDrag(false, PageIndex);
             return false;
         }
         _infoDraggingPage = false;
@@ -191,11 +218,14 @@ public partial class PlayerWindow
         _infoPageAnimating = true;
 
         var done = false;
+        _infoSettleTarget = switchPage ? target : -1;
         void Complete()
         {
             if (done) return;
             done = true;
             _infoActiveSettle = null;
+            _cancelInfoSettle = null;
+            _infoSettleTarget = -1;
             c.BeginAnimation(TranslateTransform.XProperty, null);
             o.BeginAnimation(TranslateTransform.XProperty, null);
             c.X = 0;
@@ -228,6 +258,17 @@ public partial class PlayerWindow
             _infoDraggingPage = false;
         }
         _infoActiveSettle = Complete;
+        _cancelInfoSettle = () =>
+        {
+            var cx = c.X; var ox = o.X;
+            done = true;
+            _infoActiveSettle = _cancelInfoSettle = null;
+            _infoSettleTarget = -1;
+            c.BeginAnimation(TranslateTransform.XProperty, null);
+            o.BeginAnimation(TranslateTransform.XProperty, null);
+            c.X = cx; o.X = ox;
+            _infoPageAnimating = false;
+        };
 
         if (switchPage)
         {
@@ -330,22 +371,29 @@ public partial class PlayerWindow
 
     private void OnInfoTouchLostCapture(object? sender, TouchEventArgs e)
     {
+        if (ReferenceEquals(e.TouchDevice.Captured, InfoPanel)) return;
+        _infoSwipeArmed = false;
         if (_infoDraggingPage) FinishPageDrag(switchPage: false, PageIndex);
         _infoDraggingPage = false;
         _infoHorizontalDecided = false;
         _infoDragDx = 0;
     }
 
-    private void OnInfoStylusDown(object? sender, StylusEventArgs e) =>
+    private void OnInfoStylusDown(object? sender, StylusEventArgs e)
+    {
+        if (e.StylusDevice?.TabletDevice.Type == TabletDeviceType.Touch) return;
         InfoDown(e.GetPosition(InfoPanel), e.OriginalSource as DependencyObject);
+    }
 
     private void OnInfoStylusMove(object? sender, StylusEventArgs e)
     {
+        if (e.StylusDevice?.TabletDevice.Type == TabletDeviceType.Touch) return;
         if (InfoMove(e.GetPosition(InfoPanel))) e.Handled = true;
     }
 
     private void OnInfoStylusUp(object? sender, StylusEventArgs e)
     {
+        if (e.StylusDevice?.TabletDevice.Type == TabletDeviceType.Touch) return;
         if (InfoUp()) e.Handled = true;
         _infoHorizontalDecided = false;
     }

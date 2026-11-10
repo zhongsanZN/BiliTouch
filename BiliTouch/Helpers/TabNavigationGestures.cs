@@ -8,6 +8,8 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
+using System.Windows.Automation.Peers;
 
 namespace BiliTouch.Helpers;
 
@@ -16,10 +18,23 @@ namespace BiliTouch.Helpers;
 /// </summary>
 internal sealed class TabNavigationGestures
 {
+    // A peer is a decorative, noninteractive copy of another page. Exposing its
+    // duplicated controls to UI Automation both misrepresents the active page and
+    // forces WPF to rebuild/validate a second large accessibility subtree during
+    // every slide. The actual page keeps its normal automation peers.
+    private sealed class DecorativePreviewPanel : Grid
+    {
+        protected override AutomationPeer OnCreateAutomationPeer() => new DecorativePreviewPeer(this);
+    }
+    private sealed class DecorativePreviewPeer : FrameworkElementAutomationPeer
+    {
+        internal DecorativePreviewPeer(FrameworkElement owner) : base(owner) { }
+        protected override List<AutomationPeer>? GetChildrenCore() => null;
+        protected override bool IsControlElementCore() => false;
+        protected override bool IsContentElementCore() => false;
+    }
     /// <summary>自然过半才触发切页（50% 容器宽度）</summary>
     internal const double SwipePageRatio = 0.50;
-    /// <summary>高速轻扫捷径阈值（px/ms），需同时满足最小位移 80px</summary>
-    internal const double SwipeFlingVelocity = 2.2;
     private const double SwipeEdgeResist = 0.35;
 
     private readonly FrameworkElement _content;
@@ -27,12 +42,34 @@ internal sealed class TabNavigationGestures
     private readonly Func<int, UIElement?>? _peerFactory;
     private readonly TranslateTransform _slide = new();
     private readonly TranslateTransform _peerSlide = new();
-    private Border? _peerHost;
+    private Grid? _peerHost;
+    private readonly Dictionary<int, UIElement> _peerCache = new();
+    private readonly Dictionary<int, BitmapSource> _pageSnapshots = new();
+    private string? _snapshotAccount;
     private int _peerIndex = -1;
-    private Action? _activeSettleComplete;
+    private Action? _activeSettleComplete, _cancelActiveSettle;
+    private int _settleTarget = -1;
+    private double _wheelContactDx;
+    private double _touchDragOrigin, _wheelDragOrigin;
+    private bool _wheelPreviewActive;
+    internal bool IsInteracting => _armed || _wheelPreviewActive || _activeSettleComplete != null;
+
+    private double TakeOverSettle()
+    {
+        var target = _settleTarget; var previous = SelectedIndex;
+        _cancelActiveSettle?.Invoke();
+        if (target >= 0 && target != previous)
+        {
+            var oldX = _slide.X; var incomingX = _peerSlide.X;
+            Buttons[target].SetCurrentValue(ToggleButton.IsCheckedProperty, true);
+            EnsurePeerVisible(previous, oldX);
+            _slide.X = incomingX;
+            if (_tabs is NavigationTabs tabs) tabs.PreviewSwipeProgress(target, previous, Math.Abs(incomingX) / Math.Max(1, _content.ActualWidth));
+        }
+        return _slide.X;
+    }
 
     private Point _start;
-    private long _started;
     private double _dx;
     private bool _armed, _decided, _horizontal, _suppressClick;
     private ScrollViewer? _scroll;
@@ -84,8 +121,40 @@ internal sealed class TabNavigationGestures
             e.Handled = true;
         };
 
+        page.DataContextChanged += (_, _) =>
+        {
+            Cancel();
+            _pageSnapshots.Clear(); _peerCache.Clear(); _peerHost?.Children.Clear();
+            QueuePeerWarmUp();
+        };
+        page.Loaded += (_, _) => QueuePeerWarmUp();
         page.Unloaded += (_, _) => Cancel();
         page.IsVisibleChanged += (_, _) => { if (!page.IsVisible) Cancel(); };
+    }
+
+    private void QueuePeerWarmUp()
+    {
+        if (!_content.IsLoaded) return;
+        _content.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ContextIdle, new Action(() =>
+        {
+            if (!_content.IsVisible || _armed || _wheelPreviewActive || _activeSettleComplete != null) return;
+            if (_peerFactory == null) { CaptureCurrentPage(); return; }
+            var width = Math.Max(1, _content.ActualWidth);
+            var current = SelectedIndex;
+            foreach (var target in new[] { current - 1, current + 1 })
+                if (target >= 0 && target < Buttons.Length) EnsurePeerVisible(target, width);
+            ClearPeerPreview();
+            // The current page will become the outgoing peer if a committed
+            // settle is interrupted. Build that copy while idle as well.
+            if (_peerHost != null && current >= 0 && !_peerCache.ContainsKey(current) && _peerFactory(current) is { } outgoing)
+            {
+                outgoing.Visibility = Visibility.Hidden;
+                _peerCache[current] = outgoing;
+                _peerHost.Children.Add(outgoing);
+                outgoing.Measure(new Size(width, Math.Max(1, _content.ActualHeight)));
+                outgoing.Arrange(new Rect(0, 0, width, Math.Max(1, _content.ActualHeight)));
+            }
+        }));
     }
 
     private static IEnumerable<RadioButton> CollectRadioButtons(DependencyObject root)
@@ -141,11 +210,11 @@ internal sealed class TabNavigationGestures
 
         if (_peerHost == null && _content.Parent is Grid parentGrid)
         {
-            _peerHost = new Border
+            _peerHost = new DecorativePreviewPanel
             {
                 ClipToBounds = true,
                 IsHitTestVisible = false,
-                Visibility = Visibility.Collapsed,
+                Visibility = Visibility.Hidden,
                 RenderTransform = _peerSlide,
                 Margin = _content.Margin
             };
@@ -161,36 +230,71 @@ internal sealed class TabNavigationGestures
         if (_peerIndex != targetIndex)
         {
             _peerIndex = targetIndex;
-            var peerContent = _peerFactory?.Invoke(targetIndex) ?? CreateDefaultPeerCard(buttons[targetIndex]);
-            _peerHost.Child = peerContent;
+            if (!_peerCache.TryGetValue(targetIndex, out var peerContent))
+            {
+                peerContent = _peerFactory?.Invoke(targetIndex)
+                    ?? (_pageSnapshots.TryGetValue(targetIndex, out var snapshot)
+                        ? new Image { Source = snapshot, Stretch = Stretch.Fill }
+                        : CreateLoadingPeer());
+                _peerCache[targetIndex] = peerContent;
+                _peerHost.Children.Add(peerContent);
+            }
+            foreach (UIElement child in _peerHost.Children)
+                child.Visibility = ReferenceEquals(child, peerContent) ? Visibility.Visible : Visibility.Hidden;
         }
 
-        _peerHost.Visibility = _peerHost.Child != null ? Visibility.Visible : Visibility.Collapsed;
+        _peerHost.Visibility = Visibility.Visible;
         _peerSlide.BeginAnimation(TranslateTransform.XProperty, null);
         _peerSlide.X = offsetX;
     }
 
-    private UIElement CreateDefaultPeerCard(RadioButton targetButton)
+    private void CaptureCurrentPage()
     {
-        var label = targetButton.Content?.ToString() ?? "";
-        var card = new Border
+        var account = Svc.Session.Current.DedeUserID + ":" + Svc.Session.HasLogin;
+        if (account != _snapshotAccount)
         {
-            Margin = new Thickness(24, 12, 24, 24),
-            CornerRadius = new CornerRadius(12),
-            Background = _content.TryFindResource("CardBackgroundBrush") as Brush ?? Brushes.Transparent,
-            BorderBrush = _content.TryFindResource("CardBorderBrush") as Brush,
-            BorderThickness = new Thickness(1),
-            Child = new TextBlock
+            _snapshotAccount = account;
+            _pageSnapshots.Clear();
+            if (_peerFactory == null) { _peerCache.Clear(); _peerHost?.Children.Clear(); }
+        }
+        if (_peerFactory != null || Math.Abs(_slide.X) > .5 || !_content.IsVisible) return;
+        var index = SelectedIndex;
+        if (index < 0 || _content.ActualWidth < 1 || _content.ActualHeight < 1) return;
+        try
+        {
+            var width = _content.ActualWidth; var height = _content.ActualHeight;
+            int pixelsW = (int)Math.Min(1600, Math.Ceiling(width));
+            int pixelsH = (int)Math.Min(1200, Math.Ceiling(height));
+            var bitmap = new RenderTargetBitmap(pixelsW, pixelsH, 96.0 * pixelsW / width, 96.0 * pixelsH / height, PixelFormats.Pbgra32);
+            var visual = new DrawingVisual();
+            using (var dc = visual.RenderOpen())
+                dc.DrawRectangle(new VisualBrush(_content) { Stretch = Stretch.Fill, ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(0, 0, width, height) }, null, new Rect(0, 0, width, height));
+            bitmap.Render(visual); bitmap.Freeze();
+            _pageSnapshots[index] = bitmap;
+            if (_peerCache.Remove(index, out var old)) _peerHost?.Children.Remove(old);
+        }
+        catch { }
+    }
+
+    private UIElement CreateLoadingPeer()
+    {
+        return new Grid
+        {
+            Background = _content.TryFindResource("AppBackgroundBrush") as Brush,
+            Children =
             {
-                Text = label,
-                FontSize = 15,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = _content.TryFindResource("TextSecondaryBrush") as Brush ?? Brushes.Gray,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
+                new StackPanel
+                {
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Children =
+                    {
+                        new BiliTouch.Views.Controls.LoadingRing { Width = 24, Height = 24, HorizontalAlignment = HorizontalAlignment.Center },
+                        new TextBlock { Text = "正在加载…", Margin = new Thickness(0, 10, 0, 0), Foreground = _content.TryFindResource("TextSecondaryBrush") as Brush }
+                    }
+                }
             }
         };
-        return card;
     }
 
     private void ClearPeerPreview()
@@ -199,20 +303,20 @@ internal sealed class TabNavigationGestures
         if (_peerHost == null) return;
         _peerSlide.BeginAnimation(TranslateTransform.XProperty, null);
         _peerSlide.X = 0;
-        _peerHost.Visibility = Visibility.Collapsed;
-        _peerHost.Child = null;
+        _peerHost.Visibility = Visibility.Hidden;
     }
 
     internal void PreviewHorizontalWheel(double progress)
     {
         if (_horizontal) return;
-        CompleteActiveSettle();
+        if (!_wheelPreviewActive) { CaptureCurrentPage(); _wheelDragOrigin = TakeOverSettle(); _wheelPreviewActive = true; }
         var buttons = Buttons;
         var current = SelectedIndex;
         if (current < 0) return;
 
         var width = Math.Max(1, _content.ActualWidth);
-        var dx = -progress * width;
+        _wheelContactDx = -Math.Clamp(progress, -1, 1) * width;
+        var dx = Math.Clamp(_wheelDragOrigin + _wheelContactDx, -width * .999, width * .999);
         _dx = dx;
         ApplyDragPosition(buttons, current, dx, width);
     }
@@ -238,12 +342,23 @@ internal sealed class TabNavigationGestures
     }
 
     internal void SettleHorizontalWheelPreview(bool commit)
+        => SettleWheelPreview(commit, false);
+
+    internal void SettlePrecisionTouchpadPreview(bool commit)
+        => SettleWheelPreview(commit, true);
+
+    internal bool ContainsSwipePoint(Point screenPoint) => PrecisionTouchpadInput.ContainsViewportPoint(_content, screenPoint);
+
+    private void SettleWheelPreview(bool commit, bool physicalContact)
     {
         if (_horizontal) return;
+        _wheelPreviewActive = false;
         if (Math.Abs(_slide.X) < 0.5 && (_peerHost == null || _peerHost.Visibility != Visibility.Visible)) return;
         var dx = _dx;
+        _wheelPreviewActive = false;
         _dx = 0;
-        if (commit && Math.Abs(dx) > 1)
+        var distance = physicalContact ? (Math.Sign(_wheelContactDx) == Math.Sign(dx) ? Math.Abs(_wheelContactDx) : 0) : Math.Abs(dx);
+        if (commit && distance >= _content.ActualWidth * SwipePageRatio)
         {
             StepWithDragContinuation(dx < 0 ? 1 : -1, dx);
         }
@@ -255,22 +370,39 @@ internal sealed class TabNavigationGestures
 
     private void AnimateSnapBack()
     {
+        _settleTarget = -1;
         var width = Math.Max(1, _content.ActualWidth);
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         var dur = TimeSpan.FromMilliseconds(160);
         if (_tabs is NavigationTabs navTabs) navTabs.SnapToSelected(true);
 
         var done = false;
+        var fallback = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Input)
+        { Interval = TimeSpan.FromMilliseconds(220) };
         void Finish()
         {
             if (done) return;
             done = true;
+            fallback.Stop();
             _activeSettleComplete = null;
+            _cancelActiveSettle = null;
             _slide.BeginAnimation(TranslateTransform.XProperty, null);
             _slide.X = 0;
             ClearPeerPreview();
         }
+        fallback.Tick += (_, _) => Finish();
+        fallback.Start();
         _activeSettleComplete = Finish;
+        _cancelActiveSettle = () =>
+        {
+            var x = _slide.X; var peerX = _peerSlide.X;
+            done = true;
+            fallback.Stop();
+            _activeSettleComplete = _cancelActiveSettle = null;
+            _slide.BeginAnimation(TranslateTransform.XProperty, null);
+            _peerSlide.BeginAnimation(TranslateTransform.XProperty, null);
+            _slide.X = x; _peerSlide.X = peerX;
+        };
 
         if (_peerHost is { Visibility: Visibility.Visible })
         {
@@ -298,32 +430,50 @@ internal sealed class TabNavigationGestures
             AnimateSnapBack();
             return;
         }
+        _settleTarget = next;
 
         var width = Math.Max(1, _content.ActualWidth);
-        var incomingStart = Math.Abs(dragDx) > 1
-            ? dragDx + (direction > 0 ? width : -width)
-            : (direction > 0 ? Math.Min(width * 0.28, 96) : -Math.Min(width * 0.28, 96));
-
-        ClearPeerPreview();
-        buttons[next].SetCurrentValue(ToggleButton.IsCheckedProperty, true);
-        if (_tabs is NavigationTabs navTabs) navTabs.SnapToSelected(true);
-
+        ApplyDragPosition(buttons, current, dragDx, width);
+        EnsurePeerVisible(next, dragDx + (direction > 0 ? width : -width));
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         var dur = TimeSpan.FromMilliseconds(160);
         var done = false;
+        var fallback = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Input)
+        { Interval = TimeSpan.FromMilliseconds(220) };
         void Finish()
         {
             if (done) return;
             done = true;
+            fallback.Stop();
             _activeSettleComplete = null;
+            _cancelActiveSettle = null;
+            _settleTarget = -1;
             _slide.BeginAnimation(TranslateTransform.XProperty, null);
             _slide.X = 0;
+            ClearPeerPreview();
+            buttons[next].SetCurrentValue(ToggleButton.IsCheckedProperty, true);
+            if (_tabs is NavigationTabs navTabs) navTabs.SnapToSelected(true);
+            QueuePeerWarmUp();
         }
+        fallback.Tick += (_, _) => Finish();
+        fallback.Start();
         _activeSettleComplete = Finish;
-
-        var anim = new DoubleAnimation(incomingStart, 0, dur) { EasingFunction = ease };
+        _cancelActiveSettle = () =>
+        {
+            var x = _slide.X; var peerX = _peerSlide.X;
+            done = true;
+            fallback.Stop();
+            _activeSettleComplete = _cancelActiveSettle = null;
+            _settleTarget = -1;
+            _slide.BeginAnimation(TranslateTransform.XProperty, null);
+            _peerSlide.BeginAnimation(TranslateTransform.XProperty, null);
+            _slide.X = x; _peerSlide.X = peerX;
+        };
+        var anim = new DoubleAnimation(_slide.X, direction > 0 ? -width : width, dur) { EasingFunction = ease };
         anim.Completed += (_, _) => Finish();
         _slide.BeginAnimation(TranslateTransform.XProperty, anim);
+        _peerSlide.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(_peerSlide.X, 0, dur) { EasingFunction = ease });
     }
 
     internal void Step(int direction)
@@ -336,11 +486,15 @@ internal sealed class TabNavigationGestures
 
     internal void Begin(Point point, DependencyObject? source)
     {
-        CompleteActiveSettle();
-        Cancel();
+        if (_scroll != null) _scroll.PanningMode = _panning;
+        _scroll = null;
+        _armed = _decided = _horizontal = false;
+        CaptureCurrentPage();
+        _touchDragOrigin = TakeOverSettle();
+        _wheelPreviewActive = false;
+        _dx = _touchDragOrigin;
         _suppressClick = false;
         _start = point;
-        _started = Environment.TickCount64;
         _armed = true;
         for (var d = source; d != null; d = Parent(d))
         {
@@ -366,8 +520,8 @@ internal sealed class TabNavigationGestures
         if (!_decided)
         {
             if (Math.Max(Math.Abs(_dx), Math.Abs(dy)) < 12) return false;
-            _decided = true;
             _horizontal = Math.Abs(_dx) > Math.Abs(dy) * 1.3;
+            _decided = _horizontal;
         }
         if (!_horizontal) return false;
 
@@ -380,6 +534,7 @@ internal sealed class TabNavigationGestures
                 _scroll.ScrollToVerticalOffset(_offset);
         }
 
+        _dx += _touchDragOrigin;
         var buttons = Buttons;
         var current = SelectedIndex;
         if (current < 0) return false;
@@ -393,7 +548,6 @@ internal sealed class TabNavigationGestures
         if (!_armed) return false;
         var horizontal = _horizontal;
         var dx = _dx;
-        var elapsed = Math.Max(1, Environment.TickCount64 - _started);
         if (_scroll != null) _scroll.PanningMode = _panning;
         _scroll = null;
         _armed = _decided = _horizontal = false;
@@ -401,14 +555,14 @@ internal sealed class TabNavigationGestures
 
         if (!horizontal)
         {
-            ClearPeerPreview();
+            if (Math.Abs(_touchDragOrigin) > .5) AnimateSnapBack();
+            else ClearPeerPreview();
             return false;
         }
 
         _suppressClick = true;
         var width = Math.Max(1, _content.ActualWidth);
-        var velocity = Math.Abs(dx) / elapsed;
-        var commit = Math.Abs(dx) >= width * SwipePageRatio || (Math.Abs(dx) >= 80 && velocity >= SwipeFlingVelocity);
+        var commit = Math.Abs(dx) >= width * SwipePageRatio;
         if (commit)
             StepWithDragContinuation(dx < 0 ? 1 : -1, dx);
         else
@@ -421,6 +575,9 @@ internal sealed class TabNavigationGestures
 
     private void Cancel()
     {
+        _cancelActiveSettle?.Invoke();
+        _wheelPreviewActive = false;
+        _touchDragOrigin = _wheelDragOrigin = 0;
         if (_scroll != null) _scroll.PanningMode = _panning;
         _scroll = null;
         _armed = _decided = _horizontal = false;

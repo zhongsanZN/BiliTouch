@@ -21,6 +21,7 @@ namespace BiliTouch.Views;
 /// </summary>
 public class FluentWindow : Window
 {
+    internal static Action<string>? NativeInputTrace;
     private bool _hooked;
 
     public FluentWindow()
@@ -612,6 +613,8 @@ public class FluentWindow : Window
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        if (msg is WM_MOUSEHWHEEL or WM_MOUSEWHEEL or 0x245 or 0x246 or 0x247)
+            NativeInputTrace?.Invoke($"{Environment.TickCount64} native msg={msg:X} delta={(short)(wParam.ToInt64() >> 16)} hwnd={hwnd.ToInt64():X}");
         if (msg == WM_GETMINMAXINFO)
         {
             ApplyWorkingAreaLimit(hwnd, lParam, MaximizeCoversTaskbar);
@@ -648,12 +651,12 @@ public class FluentWindow : Window
             // 与精确触控板自然滚动(左滑发正 delta → 切向右侧页)符号相反, 按输入源自动校准方向。
             // Windows 精确触控板双指横向自然滚动通过伪造 IMDT_MOUSE (0x02) 发送 WM_MOUSEHWHEEL，
             // 左滑发正 delta (+1 切向右侧页)、右滑发负 delta (-1 切向左侧页)，必须保持原始符号，不可按 IMDT_MOUSE 取反。
-            OnHorizontalWheel(delta);
+            OnHorizontalWheelAt(delta, WheelScreenPoint(lParam));
         }
         else if (msg == WM_MOUSEWHEEL && (wParam.ToInt64() & MK_SHIFT) != 0)
         {
             var delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
-            OnHorizontalWheel((short)(-delta));
+            OnHorizontalWheelAt((short)(-delta), WheelScreenPoint(lParam));
         }
         else if (msg == WM_SYSCOMMAND)
         {
@@ -686,6 +689,9 @@ public class FluentWindow : Window
     /// delta > 0 = 向右滑, < 0 = 向左滑。
     /// </summary>
     protected virtual void OnHorizontalWheel(int delta) { }
+    protected virtual void OnHorizontalWheelAt(int delta, Point screenPoint) => OnHorizontalWheel(delta);
+    protected static Point WheelScreenPoint(IntPtr lParam) => new(
+        (short)(lParam.ToInt64() & 0xffff), (short)((lParam.ToInt64() >> 16) & 0xffff));
 
     /// <summary>SC_MAXIMIZE / SC_RESTORE / SC_MINIMIZE 的 wParam 取值(Win32 常量)</summary>
     protected const int SC_MAXIMIZE = 0xF030;

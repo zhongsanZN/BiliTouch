@@ -227,6 +227,14 @@ public partial class VideoCard : UserControl
         };
     }
 
+    internal void PrepareForTabReveal()
+    {
+        if (DataContext is VideoItem item && !_seenItems.TryGetValue(item, out _)) _seenItems.Add(item, null);
+        BeginAnimation(OpacityProperty, null);
+        Opacity = 1;
+        if (_trans != null) _trans.Y = 0;
+    }
+
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         if (_entered) return;

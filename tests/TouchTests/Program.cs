@@ -45,7 +45,18 @@ internal static class Program
         var exit = 0;
         try
         {
-            if(args.Contains("--web-rail")) WebRailTests.Run(Check, Artifacts);
+            if (args.Contains("--user-ui") || args.Contains("--gesture-review")) MotionReviewHost.Configure(Artifacts);
+            if(args.Contains("--gesture-review")) MotionReviewHost.Run();
+            else if(args.Contains("--precision-touchpad")) PrecisionTouchpadTests.Run(Check);
+            else if(args.Contains("--precision-all-pages")) CrossPagePrecisionTests.Run(Check);
+            else if(args.Contains("--home-preload")) HomePreloadTests.Run(Check, Artifacts);
+            else if(args.Contains("--gesture-pictures")) GestureVisualTests.Run(Check, Artifacts, true, true);
+            else if(args.Contains("--player-wheel-regions")) PlayerWheelRegionTests.Run(Check);
+            else if(args.Contains("--gesture-home")) GestureVisualTests.Run(Check, Artifacts, true);
+            else if(args.Contains("--gesture-visual")) GestureVisualTests.Run(Check, Artifacts);
+            else if(args.Contains("--gesture-continuation")) GestureContinuationTests.Run(Check);
+            else if(args.Contains("--seamless-capture")) SeamlessCaptureProbe.Run(Check, Artifacts);
+            else if(args.Contains("--web-rail")) WebRailTests.Run(Check, Artifacts);
             else if(args.Contains("--player-lifecycle")) PlayerLifecycleTests.Run(Check);
             else if(args.Contains("--popup-pointer-review")) PopupLifetimeTests.PointerReview(Artifacts);
             else if(args.Contains("--danmaku-filtering")) DanmakuFilteringTests.Run(Check);

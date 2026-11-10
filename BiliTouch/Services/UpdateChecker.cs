@@ -79,7 +79,7 @@ public sealed class UpdateInfo
             //   裸写虽然能编过(C# 的"Color Color"规则), 但读的人要停顿一下才分得清
             //   那是"取属性"还是"访问类型"。加 this. 没有歧义。
             var v = this.Version;
-            return $"BiliTouch-{v.Major}.{v.Minor}.{Math.Max(v.Build, 0)}-setup.exe";
+            return $"BiliTouch-{UpdateChecker.FormatVersion(v)}-setup.exe";
         }
     }
 
@@ -355,27 +355,49 @@ public static class UpdateChecker
     }
 
     /// <summary>
-    /// 版本比较只比三段(Major.Minor.Build)。
+    /// 版本比较：三段主版本 + 修补号(Revision, 来自 "-fixN" 后缀)。
     ///
-    /// ★ 为什么不用 <see cref="Version"/> 的 ==: 它把"没写第三段"和"写了 0"当成不同值
-    ///   (0.2.9 的 Build=9/Revision=-1, 0.2.9.0 的 Revision=0), 于是 tag 写成 v0.2.9.0、
+    /// ★ 为什么不用 <see cref="Version"/> 的 ==: 它把"没写第四段"和"写了 0"当成不同值
+    ///   (0.2.9 的 Revision=-1, 0.2.9.0 的 Revision=0), 于是 tag 写成 v0.2.9.0、
     ///   附件名写成 BiliTouch-0.2.9-setup.exe 时会被判成"不是同一版", 白白丢掉一次更新。
-    ///   本仓库的版本号只有三段, 四段那位是 installer.iss 里的 VersionInfoVersion, 不参与比较。
+    /// ★ 2026-11-09: 修补版用 "0.2.17-fix1" 发布, 旧逻辑把 '-' 后整段丢掉 → 0.2.17-fix1 与 0.2.17
+    ///   被判成同一版, 内置更新永远检测不到 fix 版。现在 fixN 映射到 Revision 参与比较。
     /// </summary>
     private static bool SameVersion(Version a, Version b)
         => a.Major == b.Major
            && a.Minor == b.Minor
-           && Math.Max(a.Build, 0) == Math.Max(b.Build, 0);
+           && Math.Max(a.Build, 0) == Math.Max(b.Build, 0)
+           && Math.Max(a.Revision, 0) == Math.Max(b.Revision, 0);
 
-    /// <summary>tag → 版本号。容忍 "v"/"V" 前缀与 "-beta" 这类后缀(取 '-' 前的部分); 解析不出返回 null。</summary>
+    private static readonly Regex FixSuffixPattern = new(@"^fix(?<n>\d+)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// tag → 版本号(统一归一成四段, Revision ≥ 0)。容忍 "v"/"V" 前缀;
+    /// "-fixN" 后缀映射为 Revision=N(修补版必须比原版新); 其他 "-beta" 这类后缀忽略。解析不出返回 null。
+    /// </summary>
     public static Version? ParseVersion(string? tag)
     {
         if (string.IsNullOrWhiteSpace(tag)) return null;
         var s = tag.Trim();
         if (s.StartsWith("v", StringComparison.OrdinalIgnoreCase)) s = s[1..];
+        var fix = 0;
         var dash = s.IndexOf('-');
-        if (dash >= 0) s = s[..dash];
-        return Version.TryParse(s, out var v) ? v : null;
+        if (dash >= 0)
+        {
+            var m = FixSuffixPattern.Match(s[(dash + 1)..]);
+            if (m.Success) int.TryParse(m.Groups["n"].Value, out fix);
+            s = s[..dash];
+        }
+        if (!Version.TryParse(s, out var v)) return null;
+        var rev = fix > 0 ? fix : Math.Max(v.Revision, 0);
+        return new Version(v.Major, v.Minor, Math.Max(v.Build, 0), rev);
+    }
+
+    /// <summary>用户可见/文件名用的版本串：0.2.17 或 0.2.17-fix1(与发布脚本的命名一致)。</summary>
+    public static string FormatVersion(Version v)
+    {
+        var core = $"{v.Major}.{v.Minor}.{Math.Max(v.Build, 0)}";
+        return v.Revision > 0 ? core + "-fix" + v.Revision : core;
     }
 
     /// <summary>
