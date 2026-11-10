@@ -23,6 +23,7 @@ internal static class BiliTouchTests
         check(UpdateChecker.ParseVersion("v"+App.AppVersion) is { } appV && UpdateChecker.FormatVersion(appV)==App.AppVersion
               && UpdateChecker.ParseVersion("v0.2.17-fix1") > UpdateChecker.ParseVersion("0.2.17")
               && UpdateChecker.ParseVersion("v0.2.18") > UpdateChecker.ParseVersion("0.2.17-fix1")
+              && UpdateChecker.ParseVersion("v0.2.18-fix1") > UpdateChecker.ParseVersion("0.2.18")
               && UpdateChecker.ParseVersion("v0.2.9.0") == UpdateChecker.ParseVersion("0.2.9")
               && UpdateChecker.ParseVersion("v0.2.17-fix2") > UpdateChecker.ParseVersion("0.2.17-fix1"),
             "the configured release tag maps to the application version without an external network dependency");

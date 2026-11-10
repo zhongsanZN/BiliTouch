@@ -232,15 +232,15 @@ internal static class Program
         //   会盖在内容上, 二级手势测的是"命中"而不是"逻辑"。真实触摸链路由
         //   视频区手势(seek/音量/捏合)覆盖。
         var w = host.ActualWidth;
-        // 左滑: 位移 -100, 超过 w*0.18 的阈值
+        // 左滑: 位移超过 3/8 阈值
         page.SwipeDown(new Point(w * 0.6, 300), (DependencyObject?)host);
-        page.SwipeMove(new Point(w * 0.6 - 100, 300));
+        page.SwipeMove(new Point(w * 0.6 - w * 0.45, 300));
         page.SwipeUp(); Pump(500);
         Check(popular.IsChecked == true, "horizontal swipe moves to the next home tab");
 
         // 右滑: 回推荐
-        page.SwipeDown(new Point(w * 0.6, 300), (DependencyObject?)host);
-        page.SwipeMove(new Point(w * 0.6 + 100, 300));
+        page.SwipeDown(new Point(w * 0.4, 300), (DependencyObject?)host);
+        page.SwipeMove(new Point(w * 0.4 + w * 0.45, 300));
         page.SwipeUp(); Pump(500);
         Check(recommend.IsChecked == true, "horizontal swipe moves back to the previous home tab");
 
@@ -518,9 +518,9 @@ internal static class Program
         var introTab = Element<RadioButton>(player, "TabIntro");
         var commentsTab = Element<RadioButton>(player, "TabComments");
         Check(introTab.IsChecked == true, "info panel starts on the intro tab");
-        // 左滑: 从 (200,300) 划到 (120,300) —— 位移 -80, 超过 70 的切换阈值
+        // 左滑: 从 (200,300) 划到 (40,300) —— 位移 -160, 超过 3/8 的切换阈值
         Call(player, "InfoDown", new Point(200, 300), (DependencyObject?)infoPanel);
-        Call(player, "InfoMove", new Point(120, 300));
+        Call(player, "InfoMove", new Point(40, 300));
         Call(player, "InfoUp");
         Pump(400);
         Check(commentsTab.IsChecked == true, "horizontal swipe switches to the comments tab");
