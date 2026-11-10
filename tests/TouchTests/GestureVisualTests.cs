@@ -27,6 +27,15 @@ internal static class GestureVisualTests
         timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
         timer.Start(); Dispatcher.PushFrame(frame);
     }
+    private static void Until(Func<bool> ready, int timeout = 1500)
+    {
+        var start = Environment.TickCount64;
+        while (!ready())
+        {
+            if (Environment.TickCount64 - start > timeout) break;
+            Pump(20);
+        }
+    }
     public static void Run(Action<bool, string> check, string artifacts, bool homeOnly = false, bool pictures = false)
     {
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
@@ -159,7 +168,7 @@ internal static class GestureVisualTests
                         worstOverflow = Math.Max(worstOverflow, Math.Abs(Field<TranslateTransform>(home, "_tabTrans").X) - host.ActualWidth);
                     }
                     check(covered && worstOverflow <= 0, $"Home same-direction contact {direction}/{contact} covers viewport without overshooting a page");
-                    home.SwipeUp(); Pump(contact == 3 ? 220 : 35);
+                    home.SwipeUp(); Pump(contact == 3 ? 350 : 35);
                 }
                 check(home.CurrentTabIndex == (direction > 0 ? 4 : 0), "Home repeated same-direction contacts reach the boundary in order");
             }
@@ -176,7 +185,8 @@ internal static class GestureVisualTests
                         check(Math.Abs(Field<TranslateTransform>(home, "_tabTrans").X) <= host.ActualWidth,
                             "Home repeated wheel streams keep both pages within one viewport displacement");
                     }
-                    home.SettleHorizontalWheelPreview(true); Pump(contact == 3 ? 220 : 35);
+                    home.SettleHorizontalWheelPreview(true); Pump(contact == 3 ? 150 : 35);
+                    if (contact == 3) Until(() => home.CurrentTabIndex == (direction > 0 ? 4 : 0));
                 }
                 check(home.CurrentTabIndex == (direction > 0 ? 4 : 0), "Home repeated wheel streams advance through every tab in order");
             }
@@ -189,7 +199,8 @@ internal static class GestureVisualTests
             check(Math.Abs(beforeDuplicate - Field<TranslateTransform>(home, "_tabTrans").X) < .01,
                 "promoted duplicate down preserves contact origin and page geometry");
             home.SwipeMove(new Point(host.ActualWidth * .2, 100));
-            Call(home, "EndContact"); Call(home, "EndContact"); Pump(220);
+            Call(home, "EndContact"); Call(home, "EndContact"); Pump(150);
+            Until(() => home.CurrentTabIndex == 2 && Math.Abs(Field<TranslateTransform>(home, "_tabTrans").X) < 1);
             check(home.CurrentTabIndex == 2, "promoted duplicate release commits only one page");
             ((RadioButton)home.FindName("PopularTab")).IsChecked = true; Pump(220);
 
@@ -204,12 +215,14 @@ internal static class GestureVisualTests
                 finger.Move(host.ActualWidth * .8, 102); Pump(16);
                 check(ReferenceEquals(finger.Captured, host), "horizontal touch transfers capture from the child scroller to the page host");
                 finger.Move(host.ActualWidth * .2, 102); Pump(16);
-                finger.Up(host.ActualWidth * .2, 102); Pump(220);
+                finger.Up(host.ActualWidth * .2, 102); Pump(150);
+                Until(() => home.CurrentTabIndex == before + 1 && Math.Abs(Field<TranslateTransform>(home, "_tabTrans").X) < 1);
                 check(home.CurrentTabIndex == before + 1, "routed touch commits exactly once after capture transfer");
                 finger = new Finger(host);
                 finger.Down(host.ActualWidth * .1, 100);
                 finger.Move(host.ActualWidth * .8, 102); Pump(16);
-                finger.Up(host.ActualWidth * .8, 102); Pump(220);
+                finger.Up(host.ActualWidth * .8, 102); Pump(150);
+                Until(() => home.CurrentTabIndex == before && Math.Abs(Field<TranslateTransform>(home, "_tabTrans").X) < 1);
                 check(home.CurrentTabIndex == before, "routed reverse touch returns one page without promoted-event duplication");
             }
 

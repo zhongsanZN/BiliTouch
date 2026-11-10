@@ -33,8 +33,8 @@ internal sealed class TabNavigationGestures
         protected override bool IsControlElementCore() => false;
         protected override bool IsContentElementCore() => false;
     }
-    /// <summary>自然过半才触发切页（50% 容器宽度）</summary>
-    internal const double SwipePageRatio = 0.50;
+    /// <summary>过八分之三触发切页（37.5% 容器宽度）</summary>
+    internal const double SwipePageRatio = 3.0 / 8.0;
     private const double SwipeEdgeResist = 0.35;
 
     private readonly FrameworkElement _content;

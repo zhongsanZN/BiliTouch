@@ -242,6 +242,10 @@ public static class CoverLoader
             foreach (var step in WidthSteps)
                 if (step > width && step <= MaxCoverDecodeWidth &&
                     MemCache.TryGetValue($"{url}|w{step}", out hit!)) return true;
+        // 如果有任何已解码的尺寸（即使稍小），也直接复用，避免重新走冷解码和淡入
+        foreach (var step in WidthSteps)
+            if (MemCache.TryGetValue($"{url}|w{step}", out hit!)) return true;
+        if (MemCache.TryGetValue(url, out hit!)) return true;
         hit = null!;
         return false;
     }
@@ -786,7 +790,10 @@ public static class Cover
             };
             brush.Freeze();
             // ★ Fant(高质量重采样): 默认 Linear 在"解码宽 > 显示宽"的缩小场景下明显偏软。
-            border.SetValue(RenderOptions.BitmapScalingModeProperty, BitmapScalingMode.Fant);
+            // 硬件加速开启时使用 Fant；软件渲染模式下必须降为 LowQuality，
+            // 否则 CPU 软件光栅器在每帧每张卡上进行 area-averaging 重采样会导致严重卡顿。
+            var scalingMode = Svc.Settings.HardwareAccelerationEnabled ? BitmapScalingMode.Fant : BitmapScalingMode.LowQuality;
+            border.SetValue(RenderOptions.BitmapScalingModeProperty, scalingMode);
             border.Background = brush;
             // 图片加载成功后隐藏占位符(如头像里的人形图标), 否则会一直叠在图片上
             if (border.Child != null) border.Child.Visibility = Visibility.Collapsed;

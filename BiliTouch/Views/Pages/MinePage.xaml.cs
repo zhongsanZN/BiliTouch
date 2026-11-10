@@ -17,7 +17,7 @@ namespace BiliTouch.Views.Pages;
 
 public partial class MinePage : UserControl
 {
-    private const double SwipePageRatio = 0.50;
+    private const double SwipePageRatio = 3.0 / 8.0;
     private const double SwipeEdgeResist = 0.35;
 
     public Func<PageKey, FrameworkElement>? SectionFactory { get; set; }

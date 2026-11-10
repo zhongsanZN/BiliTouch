@@ -17,6 +17,15 @@ internal static class CrossPagePrecisionTests
         timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
         timer.Start(); Dispatcher.PushFrame(frame);
     }
+    private static void Until(Func<bool> ready, int timeout = 1200)
+    {
+        var start = Environment.TickCount64;
+        while (!ready())
+        {
+            if (Environment.TickCount64 - start > timeout) break;
+            Pump(20);
+        }
+    }
     internal static void Run(Action<bool, string> check)
     {
         var filter = new PrecisionTouchpadInput.ProgressFilter();
@@ -88,7 +97,7 @@ internal static class CrossPagePrecisionTests
                         "Home: active scroll content stays accessible while the incoming preview has no duplicate controls");
                 }
                 t.End(true); Pump(25);
-                t = Target(); t.Begin(); t.Preview(-.1); t.End(true); Pump(260);
+                t = Target(); t.Begin(); t.Preview(-.1); t.End(true); Until(() => Index() == 1); Pump(280);
                 check(Index() == 1, $"{key}: short reversal cannot undo the previous valid release");
                 if (page is HomePage)
                 {
@@ -99,7 +108,7 @@ internal static class CrossPagePrecisionTests
                     check(!activeScroll.IsGesturePreview && (activePeer.GetChildren()?.Count ?? 0) > 0 && (hiddenPeer.GetChildren()?.Count ?? 0) == 0,
                         "Home: settled page restores accessibility and the outgoing page no longer exposes hidden controls");
                 }
-                t = Target(); t.Begin(); t.Preview(-.7); t.End(true); Pump(260);
+                t = Target(); t.Begin(); t.Preview(-.7); t.End(true); Until(() => Index() == 0);
                 check(Index() == 0, $"{key}: over-half reverse returns exactly one page");
                 if (retained != null)
                 {
@@ -112,7 +121,7 @@ internal static class CrossPagePrecisionTests
                 }
                 t = Target(); t.Begin();
                 foreach (var p in new[] { 4d, -8d, 12d, .8d }) { t.Preview(p); Pump(16); check(Index() == 0, $"{key}: a held contact cannot traverse several tabs"); }
-                t.End(true); Pump(260);
+                t.End(true); Until(() => Index() == 1);
                 check(Index() == 1, $"{key}: one physical session ends on its original adjacent tab");
                 t = Target(); t.Begin(); t.Preview(-.8); t.End(false); Pump(260);
                 check(Index() == 1, $"{key}: cancelled contact returns without committing");
@@ -120,7 +129,7 @@ internal static class CrossPagePrecisionTests
                 {
                     Reset();
                     t = Target(); t.Begin(); t.Preview(.7); t.End(true); Pump(25);
-                    t = Target(); t.Begin(); t.Preview(.7); t.End(true); Pump(260);
+                    t = Target(); t.Begin(); t.Preview(.7); t.End(true); Until(() => Index() == 2);
                     check(Index() == 2, $"{key}: two same-direction contacts overlapping settle each advance one page");
                 }
             }

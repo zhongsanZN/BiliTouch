@@ -170,6 +170,10 @@ public partial class VideoCard : UserControl
     public VideoCard()
     {
         InitializeComponent();
+        if (!Svc.Settings.HardwareAccelerationEnabled)
+        {
+            CacheMode = null;
+        }
         Loaded += OnLoaded;
         // 手指/笔在卡片上拖动是在滑列表, 不是点开视频。真实鼠标点击(移动 < 10px)不受影响。
         PreviewMouseLeftButtonDown += (_, e) =>

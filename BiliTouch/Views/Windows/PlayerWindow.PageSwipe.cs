@@ -16,7 +16,7 @@ public partial class PlayerWindow
 {
     private const double PageDragSlop = 12;
     private const double PageSwitchDistance = 70;
-    private const double PageSwitchRatio = 0.50;
+    private const double PageSwitchRatio = 3.0 / 8.0;
     private const double PageEdgeResistance = 0.35;
 
     private Point _infoSwipeStart;

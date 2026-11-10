@@ -266,6 +266,7 @@ public partial class HomePage : UserControl
     /// </summary>
     private void ShowTab(HomeTabKind tab)
     {
+        CancelActiveSnap();
         // ★★★ 2026-11-04 修"每次滑到直播页都会闪一下":
         //
         //   根因: 直播 tab 的可见性是绑 IsLiveTab 的, 第一次切过去那一刻才开始

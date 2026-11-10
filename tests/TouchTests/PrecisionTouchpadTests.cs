@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 using BiliTouch;
 using BiliTouch.Helpers;
@@ -17,6 +18,15 @@ internal static class PrecisionTouchpadTests
         var timer = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(ms) };
         timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
         timer.Start(); Dispatcher.PushFrame(frame);
+    }
+    private static void Until(Func<bool> ready, int timeout = 1200)
+    {
+        var start = Environment.TickCount64;
+        while (!ready())
+        {
+            if (Environment.TickCount64 - start > timeout) break;
+            Pump(20);
+        }
     }
     internal static void Run(Action<bool, string> check)
     {
@@ -67,12 +77,14 @@ internal static class PrecisionTouchpadTests
                 home.PreviewHorizontalWheel(progress); Pump(16);
                 check(home.CurrentTabIndex == 1, "unbounded displacement and reversals never commit while the same session remains held");
             }
-            home.SettlePrecisionTouchpadPreview(true); Pump(220);
+            home.SettlePrecisionTouchpadPreview(true); Until(() => home.CurrentTabIndex == 2);
             check(home.CurrentTabIndex == 2, "one held session commits at most its original adjacent page");
             foreach (var packets in new[] { 1, 12 })
-            foreach (var distance in new[] { .1, .49, .51 })
+            foreach (var distance in new[] { .1, .35, .40 })
             {
-                popular.IsChecked = true; Pump(220); Start();
+                popular.IsChecked = true;
+                Until(() => home.CurrentTabIndex == 1 && Math.Abs(((TranslateTransform)home.TabHost.RenderTransform).X) < 1);
+                Start();
                 for (int k = 1; k <= packets; k++)
                 {
                     motion.Update(1, 7000 - distance * 10000 * k / packets, 2000, true);
@@ -81,19 +93,24 @@ internal static class PrecisionTouchpadTests
                     if (packets > 1) Pump(16);
                 }
                 check(home.CurrentTabIndex == 1, "physical contact does not commit a tab before lift");
-                home.SettlePrecisionTouchpadPreview(true); Pump(220);
-                check(home.CurrentTabIndex == (distance >= .5 ? 2 : 1),
+                home.SettlePrecisionTouchpadPreview(true);
+                var expected = distance >= HomePage.SwipePageRatio ? 2 : 1;
+                Until(() => home.CurrentTabIndex == expected && Math.Abs(((TranslateTransform)home.TabHost.RenderTransform).X) < 1);
+                check(home.CurrentTabIndex == expected,
                     $"{packets}-packet physical swipe of {distance:P0} obeys distance rather than speed");
             }
-            popular.IsChecked = true; Pump(220);
+            popular.IsChecked = true; Until(() => home.CurrentTabIndex == 1);
             home.PreviewHorizontalWheel(.7); home.SettlePrecisionTouchpadPreview(true);
             // Reverse before the old settle has moved. The previous target is
             // preserved, but a new short reverse cannot borrow its old offset.
-            home.PreviewHorizontalWheel(-.1); home.SettlePrecisionTouchpadPreview(true); Pump(220);
+            home.PreviewHorizontalWheel(-.1); home.SettlePrecisionTouchpadPreview(true);
+            Until(() => home.CurrentTabIndex == 2);
             check(home.CurrentTabIndex == 2, "short reverse contact cannot borrow an unfinished animation to trigger a page change");
-            home.PreviewHorizontalWheel(-.7); home.SettlePrecisionTouchpadPreview(true); Pump(220);
-            check(home.CurrentTabIndex == 1, "over-half reverse contact returns exactly one page");
-            home.PreviewHorizontalWheel(.8); home.SettlePrecisionTouchpadPreview(false); Pump(220);
+            home.PreviewHorizontalWheel(-.7); home.SettlePrecisionTouchpadPreview(true);
+            Until(() => home.CurrentTabIndex == 1);
+            check(home.CurrentTabIndex == 1, "over-threshold reverse contact returns exactly one page");
+            home.PreviewHorizontalWheel(.8); home.SettlePrecisionTouchpadPreview(false);
+            Pump(280);
             check(home.CurrentTabIndex == 1, "cancelled physical contact cannot commit a page");
         }
         finally { App.IsExiting = true; main.Close(); App.IsExiting = false; }

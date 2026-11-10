@@ -56,8 +56,8 @@ public partial class HomePage
 
     /// <summary>起手要超过这个位移才判定方向(避免手指微抖就锁成横向)。</summary>
     private const double SwipeSlop = 12;
-    /// <summary>松手时位移需自然过半（内容宽度的 50%）才触发翻页。</summary>
-    private const double SwipePageRatio = 0.50;
+    /// <summary>松手时位移需过八分之三（内容宽度的 37.5%）才触发翻页。</summary>
+    internal const double SwipePageRatio = 3.0 / 8.0;
     /// <summary>到头了还拖的橡皮筋系数。</summary>
     private const double SwipeEdgeResist = 0.35;
     /// <summary>被 <see cref="FreezeVertical"/> 关掉平移的那个 tab(null = 没冻)</summary>
@@ -113,6 +113,17 @@ public partial class HomePage
         var finish = _activeSnapComplete;
         _activeSnapComplete = null;
         finish();
+    }
+
+    internal void CancelActiveSnap()
+    {
+        _activeSnapComplete = null;
+        _cancelActiveSnap?.Invoke();
+        _snapTarget = -1;
+        var trans = TabTrans;
+        trans.BeginAnimation(TranslateTransform.XProperty, null);
+        trans.X = 0;
+        ClearPeerPreview();
     }
 
     private void EnsurePeerVisible(int targetIndex, double offsetX)
@@ -349,12 +360,15 @@ public partial class HomePage
         }
         _swipeHorizontal = false;
         var width = Math.Max(1, TabHost.ActualWidth);
-        var target = CurrentTabIndex + (_swipeDx < 0 ? 1 : -1);
+        var dir = Math.Abs(_touchContactDx) >= width * SwipePageRatio
+            ? (_touchContactDx < 0 ? 1 : -1)
+            : (_swipeDx < 0 ? 1 : -1);
+        var target = CurrentTabIndex + dir;
         var valid = target is >= 0 and < 5;
 
         var shouldSwitch = valid && !_swipeConsumed &&
             (Math.Abs(_swipeDx) >= width * SwipePageRatio ||
-             (Math.Sign(_touchContactDx) == Math.Sign(_swipeDx) && Math.Abs(_touchContactDx) >= width * SwipePageRatio));
+             Math.Abs(_touchContactDx) >= width * SwipePageRatio);
 
         _swipeConsumed = true;
         AnimateSnap(shouldSwitch, target, width);
@@ -494,11 +508,15 @@ public partial class HomePage
         TraceInput($"wheel.settle commit={commit}");
         if (Math.Abs(TabTrans.X) < 0.5 && _peerScroll == null) return;
         var width = Math.Max(1, TabHost.ActualWidth);
-        var target = CurrentTabIndex + (_swipeDx < 0 ? 1 : -1);
+        var dir = Math.Abs(_wheelContactDx) >= width * SwipePageRatio
+            ? (_wheelContactDx < 0 ? 1 : -1)
+            : (_swipeDx < 0 ? 1 : -1);
+        var target = CurrentTabIndex + dir;
         var valid = target is >= 0 and < 5;
         _wheelPreviewActive = false;
-        if (commit && valid && ((!physicalContact && Math.Abs(_swipeDx) >= width * SwipePageRatio) ||
-            (Math.Sign(_wheelContactDx) == Math.Sign(_swipeDx) && Math.Abs(_wheelContactDx) >= width * SwipePageRatio)))
+        var shouldSwitch = commit && valid && ((!physicalContact && Math.Abs(_swipeDx) >= width * SwipePageRatio) ||
+            (Math.Sign(_wheelContactDx) == Math.Sign(_swipeDx) && Math.Abs(_wheelContactDx) >= width * SwipePageRatio));
+        if (shouldSwitch)
         {
             AnimateSnap(true, target, width);
         }

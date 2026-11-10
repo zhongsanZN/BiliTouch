@@ -19,7 +19,8 @@ internal sealed class PrecisionTouchpadInput : IDisposable
     private readonly TouchInfo[] _frame = new TouchInfo[16];
     private Target? _target;
     private uint _lastFrame = uint.MaxValue;
-    private bool _claimed, _ended, _eligible;
+    private bool _claimed, _ended, _eligible, _verticalLocked;
+    private double _claimX, _claimY;
     private readonly ContactLifetime _lifetime = new();
     private readonly ProgressFilter _progressFilter = new();
     private bool _panEnabled = true;
@@ -105,7 +106,7 @@ internal sealed class PrecisionTouchpadInput : IDisposable
         }
         if (_lifetime.Update(hasDown, active))
         {
-            _claimed = _eligible = false; _ended = false; _target = null; _motion.Clear();
+            _claimed = _eligible = _verticalLocked = false; _ended = false; _target = null; _motion.Clear();
             ReadPreferences();
             _target = _panEnabled ? _resolve(new Point(info.Pixel.X, info.Pixel.Y)) : null;
             _eligible = _target != null && GetPointerDeviceRects(info.Device, out var device, out _) && device.Right > device.Left;
@@ -127,16 +128,38 @@ internal sealed class PrecisionTouchpadInput : IDisposable
         if (!_ended && _motion.ContactCount >= 2)
         {
             var (x, y) = _motion.Displacement;
-            if (!_claimed && Math.Abs(x) >= .012 && Math.Abs(x) > Math.Abs(y) * 1.2)
+
+            // 1. 竖向位移若在初期已占优，立即锁定为竖向滚动，防止后续手指微抖误触发切页。
+            if (!_claimed && !_verticalLocked && Math.Abs(y) >= 0.016 && Math.Abs(y) > Math.Abs(x) * 1.2)
+            {
+                _verticalLocked = true;
+                Trace($"vertical.lock dx={x:F4} dy={y:F4}");
+            }
+
+            // 2. 横向切页认领门槛：需达到明确的横向位移与横竖比。
+            if (!_claimed && !_verticalLocked && Math.Abs(x) >= .022 && Math.Abs(x) > Math.Abs(y) * 1.5)
             {
                 _claimed = true;
+                _claimX = x; _claimY = y;
                 _target!.Begin();
                 Trace($"begin target={_target.Name}");
             }
+
+            // 3. 处于横向切页预览时：若用户转为竖向滑动且切页未达承诺位移，无缝让出给竖滑，无需抬手。
             if (_claimed)
             {
                 var progress = Math.Clamp(-x * _direction, -.999, .999);
-                if (_progressFilter.Accept(progress))
+                var verticalDelta = Math.Abs(y - _claimY);
+                var horizontalDelta = Math.Abs(x - _claimX);
+
+                if (Math.Abs(progress) < 0.22 && verticalDelta >= 0.024 && verticalDelta > horizontalDelta * 1.3)
+                {
+                    _claimed = false;
+                    _verticalLocked = true;
+                    _target!.End(false);
+                    Trace($"yield.to.vertical progress={progress:F4} dy={verticalDelta:F4}");
+                }
+                else if (_progressFilter.Accept(progress))
                 {
                     var started = System.Diagnostics.Stopwatch.GetTimestamp();
                     _target!.Preview(progress);
@@ -152,13 +175,14 @@ internal sealed class PrecisionTouchpadInput : IDisposable
             _suppressWheelUntil = Environment.TickCount64 + 180;
             if (_claimed)
             {
+                _claimed = false;
                 _target!.End(true);
                 Trace("up");
             }
         }
         handled = _claimed;
         if (handled) SkipPointerFrameMessages(id);
-        if (active == 0) { _claimed = false; _eligible = false; _motion.Clear(); }
+        if (active == 0) { _claimed = false; _eligible = false; _verticalLocked = false; _motion.Clear(); }
         return IntPtr.Zero;
     }
 
@@ -189,7 +213,7 @@ internal sealed class PrecisionTouchpadInput : IDisposable
     {
         if (_eligible || _claimed) _suppressWheelUntil = Environment.TickCount64 + 180;
         if (_claimed && !_ended) _target?.End(false);
-        _claimed = _eligible = false; _ended = true; _target = null; _motion.Clear();
+        _claimed = _eligible = _verticalLocked = false; _ended = true; _target = null; _motion.Clear();
         _lifetime.Clear();
     }
 

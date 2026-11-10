@@ -1485,6 +1485,7 @@
                         <ContentControl x:Name="WebHeaderHost" Grid.Row="0" Margin="20,18,20,0" Visibility="Collapsed"/>
                         <Border x:Name="WebDockAnchor" Grid.Row="1" Height="0" Margin="20,0,20,0" Visibility="Collapsed" Background="Black"/>
                     <ScrollViewer x:Name="InfoScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto"
+                                  RenderOptions.ClearTypeHint="Enabled"
                                   ScrollChanged="OnInfoScrollChanged">
                         <StackPanel x:Name="InfoContentStack" Margin="20,18,20,24">
                             <!-- ★★★ 2026-11-04 用户要求: **UP 主在视频标题之上, 位于右上角**。
@@ -2312,7 +2313,13 @@
                                         </StackPanel>
                                     </DockPanel>
                                     <ItemsControl x:Name="CommentList"
-                                                  ItemTemplate="{StaticResource CommentCardTemplate}" />
+                                                  ItemTemplate="{StaticResource CommentCardTemplate}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <helpers:VirtualizingCommentPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                    </ItemsControl>
 
                                     <!-- ===== 评论详情(点"查看详情"进入) =====
                                          楼主区在上方(头像 + 昵称 + 时间/属地 + 正文 + 点赞),
@@ -2392,6 +2399,11 @@
                                                            Visibility="{Binding HasReplies, Converter={StaticResource BoolToVis}}" />
                                                 <!-- 楼中楼回复: 每条带头像 + 等级/UP 标 + 赞踩回复 -->
                                                 <ItemsControl x:Name="DetailRepliesList" ItemsSource="{Binding Replies}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <helpers:VirtualizingCommentPanel />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate>
                                                             <!-- 回复之间的 1px 分隔线(2026-11-04):

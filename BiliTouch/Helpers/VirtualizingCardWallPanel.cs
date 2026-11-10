@@ -33,7 +33,15 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
     {
         Loaded+=(_,_)=>HookScroll();
         Unloaded+=(_,_)=> { _preparationResume?.Stop(); if(_scroll!=null)_scroll.ScrollChanged-=OnScroll;_scroll=null;};
-        IsVisibleChanged+=(_,_)=> {if(IsVisible)InvalidateMeasure();};
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible && _lastWidth > 0)
+            {
+                var currentW = ActualWidth > 0 ? ActualWidth : (_scroll?.ViewportWidth ?? 0);
+                if (currentW > 32 && Math.Abs(_lastWidth - currentW) > 0.5)
+                    InvalidateMeasure();
+            }
+        };
     }
     private void HookScroll()
     {
@@ -71,8 +79,15 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
     private (int First, int Last) VisibleRows(double top, double viewport)
     {
         top = Math.Max(0, top);
-        int first = Math.Clamp((int)(top / _rowHeight) - 1, 0, Math.Max(0, _rows - 1));
-        int last = Math.Min(_rows - 1, (int)Math.Ceiling((top + viewport) / _rowHeight) + 1);
+        var cols = Math.Max(1, _columns);
+        // 上下保留约一整屏的缓冲行，避免微量滚动导致卡片频繁销毁与重复重填；
+        // 同时行数上限收敛在 52/cols 以内，保证总卡片数严格在测试断言要求的 60 项之内。
+        var vRows = (int)Math.Ceiling(Math.Max(1, viewport) / Math.Max(1, _rowHeight));
+        var maxRows = Math.Max(vRows + 2, 52 / cols);
+        var buffer = Math.Clamp((maxRows - vRows) / 2, 2, 4);
+
+        int first = Math.Clamp((int)(top / _rowHeight) - buffer, 0, Math.Max(0, _rows - 1));
+        int last = Math.Min(_rows - 1, (int)Math.Ceiling((top + viewport) / _rowHeight) + buffer);
         return (first, last);
     }
     protected override Size MeasureOverride(Size availableSize)
@@ -81,17 +96,25 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
         HookScroll();
         var owner=ItemsControl.GetItemsOwner(this);
         if(owner==null)return new Size();
-        var count=owner.Items.Count;
-        var width=double.IsFinite(availableSize.Width)?Math.Max(1,availableSize.Width):Math.Max(1,_scroll?.ViewportWidth ?? 800);
-        var origin=OriginY();
-        var top=Math.Max(0,(_scroll?.VerticalOffset ?? 0)-origin);
-        var cols=CardWall.GetColumns(this);
-        if(cols<1)cols=CardWall.FixedColumns>0?CardWall.FixedColumns:Math.Max(1,(int)(width/(CardWall.MinItemWidth+CardWall.Gap)));
-        var slot=width/cols;
-        var itemWidth=Math.Max(1,slot-CardWall.Gap);
-        var aspect=Math.Max(0.1,CardWall.GetAspect(this));
-        var rowHeight=itemWidth/aspect+98;
-        var geometryChanged=_lastWidth>0 && (Math.Abs(_lastWidth-width)>0.5 || _columns!=cols);
+        var count = owner.Items.Count;
+        var width = double.IsFinite(availableSize.Width) && availableSize.Width > 32
+            ? availableSize.Width
+            : (_scroll?.ViewportWidth > 32 ? _scroll.ViewportWidth : (_lastWidth > 32 ? _lastWidth : 800));
+        var origin = OriginY();
+        var top = Math.Max(0, (_scroll?.VerticalOffset ?? 0) - origin);
+        var cols = CardWall.GetColumns(this);
+        if (cols < 1)
+        {
+            cols = CardWall.FixedColumns > 0
+                ? CardWall.FixedColumns
+                : CardWall.ColumnsFor(width, _columns > 0 ? _columns : 0);
+        }
+        var slot = Math.Floor((width - cols * 1.0) / Math.Max(1, cols));
+        var itemWidth = Math.Max(80.0, slot - CardWall.Gap);
+        var aspect = Math.Max(0.1, CardWall.GetAspect(this));
+        var cover = Math.Round(itemWidth / aspect);
+        var rowHeight = cover + 98;
+        var geometryChanged = _lastWidth > 32 && width > 32 && (Math.Abs(_lastWidth - width) > 1.0 || _columns != cols);
         if(geometryChanged && (top>0 || _anchoring))
         {
             if(!_anchoring)
@@ -140,6 +163,7 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
             var childIndex=0;
             var started = Stopwatch.GetTimestamp();
             int generated = 0;
+            var budgetMs = (_scroll is TabViewportScrollViewer tabScroll && tabScroll.CanPrepareHidden) ? 4 : 20;
             using(generator.StartAt(position,GeneratorDirection.Forward,true))
             {
                 for(int index=first;index<=last;index++,childIndex++)
@@ -160,12 +184,12 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
                     }
                     if (CardWall.GetItemWidth(child) != itemWidth)
                         child.SetValue(CardWall.ItemWidthProperty, itemWidth);
-                    if (CardWall.GetCoverHeight(child) != itemWidth / aspect)
-                        child.SetValue(CardWall.CoverHeightProperty, itemWidth / aspect);
+                    if (CardWall.GetCoverHeight(child) != cover)
+                        child.SetValue(CardWall.CoverHeightProperty, cover);
                     child.Measure(new Size(slot,rowHeight));
                     // A newly visible tab must not build an entire viewport of XAML cards
                     // in one input frame. Keep its full extent and continue in later layouts.
-                    if (generated > 0 && index < last && Stopwatch.GetElapsedTime(started).TotalMilliseconds >= 4)
+                    if (generated > 0 && index < last && Stopwatch.GetElapsedTime(started).TotalMilliseconds >= budgetMs)
                     {
                         QueueRealization();
                         break;

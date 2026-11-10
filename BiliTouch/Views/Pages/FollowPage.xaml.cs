@@ -294,7 +294,7 @@ public partial class FollowPage : UserControl
 
     // ------------------------------------------------------------ 综合 / 视频 双页并排横滑与触控板跟手
 
-    private const double FeedSwipeRatio = 0.50;
+    private const double FeedSwipeRatio = 3.0 / 8.0;
     private const double FeedEdgeResist = 0.35;
 
     private Point _feedSwipeStart;
