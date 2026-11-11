@@ -8,9 +8,9 @@
 
 面向 Windows 平板、二合一电脑和触控板用户的哔哩哔哩第三方客户端。用横滑切页、手势调节进度与音量、长按加速和捏合全屏，把浏览与播放串起来；也保留鼠标、键盘的完整操作方式。
 
-作者：**中三** · 公开发布版本：**0.2.18-fix1**
+作者：**中三** · 公开发布版本：**0.3.1**
 
-[下载安装](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.2.18-fix1/BiliTouch-0.2.18-fix1-setup.exe) · [触控与手势](#触控与手势) · [功能改进](#功能改进) · [版本记录](docs/RELEASES.md) · [上游鸣谢](docs/ACKNOWLEDGEMENTS.md)
+[下载安装](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.1/BiliTouch-0.3.1-setup.exe) · [触控与手势](#触控与手势) · [功能改进](#功能改进) · [版本记录](docs/RELEASES.md) · [上游鸣谢](docs/ACKNOWLEDGEMENTS.md)
 
 *WPF · .NET 10 · LibVLC · Windows 10 / 11 x64*
 
@@ -50,6 +50,7 @@ BiliTouch 的改进重点，是触摸屏、触控板和日常浏览的操作体�
 - 分 P 与合集分层展示，支持合集收起与订阅；详情页整合 UP 主信息、评论和图片查看。
 - 独立直播间提供画面弹幕、聊天侧栏、醒目留言、清晰度选择、重连与开播／下播状态，并适配触屏和触控板操作。
 - 保留 LibVLC 播放、DASH 音视频、最高 4K、HEVC、Hi-Res／杜比音轨、倍速与听视频等播放能力。
+- 视频解码可选择显卡、自动或软件兼容模式，播放后可查看实际硬解设备；常规 8-bit 视频改用显卡颜色转换与共享纹理合成，降低高分辨率播放开销。
 - **实验性画质增强**位于设置 → 播放。启用后显示控制栏开关，按显卡请求厂商超分或视频处理器缩放，并显示实际驱动状态；可选 SDR 转 HDR。多显卡支持识别与应用偏好选择，实际设备分配仍受 Windows 和驱动限制。
 
 ### 动态、评论与个人内容
