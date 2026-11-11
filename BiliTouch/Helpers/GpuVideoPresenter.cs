@@ -34,6 +34,8 @@ internal sealed class GpuVideoPresenter : IDisposable
     private readonly RegisteredWaitHandle _completionWait;
     private ulong _signal;
     public event Action? FrameReady;
+    public event Action? FrontBufferRestored;
+    public bool FrontBufferAvailable => Image.IsFrontBufferAvailable;
     private bool _pending;
     public long Attempts { get; private set; }
     public long LockMisses { get; private set; }
@@ -47,6 +49,7 @@ internal sealed class GpuVideoPresenter : IDisposable
     {
         try
         {
+            Image.IsFrontBufferAvailableChanged += OnFrontBufferAvailableChanged;
             _d3d9 = D3D9.Direct3DCreate9Ex();
             var hwnd = GetDesktopWindow();
             var parameters = new Vortice.Direct3D9.PresentParameters { Windowed = true, SwapEffect = Vortice.Direct3D9.SwapEffect.Discard,
@@ -127,7 +130,12 @@ internal sealed class GpuVideoPresenter : IDisposable
     public bool Begin(IntPtr pixels, int pitch)
     {
         Attempts++;
-        if (_pending || !Image.IsFrontBufferAvailable) return false;
+        if (_pending) return false;
+        if (!Image.IsFrontBufferAvailable)
+        {
+            _device.DeviceRemovedReason.CheckError();
+            return false;
+        }
         if (!Image.TryLock(new Duration(TimeSpan.Zero)))
         {
             // D3DImage increments its nesting count even when TryLock times out.
@@ -146,6 +154,10 @@ internal sealed class GpuVideoPresenter : IDisposable
             return true;
         }
         catch { Image.Unlock(); throw; }
+    }
+    private void OnFrontBufferAvailableChanged(object? sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (!_disposed && Image.IsFrontBufferAvailable) FrontBufferRestored?.Invoke();
     }
     public bool Complete()
     {
@@ -186,6 +198,7 @@ internal sealed class GpuVideoPresenter : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        Image.IsFrontBufferAvailableChanged -= OnFrontBufferAvailableChanged;
         if (_pending) { _pending = false; Image.Unlock(); }
         _completionWait?.Unregister(null);
         ReleaseFrame(); _fence?.Dispose(); _fenceContext?.Dispose(); _frameReady.Dispose();

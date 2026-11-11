@@ -133,6 +133,7 @@ public sealed class VmemVideoView : Image, IDisposable
             {
                 _gpu = new GpuVideoPresenter();
                 _gpu.FrameReady += OnGpuFrameReady;
+                _gpu.FrontBufferRestored += OnGpuFrontBufferRestored;
                 _gpu.Configure(64, 64); // Verify the driver's input, shared output and conversion support before negotiation.
                 _gpuAvailable = true;
             }
@@ -295,6 +296,15 @@ public sealed class VmemVideoView : Image, IDisposable
         if (Volatile.Read(ref _format) is { } format) PresentFrame(format);
         else CompleteGpuFrame();
     }
+    private void OnGpuFrontBufferRestored()
+    {
+        if (_disposed) return;
+        if (Volatile.Read(ref _format) is { } format)
+        {
+            lock (format.Gate) if (!format.Retired) format.Pending = 1;
+            PresentFrame(format);
+        }
+    }
 
     private void PresentFrame(FrameBuffers format)
     {
@@ -328,7 +338,13 @@ public sealed class VmemVideoView : Image, IDisposable
             lock (format.Gate)
             {
                 if (format.Retired || _disposed || format.Pending == 0) return;
-                if (!_gpu.Begin(format.Present, format.Pitch)) { RetryPresentation(); return; }
+                if (!_gpu.Begin(format.Present, format.Pitch))
+                {
+                    // Lost presentation surfaces wake from their availability event.
+                    // Poll only a busy copy, never a locked/disconnected desktop.
+                    if (_gpu.FrontBufferAvailable) RetryPresentation();
+                    return;
+                }
                 format.Pending = 0;
             }
             return;
