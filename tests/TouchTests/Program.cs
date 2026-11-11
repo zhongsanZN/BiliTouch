@@ -41,12 +41,16 @@ internal static class Program
             source.Value = "/BiliTouch;component/" + source.Value;
         app.Resources = (ResourceDictionary)XamlReader.Parse(resources.ToString());
         app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
         TouchSupport.Install();
         var exit = 0;
         try
         {
             if (args.Contains("--user-ui") || args.Contains("--gesture-review")) MotionReviewHost.Configure(Artifacts);
             if(args.Contains("--gesture-review")) MotionReviewHost.Run();
+            else if(args.Contains("--foundation")) FoundationTests.Run(Check);
+            else if(args.Contains("--decoder-settings")) VideoDecodeTests.Settings(Check);
+            else if(args.Contains("--decoder-hardware")) VideoDecodeTests.Hardware(Check, args);
             else if(args.Contains("--precision-touchpad")) PrecisionTouchpadTests.Run(Check);
             else if(args.Contains("--precision-all-pages")) CrossPagePrecisionTests.Run(Check);
             else if(args.Contains("--home-preload")) HomePreloadTests.Run(Check, Artifacts);
@@ -56,6 +60,8 @@ internal static class Program
             else if(args.Contains("--gesture-visual")) GestureVisualTests.Run(Check, Artifacts);
             else if(args.Contains("--gesture-continuation")) GestureContinuationTests.Run(Check);
             else if(args.Contains("--seamless-capture")) SeamlessCaptureProbe.Run(Check, Artifacts);
+            else if(args.Contains("--message-unread")) MessageUnreadTests.Run(Check);
+            else if(args.Contains("--message-unread-live")) MessageUnreadTests.Live(Check);
             else if(args.Contains("--web-rail")) WebRailTests.Run(Check, Artifacts);
             else if(args.Contains("--player-lifecycle")) PlayerLifecycleTests.Run(Check);
             else if(args.Contains("--popup-pointer-review")) PopupLifetimeTests.PointerReview(Artifacts);
@@ -64,6 +70,9 @@ internal static class Program
             else if(args.Contains("--motion-performance")) MotionPerformanceTests.Run(Check);
             else if(args.Contains("--rate-limit")) RateLimitTests.Run(Check);
             else if(args.Contains("--web-dock-flicker")) WebDockFlickerTests.Run(Check, Artifacts);
+            else if(args.Contains("--vmem-buffers")) VmemBufferTests.Run(Check);
+            else if(args.Contains("--vmem-performance")) VmemPerformanceProbe.Run(Check, args);
+            else if(args.Contains("--cover-performance")) ScrollAbTests.CoverRendering(Artifacts, Check);
             else if(args.Contains("--home-cover-reuse")) HomeCoverReuseTests.Run(Check);
             else if(args.Contains("--scroll-boundaries")) ScrollBoundaryTests.Run(Check);
             else if(args.Contains("--release027")) Release027Tests.Run(Check);

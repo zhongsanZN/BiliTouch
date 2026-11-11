@@ -28,6 +28,20 @@ internal static class HomeCoverReuseTests
         check(ReferenceEquals(cached, CoverLoader.LoadAsync(url, 320).GetAwaiter().GetResult()),
             "async requests also reuse a larger cached thumbnail");
 
+        var upgradeUrl = "https://example.invalid/cover-resolution-upgrade.png";
+        File.Copy(Path.Combine(AppPaths.CacheDir, Hashing.Md5Hex(url) + ".jpg"),
+            Path.Combine(AppPaths.CacheDir, Hashing.Md5Hex(upgradeUrl) + ".jpg"), true);
+        var thumb = CoverLoader.LoadAsync(upgradeUrl, 128).GetAwaiter().GetResult();
+        check(thumb?.PixelWidth == 128 && !CoverLoader.TryGetCached(upgradeUrl, 480, out _),
+            "a small thumbnail cannot satisfy a sharper card request");
+        var sharp = CoverLoader.LoadAsync(upgradeUrl, 480).GetAwaiter().GetResult();
+        check(sharp?.PixelWidth == 480 && !ReferenceEquals(sharp, thumb),
+            "larger cards decode enough source pixels after a thumbnail was cached");
+        check(!CoverLoader.TryGetCached(upgradeUrl, 0, out _),
+            "original-image requests cannot reuse reduced thumbnails");
+        var original = CoverLoader.LoadAsync(upgradeUrl, 0).GetAwaiter().GetResult();
+        check(original?.PixelWidth == 640, "image preview loads the full original resolution");
+
         var item = new VideoItem { Title = "回滚复用", Cover = url };
         var card = new VideoCard { DataContext = item, Width = 236 };
         var window = new Window { Content = new ScrollViewer { Content = card }, Width = 400, Height = 400, ShowActivated = false };

@@ -32,7 +32,7 @@ public partial class LiveRoomWindow
     try{
      var old=_player;old.Playing-=OnPlaying;await Task.Run(old.Stop);
      LiveVideo.MediaPlayer=null;await Task.Run(old.Dispose);
-     _liveCore=core;_player=new LibVLCSharp.Shared.MediaPlayer(core){EnableHardwareDecoding=true,EnableKeyInput=false,EnableMouseInput=false};
+     _liveCore=core;_player=new LibVLCSharp.Shared.MediaPlayer(core){EnableHardwareDecoding=VideoDecode.HardwareEnabled,EnableKeyInput=false,EnableMouseInput=false};
      _player.Playing+=OnPlaying;LiveVideo.MediaPlayer=_player;_player.Volume=_muted?0:Svc.Settings.PlayerVolume;
     }finally{_mediaGate.Release();_changingStream=false;}
     if(!_paused && Model.RoomId>0)await LoadStreamAsync();UpdateLiveEnhancementButton();

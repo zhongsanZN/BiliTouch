@@ -67,6 +67,7 @@ internal static class VmemViewTests
             core = VlcCore.GetVmem();
             mp = new MediaPlayer(core) { Volume = 0 };
             view.Attach(mp);                       // 必须在 Play 之前
+            mp.EnableHardwareDecoding = true;      // 与产品一致，在回调挂好后请求硬解
             mp.Play(new Media(core, clip, FromType.FromPath));
 
             // 等格式协商 + 起播
@@ -155,7 +156,7 @@ internal static class VmemViewTests
     private static long HashView(VmemVideoView view, out int w, out int h)
     {
         w = h = 0;
-        if (view.Source is not BitmapSource src) return 0;
+        if (view.CaptureFrame() is not BitmapSource src) return 0;
         w = src.PixelWidth; h = src.PixelHeight;
         var stride = Math.Max(4, src.PixelWidth * 4);
         var buf = new byte[stride * Math.Min(src.PixelHeight, 120)];

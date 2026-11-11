@@ -64,7 +64,7 @@ public partial class LiveRoomWindow : FluentWindow
     {
         InitializeComponent(); DataContext = Model;
         _liveCore = VlcCore.Get();
-        _player = new MediaPlayer(_liveCore) { EnableHardwareDecoding = true };
+        _player = new MediaPlayer(_liveCore) { EnableHardwareDecoding = VideoDecode.HardwareEnabled };
         VlcCore.RegisterPlayer(); LiveVideo.MediaPlayer = _player;
         _player.EnableKeyInput = false; _player.EnableMouseInput = false;
         _chat = new LiveDanmakuService(Svc.Api, Dispatcher);

@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using System.Windows;
 using BiliTouch.Helpers;
 using BiliTouch.Models;
 using BiliTouch.Services;
@@ -25,6 +26,7 @@ namespace BiliTouch.ViewModels;
 /// </summary>
 public class MineViewModel : ObservableObject
 {
+    private int _accountGeneration;
     private bool _loading;
     private bool _isLoggedIn;
     private string _error = "";
@@ -115,10 +117,19 @@ public class MineViewModel : ObservableObject
         LoginCommand = new RelayCommand(() => App.MainVm.OpenLoginWindow());
         // 登录态变化(扫码成功/退出)时原地刷新 —— 否则用户在「我的」页点「去登录」,
         // 登录窗口关了页面还停在未登录态, 得切出去再切回来才恢复
-        Svc.Session.Changed += OnSessionChanged;
+        WeakEventManager<SessionManager, EventArgs>.AddHandler(Svc.Session,
+            nameof(SessionManager.AccountChanged), OnSessionChanged);
     }
 
-    private void OnSessionChanged() => _ = LoadAsync();
+    private void OnSessionChanged(object? sender, EventArgs e)
+    {
+        ++_accountGeneration;
+        Loading = FolderLoading = false; _foldersLoaded = false;
+        Name = Face = Error = FolderError = ExpText = ""; Level = 0; ExpProgress = 0;
+        CoinsText = "--"; DynamicText = FollowingText = FollowerText = "--";
+        Folders.Clear(); OnPropertyChanged(nameof(FavCountText));
+        _ = LoadAsync();
+    }
 
     /// <summary>
     /// 拉全部数据。每个子项独立容错: 某一项挂了不影响其它项显示
@@ -127,6 +138,8 @@ public class MineViewModel : ObservableObject
     public async Task LoadAsync()
     {
         if (Loading) return;
+        var account = Svc.Session.CaptureAccount();
+        var generation = _accountGeneration;
 
         if (!Svc.Session.HasLogin)
         {
@@ -151,6 +164,7 @@ public class MineViewModel : ObservableObject
         try
         {
             var (stateOk, stateErr, user) = await Svc.Api.GetUserStateAsync();
+            if (!account.IsCurrent || generation != _accountGeneration) return;
             if (!stateOk || user == null)
             {
                 // 会话过期: nav 拿不到就是拿不到, 不清 Cookie(网页端可能还有效)
@@ -178,6 +192,7 @@ public class MineViewModel : ObservableObject
             // 之前用的 dynamic_svr/num 在应用内也被风控拦, 动态数永远是 "--")。
             // nav/stat 挂了就退回匿名的 relation/stat 拿关注/粉丝, 动态数显示 "--"。
             var (statOk, _, following, follower, dynCount) = await Svc.Api.GetUserNavStatAsync();
+            if (!account.IsCurrent || generation != _accountGeneration) return;
             if (statOk)
             {
                 FollowingText = following.ToString();
@@ -187,6 +202,7 @@ public class MineViewModel : ObservableObject
             else
             {
                 var (_, _, fol, fan) = await Svc.Api.GetRelationStatAsync(user.Mid);
+                if (!account.IsCurrent || generation != _accountGeneration) return;
                 FollowingText = statOk || fol > 0 ? fol.ToString() : "--";
                 FollowerText = statOk || fan > 0 ? fan.ToString() : "--";
                 DynamicText = "--";
@@ -196,10 +212,10 @@ public class MineViewModel : ObservableObject
         {
             // ★ 必须走 finally: 中途抛异常时若把 Loading 留在 true, 页面上那圈菊花会一直转,
             // 而且「刷新」被开头的 `if (Loading) return` 挡死 —— 用户自己没法把它救回来。
-            Loading = false;
+            if (account.IsCurrent && generation == _accountGeneration) Loading = false;
         }
 
-        await LoadFoldersAsync();
+        if (account.IsCurrent && generation == _accountGeneration) await LoadFoldersAsync();
     }
 
     /// <summary>收藏夹卡片独立加载/刷新(和资料部分解耦, 刷新按钮只重拉这一段)。
@@ -208,11 +224,14 @@ public class MineViewModel : ObservableObject
     {
         if (FolderLoading) return;
         if (_foldersLoaded && !force) return;
+        var account = Svc.Session.CaptureAccount();
+        var generation = _accountGeneration;
         FolderLoading = true;
         FolderError = "";
         try
         {
             var (ok, err, folders) = await Svc.Api.GetFavFoldersFullAsync();
+            if (!account.IsCurrent || generation != _accountGeneration) return;
 
             Folders.Clear();
             OnPropertyChanged(nameof(FavCountText));
@@ -231,7 +250,7 @@ public class MineViewModel : ObservableObject
         finally
         {
             // 同 LoadAsync: 标志位必须由 finally 收口, 否则一次异常就让收藏夹永久卡在"加载中"
-            FolderLoading = false;
+            if (account.IsCurrent && generation == _accountGeneration) FolderLoading = false;
         }
     }
 }

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
+using System.Windows;
 using BiliTouch.Helpers;
 using BiliTouch.Models;
 using BiliTouch.Services;
@@ -13,7 +14,15 @@ public sealed class PersonalHomeViewModel : ObservableObject
     private long _mid, _following, _followers, _videoCount;
     private int _page;
     private bool _more=true;
-    public PersonalHomeViewModel(){Videos.CollectionChanged+=(_,_)=>OnPropertyChanged(nameof(ShowEmpty));}
+    private int _accountGeneration;
+    public PersonalHomeViewModel()
+    {
+        Videos.CollectionChanged+=(_,_)=>OnPropertyChanged(nameof(ShowEmpty));
+        WeakEventManager<SessionManager, EventArgs>.AddHandler(Svc.Session,
+            nameof(SessionManager.AccountChanged), OnAccountChanged);
+    }
+    private void OnAccountChanged(object? sender, EventArgs e)
+    { ++_accountGeneration; Loading=false; _pendingRefresh=false; Clear(); IsLoggedIn=Svc.Session.HasLogin; }
     public bool Loading { get=>_loading; private set=>SetProperty(ref _loading,value); }
     public bool IsLoggedIn { get=>_loggedIn; private set=>SetProperty(ref _loggedIn,value); }
     public string Name { get=>_name; private set=>SetProperty(ref _name,value); }
@@ -33,12 +42,14 @@ public sealed class PersonalHomeViewModel : ObservableObject
     public async Task RefreshAsync()
     {
         if(Loading){_pendingRefresh=true;return;}
+        var account=Svc.Session.CaptureAccount();var generation=_accountGeneration;
         Loading=true; Error="";
         try
         {
             IsLoggedIn=Svc.Session.HasLogin;
             if(!IsLoggedIn){Clear();return;}
             var (ok,err,user)=await Svc.Api.GetUserStateAsync();
+            if(!account.IsCurrent || generation!=_accountGeneration)return;
             if(!ok || user is not { IsLogin:true }) { IsLoggedIn=false;Clear(); Error=err??"登录已过期，请重新登录";return; }
             var mid=user.Mid;
             Name=user.Name; Face=user.Face; Mid=mid;
@@ -46,7 +57,7 @@ public sealed class PersonalHomeViewModel : ObservableObject
             var videoTask=Svc.Api.GetSpaceVideosAsync(mid,1,30);
             var (infoOk,_,info)=await infoTask;
             var (videoOk,videoErr,videos)=await videoTask;
-            if(!Svc.Session.HasLogin || Svc.Session.Current.DedeUserID!=mid.ToString()){Clear();return;}
+            if(!account.IsCurrent || generation!=_accountGeneration)return;
             if(infoOk && info!=null)
             { _statsKnown=info.RelationStatsKnown;_videoCountKnown=info.VideoCountKnown;Sign=string.IsNullOrWhiteSpace(info.Sign)?"还没有填写个性签名":info.Sign; _following=info.Following;_followers=info.Follower;_videoCount=info.VideoCount; }
             else { _statsKnown=_videoCountKnown=false;Sign="个人资料暂时无法加载";_following=_followers=_videoCount=0; }
@@ -54,22 +65,23 @@ public sealed class PersonalHomeViewModel : ObservableObject
             if(videoOk && videos!=null){Videos.Clear();foreach(var v in videos)Videos.Add(v);_page=1;_more=videos.Count>=30;}
             else Error=videoErr??"投稿加载失败，下拉重试";
         }
-        catch(Exception ex){Error=ex.Message;}
-        finally{Loading=false;OnPropertyChanged(nameof(ShowEmpty));if(_pendingRefresh){_pendingRefresh=false;_=RefreshAsync();}}
+        catch(Exception ex){if(account.IsCurrent && generation==_accountGeneration)Error=ex.Message;}
+        finally{if(account.IsCurrent && generation==_accountGeneration){Loading=false;OnPropertyChanged(nameof(ShowEmpty));if(_pendingRefresh){_pendingRefresh=false;_=RefreshAsync();}}}
     }
     public async Task LoadMoreAsync()
     {
         if(Loading || !_more || Mid<=0)return;
+        var account=Svc.Session.CaptureAccount();var generation=_accountGeneration;
         var mid=Mid;Loading=true;
         try
         {
             var(ok,err,items)=await Svc.Api.GetSpaceVideosAsync(mid,_page+1,30);
-            if(mid!=Mid || !Svc.Session.HasLogin)return;
+            if(mid!=Mid || !account.IsCurrent || generation!=_accountGeneration)return;
             if(!ok || items==null){Error=err??"加载投稿失败";return;}
             var seen=Videos.Select(v=>v.Bvid).ToHashSet();foreach(var v in items)if(seen.Add(v.Bvid))Videos.Add(v);
             _page++;_more=items.Count>=30;
         }
-        finally{Loading=false;OnPropertyChanged(nameof(ShowEmpty));}
+        finally{if(account.IsCurrent && generation==_accountGeneration){Loading=false;OnPropertyChanged(nameof(ShowEmpty));}}
     }
     public void Clear()
     { _statsKnown=_videoCountKnown=false;Videos.Clear();Name=Face=Sign=Error="";Mid=0;_following=_followers=_videoCount=0;_page=0;_more=true;NotifyStats();OnPropertyChanged(nameof(ShowEmpty)); }

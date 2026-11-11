@@ -12,14 +12,20 @@ public partial class MessagesPage : UserControl
     internal TabNavigationGestures ModuleGestures {get;}
  private MessagesViewModel? Vm=>DataContext as MessagesViewModel;
  private bool _scrollScheduled;
+ private Window? _messageHost;
  public MessagesPage()
  {
   InitializeComponent();
         ModuleGestures = new TabNavigationGestures(this,ModuleContent,ModuleTabs);
   ContactSelection.Install(SessionScroll,item=>{if(item is MsgSession session)_=OpenSessionAsync(session);});
   DataContextChanged+=(_,e)=>{if(e.OldValue is MessagesViewModel old)old.Messages.CollectionChanged-=OnMessagesChanged;if(e.NewValue is MessagesViewModel vm)vm.Messages.CollectionChanged+=OnMessagesChanged;};
-  Loaded+=async(_,_)=>{if(Vm!=null && Vm.Sessions.Count==0)await Vm.LoadAsync();};
+  Loaded+=async(_,_)=>{Svc.MessageUnread.PropertyChanged+=OnUnreadChanged;_messageHost=Window.GetWindow(this);if(_messageHost!=null)_messageHost.Activated+=OnMessageHostActivated;if(Vm!=null)await Vm.LoadAsync();if(Svc.MessageUnread.IsStarted)await Svc.MessageUnread.RefreshAsync(true);};
+  Unloaded+=(_,_)=>{Svc.MessageUnread.PropertyChanged-=OnUnreadChanged;if(_messageHost!=null)_messageHost.Activated-=OnMessageHostActivated;_messageHost=null;};
  }
+ private async void OnMessageHostActivated(object? sender,EventArgs e)
+ {if(IsVisible && Vm is {Loading:false,ThreadLoading:false,NotificationLoading:false} vm)await vm.LoadAsync();}
+ private async void OnUnreadChanged(object? sender,System.ComponentModel.PropertyChangedEventArgs e)
+ {if(e.PropertyName==nameof(MessageUnreadService.Total) && IsVisible && _messageHost?.IsActive==true && Vm is {Loading:false,ThreadLoading:false,NotificationLoading:false} vm)await vm.LoadAsync();}
  private void OnMessagesChanged(object? sender,NotifyCollectionChangedEventArgs e){if(Vm?.LoadingOlder!=true)ScrollToBottom();}
  private void OnSessionClick(object sender,MouseButtonEventArgs e){if(e.ChangedButton==MouseButton.Left && sender is FrameworkElement {DataContext:MsgSession session})_=OpenSessionAsync(session);}
  private async Task OpenSessionAsync(MsgSession session){if(Vm==null)return;await Vm.LoadThreadAsync(session);ScrollToBottom();}

@@ -44,6 +44,35 @@ public class SessionManager
     /// <summary>会话变化(登录/退出)事件</summary>
     public event Action? Changed;
 
+    public event EventHandler<EventArgs>? AccountChanged;
+    private long _accountVersion;
+    private string? _knownUserId, _knownSessionData;
+    internal long AccountVersion => System.Threading.Interlocked.Read(ref _accountVersion);
+    internal SessionAccount CaptureAccount() => new(this);
+
+    private void NotifyChanged(bool forceAccountChange = false)
+    {
+        var userId = HasLogin ? Current.DedeUserID : null;
+        var sessionData = HasLogin ? Current.SessData : null;
+        var accountChanged = forceAccountChange || userId != _knownUserId || sessionData != _knownSessionData;
+        if (accountChanged)
+        {
+            _knownUserId = userId;
+            _knownSessionData = sessionData;
+            System.Threading.Interlocked.Increment(ref _accountVersion);
+        }
+        var version = AccountVersion;
+        void RaiseChanged()
+        {
+            if (version != AccountVersion) return;
+            if (accountChanged) AccountChanged?.Invoke(this, EventArgs.Empty);
+            Changed?.Invoke();
+        }
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess()) dispatcher.BeginInvoke((Action)RaiseChanged);
+        else RaiseChanged();
+    }
+
     public bool HasLogin => !string.IsNullOrEmpty(Current.SessData);
 
     public void Load()
@@ -71,6 +100,7 @@ public class SessionManager
             Current = new Session();
             _diskUnreadable = true;
         }
+        NotifyChanged();
     }
 
     /// <summary>
@@ -178,7 +208,7 @@ public class SessionManager
         Current.BuvidFp = Get("buvid_fp") ?? Current.BuvidFp;
         Current.Blsid = Get("b_lsid") ?? Current.Blsid;
         Save();
-        Changed?.Invoke();
+        NotifyChanged();
     }
 
     /// <summary>
@@ -226,7 +256,7 @@ public class SessionManager
         Current.BuvidFp = Get("buvid_fp") ?? Current.BuvidFp;
         Current.Blsid = Get("b_lsid") ?? Current.Blsid;
         Save();
-        Changed?.Invoke();
+        NotifyChanged();
     }
 
     public void SetBuvid3(string buvid3)
@@ -348,7 +378,7 @@ public class SessionManager
         if (string.IsNullOrEmpty(sessNow.Buvid3) || string.IsNullOrEmpty(sessNow.Buvid4))
             Svc.Api.ResetBuvidCache();
 
-        Changed?.Invoke();
+        NotifyChanged(forceAccountChange: true);
     }
 
     /// <summary>构造请求用的 Cookie 头</summary>

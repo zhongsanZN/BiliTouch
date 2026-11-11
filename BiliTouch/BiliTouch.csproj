@@ -9,13 +9,14 @@
          姣旀墜鎼?Shell_NotifyIcon P/Invoke 灏戝嚑鐧捐marshalling浠ｇ爜 -->
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>BiliTouch</RootNamespace>
     <AssemblyName>BiliTouch</AssemblyName>
     <AssemblyTitle>BiliTouch</AssemblyTitle>
     <Product>BiliTouch</Product>
     <Authors>中三</Authors>
-    <Version>0.2.18-fix1</Version>
+    <Version>0.3.1</Version>
     <PlatformTarget>x64</PlatformTarget>
     <!--
       RollForward=Major: 框架依赖版(安装器)在机器上没有 .NET 10 桌面运行时、
@@ -66,6 +67,7 @@
     UseWindowsForms 浼氬線姣忎釜鏂囦欢娉ㄥ叆 System.Windows.Forms / System.Drawing 鐨勫叏灞€ using,
     鍜?WPF 鐨?KeyEventArgs / MouseEventArgs / Point 澶ч潰绉挒鍚嶃€傛湰椤圭洰鍙湁鎵樼洏鏈嶅姟纰?    WinForms, 涓斿畠鍏ㄩ儴鐢ㄥ叏闄愬畾鍚?鈥斺€?鎶婅繖涓ゆ潯鍏ㄥ眬 using 鎽樻帀, 鍏朵綑浠ｇ爜闆舵敼鍔ㄣ€?  -->
   <ItemGroup>
+    <None Update="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
   </ItemGroup>
@@ -85,6 +87,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct3D9" Version="3.8.3" />
     <PackageReference Include="LibVLCSharp" Version="3.8.0" />
     <PackageReference Include="LibVLCSharp.WPF" Version="3.8.0" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />

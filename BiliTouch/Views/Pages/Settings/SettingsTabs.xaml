@@ -437,10 +437,26 @@
     <!-- ==================== 播放 ==================== -->
     <DataTemplate x:Key="PlaybackTabTemplate">
         <StackPanel>
+            <ContentControl Content="视频解码" ContentTemplate="{StaticResource SectionHeaderTemplate}" Margin="0,24,0,8"/>
+            <Border Style="{StaticResource SettingsCardStyle}">
+                <StackPanel>
+                    <Grid Style="{StaticResource SettingsRowStyle}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
+                            <TextBlock Text="解码显卡" FontWeight="SemiBold"/>
+                            <TextBlock Text="选择用于播放视频的显卡，更改后重启应用生效。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
+                        </StackPanel>
+                        <ComboBox Grid.Column="1" Width="300" ItemsSource="{Binding DecoderAdapters}" DisplayMemberPath="Name" SelectedValuePath="Id"
+                                  SelectedValue="{Binding DecoderAdapterId,Mode=TwoWay}" Style="{StaticResource SettingsComboStyle}"/>
+                    </Grid>
+                    <TextBlock Text="{Binding DecodeStatus.Status}" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
+                    <TextBlock Text="显卡不支持当前视频或已断开时，会自动使用兼容解码。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
+                </StackPanel>
+            </Border>
 <ContentControl Content="视频画质增强" ContentTemplate="{StaticResource SectionHeaderTemplate}" Margin="0,24,0,8"/>
             <Border Style="{StaticResource SettingsCardStyle}"><StackPanel>
                 <Grid Style="{StaticResource SettingsRowStyle}"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <StackPanel><StackPanel Orientation="Horizontal"><TextBlock Text="视频画质增强" FontWeight="SemiBold" VerticalAlignment="Center"/><Border Margin="8,0,0,0" Padding="7,2" CornerRadius="7" Background="{DynamicResource AccentBrush}"><TextBlock Text="实验性" FontSize="10.5" Foreground="{DynamicResource AccentForegroundBrush}"/></Border></StackPanel><TextBlock Text="启用厂商超分、视频处理器缩放与可选 HDR 增强，并显示播放控制栏开关。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/></StackPanel>
+                    <StackPanel><StackPanel Orientation="Horizontal"><TextBlock Text="视频画质增强" FontWeight="SemiBold" VerticalAlignment="Center"/><Border Margin="8,0,0,0" Padding="7,2" CornerRadius="7" Background="{DynamicResource AccentBrush}"><TextBlock Text="实验性" FontSize="10.5" Foreground="{DynamicResource AccentForegroundBrush}"/></Border></StackPanel><TextBlock Text="直播可请求厂商超分、视频处理器缩放与 HDR 增强。点播暂不支持这些增强，控制栏会标明可用状态。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/></StackPanel>
                     <CheckBox Grid.Column="1" IsChecked="{Binding ExperimentalVideoEnhancement,Mode=TwoWay}" Style="{StaticResource SettingsToggleStyle}"/>
                 </Grid>
                 <StackPanel Visibility="{Binding ExperimentalVideoEnhancement,Converter={StaticResource BoolToVis}}">
@@ -451,10 +467,7 @@
                         <TextBlock Text="增强方案" VerticalAlignment="Center"/><ComboBox Grid.Column="1" ItemsSource="{Binding EnhancementModes}" SelectedItem="{Binding VideoEnhancementMode,Mode=TwoWay}" Style="{StaticResource SettingsComboStyle}"/>
                     </Grid>
                     <TextBlock Text="NVIDIA / Intel / 摩尔线程自动请求对应厂商超分；AMD 及其他显卡使用视频处理器缩放。实际启用状态见控制栏按钮提示。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
-                    <Grid Style="{StaticResource SettingsRowStyle}"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                        <TextBlock Text="处理显卡偏好" VerticalAlignment="Center"/><ComboBox Grid.Column="1" Width="280" ItemsSource="{Binding EnhancementAdapters}" DisplayMemberPath="Name" SelectedValuePath="Id" SelectedValue="{Binding EnhancementAdapterId,Mode=TwoWay}" Style="{StaticResource SettingsComboStyle}"/>
-                    </Grid>
-                    <TextBlock Text="{Binding EnhancementAdapterHint}" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
+                    <TextBlock Text="画质增强与当前播放方式和显卡能力有关，实际生效状态见播放控制栏提示。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
                     <Grid Style="{StaticResource SettingsRowStyle}"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <StackPanel><TextBlock Text="SDR 转 HDR"/><TextBlock Text="仅 NVIDIA 显卡与 HDR 显示环境尝试启用，默认关闭。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/></StackPanel><CheckBox Grid.Column="1" IsChecked="{Binding VideoEnhancementHdr,Mode=TwoWay}" Style="{StaticResource SettingsToggleStyle}"/>
                     </Grid>
@@ -569,24 +582,6 @@
                         <CheckBox Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
                                   VerticalAlignment="Center"
                                   IsChecked="{Binding HardwareAccelerationEnabled, Mode=TwoWay}" />
-                    </Grid>
-                    <Border Style="{StaticResource SettingsRowDivider}" />
-
-                    <!-- 实验性 vmem 渲染：把视频变成普通 WPF 元素，才能圆角/阴影/连续变形。
-                         默认关；4K 片源每帧字节数是 1080p 的 4 倍，可能掉帧。 -->
-                    <Grid Style="{StaticResource SettingsRowStyle}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
-                            <TextBlock Text="实验性：WPF 合成视频（vmem）" Style="{StaticResource SettingsRowTitleStyle}" />
-                            <TextBlock Text="{Binding UseVmemRendererHint}"
-                                       Style="{StaticResource SettingsRowDescStyle}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <CheckBox Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
-                                  VerticalAlignment="Center"
-                                  IsChecked="{Binding UseVmemRenderer, Mode=TwoWay}" />
                     </Grid>
                     <Border Style="{StaticResource SettingsRowDivider}" />
 

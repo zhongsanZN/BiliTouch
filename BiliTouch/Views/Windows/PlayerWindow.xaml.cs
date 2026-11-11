@@ -710,13 +710,12 @@ public partial class PlayerWindow : FluentWindow
     {
         if (_closing || string.IsNullOrEmpty(bvid)) return;
         if (bvid == _currentBvid && _mp.IsPlaying) return;
-        try { _mp.Stop(); } catch { }
         _currentBvid = bvid;
         _isLocalPlayback = false;
         _isLive = false;
         ResetForNewMedia();
         TryStartSeamlessEntry(bvid);
-        _ = LoadVideoAsync();
+        _ = ReplaceNativeInputAsync(() => _ = LoadVideoAsync());
     }
 
     // ------------------------------------------------------------ 简介折叠 + 相关视频(2026-10-12)
@@ -951,14 +950,13 @@ public partial class PlayerWindow : FluentWindow
     {
         if (_closing || roomId <= 0) return;
         if (_isLive && roomId == _liveRoomId && _mp.IsPlaying) return;
-        try { _mp.Stop(); } catch { }
         _currentBvid = "";
         _isLocalPlayback = true;   // 没有在线上下文: 不打接口、不互动、不上报
         _isLive = true;
         _liveRoomId = roomId;
         ResetForNewMedia();
         if (!string.IsNullOrEmpty(roomTitle)) VideoTitleText.Text = roomTitle;
-        _ = LoadLiveAsync(roomId);
+        _ = ReplaceNativeInputAsync(() => _ = LoadLiveAsync(roomId));
     }
 
     /// <summary>连接直播间: 取直播流地址 → 起播</summary>
@@ -1090,14 +1088,13 @@ public partial class PlayerWindow : FluentWindow
     public void PlayLocalFile(string path)
     {
         if (_closing || string.IsNullOrEmpty(path) || !File.Exists(path)) return;
-        try { _mp.Stop(); } catch { }
         _currentBvid = "";
         _isLocalPlayback = true;
         _isLive = false;
         ResetForNewMedia();
         // 本地文件没有 bvid, 自然也没有相关视频
         ClearRelatedPanel();
-        LoadLocalFile(path);
+        _ = ReplaceNativeInputAsync(() => LoadLocalFile(path));
     }
 
     /// <summary>
@@ -1495,6 +1492,7 @@ public partial class PlayerWindow : FluentWindow
         // 输入框的"展开高度"态(2026-11-01): 同样是窗口级 UI 偏好 ——
         //   用户展开了写长文, 换片/收面板再回来不该被打回 66px。发成功才归位(见 PostCommentAsync)。
         nameof(_composerExpanded),
+        nameof(_nativeInputVersion),
     };
 
     /// <summary>
@@ -1904,6 +1902,10 @@ public partial class PlayerWindow : FluentWindow
         _mp = player;
         if (_vmemMode) VmemView.Attach(player);   // ★ vmem 回调必须在 Play 之前挂好
         else VideoView.MediaPlayer = _mp;
+        // libvlc_video_set_callbacks sets avcodec-hw=none on the player. Request
+        // D3D11VA on each media after attachment so composited video also uses it.
+        // Unsupported streams retain LibVLC's software fallback.
+        player.EnableHardwareDecoding = VideoDecode.HardwareEnabled;
 
         _mp.TimeChanged += OnTimeChanged;
         _mp.LengthChanged += OnLengthChanged;
@@ -2073,6 +2075,8 @@ public partial class PlayerWindow : FluentWindow
         {
             // 首帧计时只用于诊断日志: 每次起播(含切清晰度/重播/直播)都会重置。
             _playWatch = Stopwatch.StartNew();
+            if (_vmemMode) VmemView.UseCompatibleColorConversion = _currentQn is 125 or 126;
+            VideoDecode.BeginMedia(_libVLC);
             var ok = _mp.Play(media);
             if (!ok) _playWatch = null;   // 没播起来就别留一个永远等不到 Playing 的计时器
             return ok;
@@ -3359,9 +3363,11 @@ public partial class PlayerWindow : FluentWindow
             if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
             ShowLoading("正在跳转…");
             _resumeAfterSwitchMs = targetMs;
-            try { _mp.Stop(); } catch { }   // 同上: 不 Stop 则 play() 被忽略
-            if (!PlayMedia(new Media(_libVLC, path, FromType.FromPath)))
-                WriteLibVLCDebug("[Seek] 重建后 play() 未被接受(本地文件)\n");
+            _ = ReplaceNativeInputAsync(() =>
+            {
+                if (!PlayMedia(new Media(_libVLC, path, FromType.FromPath)))
+                    WriteLibVLCDebug("[Seek] 重建后 play() 未被接受(本地文件)\n");
+            });
             return;
         }
 
@@ -3375,12 +3381,14 @@ public partial class PlayerWindow : FluentWindow
         _resumeAfterSwitchMs = targetMs;
         // ★★ 必须先 Stop: LibVLC 3 里已有 input 在播时 play() 会被**直接忽略**
         //    —— 漏掉这一步就是"黑屏 + 恢复进度丢失"(见方法说明)。
-        try { _mp.Stop(); } catch { }
         // ★ 2026-11-01: 聆听态下重建必须继续播**音轨单流**(audioUrl 传 null) ——
         //   与 EnterListenMode/重播/切清晰度那几条路的既有约定一致; 传 _lastAudioUrl
         //   会把"视频+音轨"的组合塞回聆听态, 画面直接复活。
-        if (!PlayMedia(BuildMedia(url, _isListenMode ? null : _lastAudioUrl)))
-            WriteLibVLCDebug("[Seek] 重建后 play() 未被接受(远端流)\n");
+        _ = ReplaceNativeInputAsync(() =>
+        {
+            if (!PlayMedia(BuildMedia(url, _isListenMode ? null : _lastAudioUrl)))
+                WriteLibVLCDebug("[Seek] 重建后 play() 未被接受(远端流)\n");
+        });
     }
 
     /// <summary>进度条值变化: 点击轨道任意位置直接跳转(IsMoveToPointEnabled + 本处理器)。
@@ -4367,15 +4375,16 @@ public partial class PlayerWindow : FluentWindow
     {
         if (_closing || _switchingQuality || _isLive || _currentCid <= 0) return;
         _switchingQuality = true;
+        var generation = _loadGen;
+        var bvid = _currentBvid; var cid = _currentCid; var qn = _currentQn;
         try
         {
-            var generation=_loadGen;
             CancelRemuxPrefetch();
             var resumeMs = Math.Max(0, _mp.Time);
             ShowLoading("正在切换音质…");
             var (ok, err, main, backups, durMs, qualities, actualQn, audioUrl, remux,
                 audioTracks, actualAudio) =
-                await Svc.Api.GetPlayUrlAsync(_currentBvid, _currentCid, _currentQn, quality);
+                await Svc.Api.GetPlayUrlAsync(bvid, cid, qn, quality);
             if (_closing || generation!=_loadGen) return;
             if (!ok || string.IsNullOrEmpty(main))
             {
@@ -4423,22 +4432,21 @@ public partial class PlayerWindow : FluentWindow
             _lastPlayUrl=main;_lastAudioUrl=audioUrl;_listenAudioUrl=audioUrl;
             _resumeAfterSwitchMs=resumeMs>0?resumeMs:0;
             Svc.Settings.Save();
-            try{_mp.Stop();}catch{}
-            var media = _isListenMode && !string.IsNullOrEmpty(audioUrl)?BuildMedia(audioUrl,null):BuildMedia(main,audioUrl);
-            if (!PlayMedia(media))
+            await ReplaceNativeInputAsync(() =>
             {
-                ShowFail("切换音质失败");
-                return;
-            }
+                var media = _isListenMode && !string.IsNullOrEmpty(audioUrl)?BuildMedia(audioUrl,null):BuildMedia(main,audioUrl);
+                if (!PlayMedia(media)) ShowFail("切换音质失败");
+            });
+            if (_closing || generation != _loadGen) return;
             FillQualityMenu(actualQn > 0 ? actualQn : _currentQn);
         }
         catch (Exception ex)
         {
-            ShowFail("切换音质失败: " + ex.Message);
+            if (!_closing && generation == _loadGen) ShowFail("切换音质失败: " + ex.Message);
         }
         finally
         {
-            _switchingQuality = false;
+            if (generation == _loadGen) _switchingQuality = false;
         }
     }
 
@@ -4613,6 +4621,8 @@ public partial class PlayerWindow : FluentWindow
         }
         if (_currentCid <= 0) return;
         _switchingQuality = true;
+        var generation = _loadGen;
+        var bvid = _currentBvid; var cid = _currentCid;
         try
         {
             var resumeMs = _mp.Time;
@@ -4623,14 +4633,14 @@ public partial class PlayerWindow : FluentWindow
 
             var (_, playErr, main, backups, _, qualities, actualQn, audioUrl, remux,
                 audioTracks, actualAudio) =
-                await Svc.Api.GetPlayUrlAsync(_currentBvid, _currentCid, qn, Svc.Settings.PreferredAudioQuality);
-            if (_closing) return;
+                await Svc.Api.GetPlayUrlAsync(bvid, cid, qn, Svc.Settings.PreferredAudioQuality);
+            if (_closing || generation != _loadGen) return;
 
             // 和首次加载同一套: 这一档已缓存就播本地, 没缓存就下完再播(单文件源: 跳转快、结尾完整)
-            var local = ShortVideoCache.TryGet(_currentBvid, actualQn, actualAudio);
+            var local = ShortVideoCache.TryGet(bvid, actualQn, actualAudio);
             if (local == null && ShortVideoCache.WorthCaching(remux))
                 local = await PrepareShortVideoAsync(remux!, actualQn);
-            if (_closing) return;
+            if (_closing || generation != _loadGen) return;
 
             var url = local ?? main;
             if (string.IsNullOrEmpty(url) && backups.Count > 0) url = backups[0];
@@ -4662,24 +4672,27 @@ public partial class PlayerWindow : FluentWindow
             _listenAudioUrl = audioUrl;
             // 必须先 Stop: LibVLC 3 里已有 input 在播时 play() 会被**直接忽略**,
             // 不 Stop 的话新 Media 根本不会起播 —— 这就是"切换清晰度没反应"
-            try { _mp.Stop(); } catch { }
             // ★ 聆听态下切清晰度: 仍然只播音轨(用户此刻要的是声音, 不该突然出画面再切回去)。
             //   没有可用音轨时退回整路播放, 至少不会什么都不播。
-            if (_isListenMode && !string.IsNullOrEmpty(_listenAudioUrl))
-                PlayMedia(BuildMedia(_listenAudioUrl!, null));
-            else
-                PlayMedia(BuildMedia(url!, _lastAudioUrl));
+            await ReplaceNativeInputAsync(() =>
+            {
+                if (_isListenMode && !string.IsNullOrEmpty(_listenAudioUrl))
+                    PlayMedia(BuildMedia(_listenAudioUrl!, null));
+                else
+                    PlayMedia(BuildMedia(url!, _lastAudioUrl));
+            });
+            if (_closing || generation != _loadGen) return;
             UpdatePlayButton();
         }
         catch (Exception ex)
         {
-            if (_closing) return;
+            if (_closing || generation != _loadGen) return;
             Svc.Toast.Show("切换清晰度失败: " + ex.Message);
             HideLoading();
         }
         finally
         {
-            _switchingQuality = false;
+            if (generation == _loadGen) _switchingQuality = false;
         }
     }
 
@@ -6603,8 +6616,7 @@ public partial class PlayerWindow : FluentWindow
         // 音轨是单流: audioUrl 传 null, 否则等于给音频文件再挂一条音频
         ShowLoading("正在切换到听视频…");
         _resumeAfterSwitchMs = _listenResumeMs;
-        try { _mp.Stop(); } catch { /* 已停/未起播 */ }
-        PlayMedia(BuildMedia(_listenAudioUrl!, null));
+        _ = ReplaceNativeInputAsync(() => PlayMedia(BuildMedia(_listenAudioUrl!, null)));
     }
 
     /// <summary>
@@ -6629,15 +6641,14 @@ public partial class PlayerWindow : FluentWindow
         if (string.IsNullOrEmpty(url))
         {
             // 没有可回溯的源: 只能停下(比播着一个不知道是什么的流强)
-            try { _mp.Stop(); } catch { }
+            _ = ReplaceNativeInputAsync(null);
             HideLoading();
             return;
         }
         ShowLoading("正在恢复视频…");
         _resumeAfterSwitchMs = _listenResumeMs;
-        try { _mp.Stop(); } catch { /* 已停 */ }
         // 本地文件是单文件源, 不能带 input-slave
-        PlayMedia(BuildMedia(url, _isLocalPlayback ? null : _lastAudioUrl));
+        _ = ReplaceNativeInputAsync(() => PlayMedia(BuildMedia(url, _isLocalPlayback ? null : _lastAudioUrl)));
     }
 
     /// <summary>
@@ -7437,10 +7448,7 @@ public partial class PlayerWindow : FluentWindow
         // Stop 会阻塞等待解码线程退出(约 1 秒), 所以先丢到后台线程。
         if (mp != null)
         {
-            await Task.Run(() =>
-            {
-                try { mp.Stop(); } catch { /* 可能已经停了 */ }
-            });
+            await ReplaceNativeInputAsync(null);
         }
 
         // 回到 UI 线程解绑(VideoView 是 DependencyObject, 只能在 UI 线程操作)

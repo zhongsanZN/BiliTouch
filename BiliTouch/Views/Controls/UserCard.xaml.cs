@@ -23,6 +23,6 @@ public partial class UserCard : UserControl
     {
         if (e.ChangedButton != MouseButton.Left) return;
         if (DataContext is not UserItem u || u.Mid <= 0) return;
-        Svc.Navigate.OpenUserSpace(u.Mid.ToString());
+        Svc.Navigate?.OpenUserSpace(u.Mid.ToString());
     }
 }

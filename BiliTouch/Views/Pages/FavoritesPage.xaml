@@ -80,6 +80,7 @@
                (第一版"裁剪 + 视觉树量宽"被删掉: 删除夹子后重算时视觉树给的是过期
                 宽度, 表现为"主条整个空了只剩按钮", 不可救药, 换集合划分。) -->
         <Grid Grid.Row="1" Margin="36,14,36,10"
+              IsEnabled="{Binding CanOperate}"
               Visibility="{Binding Folders.Count, Converter={StaticResource CountToVis}}">
             <Grid x:Name="FolderBarHost">
                 <Border HorizontalAlignment="Left"

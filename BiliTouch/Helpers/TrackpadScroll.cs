@@ -223,8 +223,9 @@ public static class TrackpadScroll
         {
             // Removing our frame callback does not remove a ScrollViewer command that
             // is already queued. Replace that command too when contact/navigation takes over.
-            if(motion.Active && Math.Abs(viewer.VerticalOffset-motion.Applied)>.01)
+            if(motion.Active && viewer.VerticalOffset != motion.Applied)
                 viewer.ScrollToVerticalOffset(viewer.VerticalOffset);
+            motion.Target = motion.Applied = motion.Observed = viewer.VerticalOffset;
             motion.Precision=false;
         }
         Stop(viewer);

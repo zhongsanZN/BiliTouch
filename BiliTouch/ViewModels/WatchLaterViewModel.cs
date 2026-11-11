@@ -30,6 +30,7 @@ namespace BiliTouch.ViewModels;
 /// </summary>
 public class WatchLaterViewModel : VideoListSelectionViewModel
 {
+    private SessionAccount _account = Svc.Session.CaptureAccount();
     private bool _loading;
     private string _error = "";
     private bool _isEditMode;
@@ -180,6 +181,15 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
 
         // 分帧铺卡片时每加一条都要刷新选择态(计数与全选按钮文案), 由基类统一挂接
         HookSelectionSource();
+        WeakEventManager<SessionManager, EventArgs>.AddHandler(Svc.Session,
+            nameof(SessionManager.AccountChanged), OnAccountChanged);
+    }
+
+    private void OnAccountChanged(object? sender, EventArgs e)
+    {
+        _account = Svc.Session.CaptureAccount();
+        Loading = Busy = false; BusyText = ""; IsEditMode = false; Reset();
+        if (!Svc.Session.HasLogin) Error = "稍后再看需要登录后查看";
     }
 
     // ------------------------------------------------------------ 加载
@@ -187,6 +197,7 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
     /// <summary>整表重载(服务端一次给全, 没有分页); 展示侧只铺第一页, 其余滚动加载。</summary>
     public async Task LoadAsync()
     {
+        if (!_account.IsCurrent) OnAccountChanged(null, EventArgs.Empty);
         if (Loading) return;
 
         if (!Svc.Session.HasLogin)
@@ -199,9 +210,11 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
         Loading = true;
         Error = "";
         IsEditMode = false;
+        var account = Svc.Session.CaptureAccount();
         try
         {
             var (ok, err, items, count) = await Svc.Api.GetWatchLaterAsync();
+            if (!account.IsCurrent) return;
             Reset();
             if (!ok || items == null)
             {
@@ -219,9 +232,12 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
         }
         finally
         {
-            Loading = false;
-            OnPropertyChanged(nameof(CountText));
-            RaiseSelection();
+            if (account.IsCurrent)
+            {
+                Loading = false;
+                OnPropertyChanged(nameof(CountText));
+                RaiseSelection();
+            }
         }
     }
 
@@ -245,6 +261,8 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
     private async Task RemoveOneAsync(VideoItem item)
     {
         if (Busy || item == null) return;
+        var account = Svc.Session.CaptureAccount();
+        if (!account.IsLoggedIn || !_account.IsCurrent || !_all.Contains(item)) return;
         if (item.Aid <= 0)
         {
             // 列表接口没给 avid 时移不掉(接口只认 aid), 明说而不是静默失败
@@ -257,6 +275,7 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
         try
         {
             var (ok, err) = await Svc.Api.RemoveWatchLaterAsync(item.Aid);
+            if (!account.IsCurrent) return;
             if (!ok)
             {
                 Svc.Toast.Show("移出失败: " + (err ?? "未知错误"));
@@ -268,8 +287,7 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
         }
         finally
         {
-            Busy = false;
-            BusyText = "";
+            if (account.IsCurrent) { Busy = false; BusyText = ""; }
         }
     }
 
@@ -277,6 +295,8 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
     private async Task RemoveSelectedAsync()
     {
         if (Busy) return;
+        var account = Svc.Session.CaptureAccount();
+        if (!account.IsLoggedIn || !_account.IsCurrent) return;
         var targets = Items.Where(x => x.IsSelected).ToList();
         if (targets.Count == 0)
         {
@@ -286,7 +306,7 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
 
         var r = MessageBox.Show($"确定要从「稍后再看」移出选中的 {targets.Count} 个视频吗?", "BiliTouch",
             MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (r != MessageBoxResult.Yes) return;
+        if (r != MessageBoxResult.Yes || !account.IsCurrent) return;
 
         Busy = true;
         var done = 0;
@@ -295,9 +315,11 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
         {
             foreach (var it in targets)
             {
+                if (!account.IsCurrent) return;
                 if (it.Aid <= 0) { fail++; continue; }
                 BusyText = $"正在移出 {done + fail + 1}/{targets.Count}…";
                 var (ok, _) = await Svc.Api.RemoveWatchLaterAsync(it.Aid);
+                if (!account.IsCurrent) return;
                 if (ok) { RemoveEverywhere(it); done++; if (_total > 0) _total--; }
                 else fail++;
             }
@@ -305,8 +327,7 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
         }
         finally
         {
-            Busy = false;
-            BusyText = "";
+            if (account.IsCurrent) { Busy = false; BusyText = ""; }
         }
 
         if (fail == 0) Svc.Toast.Show($"已移出 {done} 个视频");
@@ -319,6 +340,8 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
     private async Task ClearAllAsync()
     {
         if (Busy) return;
+        var account = Svc.Session.CaptureAccount();
+        if (!account.IsLoggedIn || !_account.IsCurrent) return;
         if (_all.Count == 0)
         {
             Svc.Toast.Show("稍后再看已经是空的");
@@ -328,7 +351,7 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
         var r = MessageBox.Show(
             "确定要清空**全部**「稍后再看」吗?\n\n这会删除账号下整个列表, 且无法撤销。",
             "BiliTouch", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (r != MessageBoxResult.Yes) return;
+        if (r != MessageBoxResult.Yes || !account.IsCurrent) return;
 
         Busy = true;
         BusyText = "正在清空…";
@@ -339,10 +362,10 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
         }
         finally
         {
-            Busy = false;
-            BusyText = "";
+            if (account.IsCurrent) { Busy = false; BusyText = ""; }
         }
 
+        if (!account.IsCurrent) return;
         if (!res.ok)
         {
             Svc.Toast.Show("清空失败: " + (res.err ?? "未知错误"));

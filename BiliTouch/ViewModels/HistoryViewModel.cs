@@ -35,6 +35,8 @@ public class HistoryViewModel : VideoListSelectionViewModel
     private bool _hasMore = true;
     private string _error = "";
     private int _pn;
+    private SessionAccount _account = Svc.Session.CaptureAccount();
+    private int _operationGeneration;
 
     private bool _isEditMode;
     private bool _busy;
@@ -186,6 +188,18 @@ public class HistoryViewModel : VideoListSelectionViewModel
         // 条数变化要同步到界面上的计数与"全选"按钮文案。
         // 只能监听**增删**, IsSelected 的变化得逐条监听 —— 集合本身不会因此收到通知。
         HookSelectionSource();
+        WeakEventManager<SessionManager, EventArgs>.AddHandler(Svc.Session,
+            nameof(SessionManager.AccountChanged), OnAccountChanged);
+    }
+
+    private void OnAccountChanged(object? sender, EventArgs e)
+    {
+        _account = Svc.Session.CaptureAccount();
+        BumpGeneration(); ++_operationGeneration;
+        Loading = LoadingMore = Busy = false; BusyText = "";
+        IsEditMode = false; Entries.Clear(); _pn = 0; HasMore = true;
+        Svc.Api.ResetLiveHistoryCursor();
+        Error = Svc.Session.HasLogin ? "" : "云端历史需要登录后查看";
     }
 
     // ------------------------------------------------------------ 加载
@@ -193,6 +207,7 @@ public class HistoryViewModel : VideoListSelectionViewModel
     /// <summary>加载历史(首页或翻页)。视频 / 直播走两个不同接口, 由 <see cref="Kind"/> 分流。</summary>
     public async Task LoadAsync(bool reset)
     {
+        if (!_account.IsCurrent) OnAccountChanged(null, EventArgs.Empty);
         if (!Svc.Session.HasLogin)
         {
             Error = "云端历史需要登录后查看";
@@ -203,7 +218,6 @@ public class HistoryViewModel : VideoListSelectionViewModel
 
         if (reset)
         {
-            _pn = 1;
             Entries.Clear();
             Error = "";
             Loading = true;
@@ -215,7 +229,6 @@ public class HistoryViewModel : VideoListSelectionViewModel
         }
         else
         {
-            _pn++;
             LoadingMore = true;
         }
 
@@ -223,20 +236,22 @@ public class HistoryViewModel : VideoListSelectionViewModel
         //   请求在途时用户可能已经切到另一类了, 那样就会拿新类别去过滤旧响应(见 _generation)。
         var gen = _generation;
         var kind = _kind;
-        var page = _pn;
+        var page = reset ? 1 : _pn + 1;
+        var account = Svc.Session.CaptureAccount();
 
         var (ok, err, items) = kind == ContentKind.Live
             ? await Svc.Api.GetLiveHistoryAsync(page)
             : await Svc.Api.GetCloudHistoryAsync(page);
 
         // 这一代已经被更新的一次加载取代了: 整包丢弃(别动 Loading —— 那是新那次的状态)
-        if (gen != _generation) return;
+        if (gen != _generation || !account.IsCurrent) return;
 
         Loading = false;
         LoadingMore = false;
 
         if (ok && items != null)
         {
+            _pn = page;
             // 视频按 bvid 过滤(没有 bvid 的条目播不了); 直播没有 bvid, 按房间号过滤。
             foreach (var it in items.Where(x => kind == ContentKind.Live
                                                     ? x.RoomId > 0
@@ -269,6 +284,8 @@ public class HistoryViewModel : VideoListSelectionViewModel
     private async Task DeleteSelectedAsync()
     {
         if (Busy) return;
+        var account = Svc.Session.CaptureAccount();
+        if (!account.IsLoggedIn) return;
         var targets = VisibleItems().Where(x => x.IsSelected).ToList();
         if (targets.Count == 0)
         {
@@ -278,8 +295,9 @@ public class HistoryViewModel : VideoListSelectionViewModel
 
         var r = MessageBox.Show($"确定要删除选中的 {targets.Count} 条观看记录吗?", "BiliTouch",
             MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (r != MessageBoxResult.Yes) return;
+        if (r != MessageBoxResult.Yes || !account.IsCurrent) return;
 
+        var operation = ++_operationGeneration;
         Busy = true;
         var done = 0;
         var fail = 0;
@@ -287,6 +305,7 @@ public class HistoryViewModel : VideoListSelectionViewModel
         {
             foreach (var it in targets)
             {
+                if (!account.IsCurrent) return;
                 // 两类内容的目标 id 不同: 视频用 avid, 直播用房间号。
                 // kid 前缀也跟着变(archive_/live_), 见 ApiClient.DeleteHistoryAsync。
                 // ★ 用**条目自己**的类型而不是当前 _kind: targets 是进循环前就抓下来的快照,
@@ -301,14 +320,14 @@ public class HistoryViewModel : VideoListSelectionViewModel
                 }
                 BusyText = $"正在删除 {done + fail + 1}/{targets.Count}…";
                 var (ok, _) = await Svc.Api.DeleteHistoryAsync(targetId, itemKind);
+                if (!account.IsCurrent) return;
                 if (ok) { Entries.Remove(it); done++; }
                 else fail++;
             }
         }
         finally
         {
-            Busy = false;
-            BusyText = "";
+            if (operation == _operationGeneration) { Busy = false; BusyText = ""; }
         }
 
         if (fail == 0) Svc.Toast.Show($"已删除 {done} 条记录");
@@ -326,6 +345,8 @@ public class HistoryViewModel : VideoListSelectionViewModel
     private async Task ClearAllAsync()
     {
         if (Busy) return;
+        var account = Svc.Session.CaptureAccount();
+        if (!account.IsLoggedIn) return;
         if (Entries.Count == 0 && !HasMore)
         {
             Svc.Toast.Show("历史已经是空的");
@@ -339,8 +360,9 @@ public class HistoryViewModel : VideoListSelectionViewModel
         var r = MessageBox.Show(
             "确定要清空**全部**云端观看历史吗?\n\n这会删除账号下所有观看记录(视频与直播都包含, 不只是当前已加载的), 且无法撤销。",
             "BiliTouch", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (r != MessageBoxResult.Yes) return;
+        if (r != MessageBoxResult.Yes || !account.IsCurrent) return;
 
+        var operation = ++_operationGeneration;
         Busy = true;
         BusyText = "正在清空…";
         (bool ok, string? err) res;
@@ -350,10 +372,10 @@ public class HistoryViewModel : VideoListSelectionViewModel
         }
         finally
         {
-            Busy = false;
-            BusyText = "";
+            if (operation == _operationGeneration) { Busy = false; BusyText = ""; }
         }
 
+        if (!account.IsCurrent) return;
         if (!res.ok)
         {
             Svc.Toast.Show("清空失败: " + (res.err ?? "未知错误"));

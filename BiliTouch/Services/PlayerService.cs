@@ -81,7 +81,7 @@ public class PlayerService
 
     /// <summary>播放视频(复用窗口)</summary>
     public void PlayVideo(string bvid, string? title = null)
-        => Play(title, win => win.PlayVideo(bvid));
+        => Play(title, win => win.PlayVideo(bvid), bvid);
 
     /// <summary>
     /// Open an independent live window. VOD comments, actions and timeline stay in PlayerWindow.
@@ -124,25 +124,25 @@ public class PlayerService
     /// —— 窗口标题只用到 title。已删除, 别再加回来: 一个从不参与行为的参数会让人以为
     /// 播放器拿得到封面(比如想据此设置窗口图标), 而实际什么也没发生。
     /// </summary>
-    private void Play(string? title, Action<PlayerWindow> start)
+    private int _openGeneration;
+    private void Play(string? title, Action<PlayerWindow> start, string? seamlessBvid = null)
     {
+        var generation = ++_openGeneration;
         var live = _liveWindow; _liveWindow = null; live?.Close();
-        var win = GetOrCreateWindow();
+        var win = GetOrCreateWindow(seamlessBvid);
         if (win == null) return;
 
-        start(win);
-        if (!string.IsNullOrEmpty(title)) win.Title = title + " - BiliTouch";
+        win.PresentPrepared(() =>
+        {
+            if (generation != _openGeneration || win.IsClosing) return;
+            if (!win.IsVisible) win.Show();
+            start(win);
+            if (!string.IsNullOrEmpty(title)) win.Title = title + " - BiliTouch";
+            win.Activate();
+        });
 
-        // ★★★ 2026-11-04 删除这里的"强制显形兜底"(它曾是桌面上那块黑的来源之一)。
-        //
-        //   原来这里排了一个 Dispatcher 回调, 里面有:
-        //       if (!win.IsVisible) win.Show();
-        //       win.Topmost = true;  win.Topmost = false;
-        //   问题: 窗口的显示状态在 GetOrCreateWindow 里已经处理好了(该 Show 的 Show、
-        //   该最大化的最大化)。这里再 Show 一次纯属重复, 而且 Topmost 一闪会让窗口
-        //   抢到最前面 —— 配合 HwndHost(原生子窗口不受 Opacity 影响), 就会在桌面上
-        //   闪出一块黑色视频区。
-        //   ⇒ 显形只有一个入口: GetOrCreateWindow。这里什么都不做。
+        // Shared entry waits for the source-card surface to render before Show().
+        // Unanchored and local-file playback use the same callback immediately.
     }
 
     /// <summary>
@@ -163,7 +163,7 @@ public class PlayerService
         return r.IntersectsWith(wa) && r.Width > 0 && r.Height > 0;
     }
 
-    private PlayerWindow? GetOrCreateWindow()
+    private PlayerWindow? GetOrCreateWindow(string? seamlessBvid)
     {
         // 关键: 正在关闭的窗口不能复用。
         // 关闭流程是"先隐藏窗口 -> 后台拆解原生资源 -> 最后才真正 Close()"。
@@ -184,8 +184,7 @@ public class PlayerService
             {
                 reuse.ShowActivated = true;
                 reuse.WindowState = WindowState.Maximized;
-                reuse.PrepareSeamlessPreShow();   // ★ 先定状态
-                reuse.Show();                                 // ★ 再显示
+                if (seamlessBvid != null) reuse.PrepareSeamlessPreShow();
             }
             else if (reuse.WindowState == WindowState.Minimized)
             {
@@ -205,7 +204,7 @@ public class PlayerService
                 reuse.Left = wa0.Left + Math.Max(0, (wa0.Width - 1280) / 2);
                 reuse.Top = wa0.Top + Math.Max(0, (wa0.Height - 760) / 2);
             }
-            reuse.Activate();
+            if (reuse.IsVisible) reuse.Activate();
             return reuse;
         }
 
@@ -234,8 +233,7 @@ public class PlayerService
         //     那一下闪动正好落在视频起播的画面上。
         win.ShowActivated = true;
         win.WindowState = WindowState.Maximized;
-        win.PrepareSeamlessPreShow();
-        win.Show();
+        if (seamlessBvid != null) win.PrepareSeamlessPreShow();
         return win;
     }
 }

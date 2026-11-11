@@ -29,7 +29,8 @@ public static class GraphicsAdapters
    }
   }catch{}finally{if(factory!=IntPtr.Zero)Marshal.Release(factory);}return result.GroupBy(a=>a.Id).Select(g=>g.First()).ToArray();
  }
- public static GraphicsAdapter? Selected=>All.FirstOrDefault(a=>a.Id==SettingsStore.Instance.EnhancementAdapterId)??All.FirstOrDefault();
+ public static GraphicsAdapter? Selected=>All.FirstOrDefault(a=>a.Id==SettingsStore.Instance.DecoderAdapterId)
+     ??All.FirstOrDefault(a=>a.Id==SettingsStore.Instance.EnhancementAdapterId)??All.FirstOrDefault();
  // VLC 3 creates the D3D11 device itself. Use the Windows per-application preference,
  // never pretend that a media option can select an arbitrary DXGI adapter.
  public static string ApplyApplicationPreference(string id)

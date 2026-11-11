@@ -20,3 +20,30 @@ jobs:
         run: dotnet build BiliTouch/BiliTouch.csproj -c Release --no-restore
       - name: Compile WPF regression harness
         run: dotnet build tests/TouchTests/TouchTests.csproj -c Release
+      - name: Run isolated foundation checks
+        run: |
+          dotnet tests/TouchTests/bin/Release/net10.0-windows/TouchTests.dll --foundation
+          $result = $LASTEXITCODE
+          Copy-Item artifacts/touch-tests/result.txt artifacts/touch-tests/foundation-result.txt
+          exit $result
+      - name: Run rate-limit checks
+        run: |
+          dotnet tests/TouchTests/bin/Release/net10.0-windows/TouchTests.dll --rate-limit
+          $result = $LASTEXITCODE
+          Copy-Item artifacts/touch-tests/result.txt artifacts/touch-tests/rate-limit-result.txt
+          exit $result
+      - name: Run playback foundation checks
+        run: |
+          foreach ($group in @('decoder-settings', 'vmem-buffers', 'scroll-boundaries', 'message-unread')) {
+            dotnet tests/TouchTests/bin/Release/net10.0-windows/TouchTests.dll "--$group"
+            $result = $LASTEXITCODE
+            Copy-Item artifacts/touch-tests/result.txt "artifacts/touch-tests/$group-result.txt"
+            if ($result -ne 0) { exit $result }
+          }
+      - name: Upload regression results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundation-and-playback-checks
+          path: artifacts/touch-tests/*result.txt
+          if-no-files-found: ignore

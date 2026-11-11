@@ -159,6 +159,9 @@ internal static class MotionPerformanceTests
         }
         internal void Send(int color)
         {
+            var planes = Marshal.AllocHGlobal(IntPtr.Size);
+            try { Pixels = (IntPtr)Call(_view, "OnLock", Opaque, planes)!; }
+            finally { Marshal.FreeHGlobal(planes); }
             for (var row = 0; row < Height; row++)
                 for (var col = 0; col < Width; col++) Marshal.WriteInt32(Pixels, row * Pitch + col * 4, color);
             Call(_view, "OnDisplay", Opaque, Pixels);
@@ -174,6 +177,8 @@ internal static class MotionPerformanceTests
     private static void TestFrameOwnership(Action<bool, string> check)
     {
         using var view = new VmemVideoView();
+        var host = new Window { Width = 400, Height = 300, Content = view, ShowActivated = false };
+        host.Show(); Pump(40);
         using var oldFormat = new Format(view, 13, 7); // Non-aligned width tests row-stride conversion.
         check(oldFormat.Pixels.ToInt64() % 32 == 0 && oldFormat.Pitch % 32 == 0 && oldFormat.Lines % 32 == 0,
             "native planes, pitches and lines satisfy LibVLC alignment");
@@ -216,6 +221,7 @@ internal static class MotionPerformanceTests
         }
         Pump(40);
         check(largeView.Source == null, "disposed video view cannot be revived by a queued upload");
+        host.Close();
     }
 
     private static void TestDenseDanmaku(Action<bool, string> check)
@@ -242,8 +248,10 @@ internal static class MotionPerformanceTests
 
             var fixture = System.IO.Path.GetFullPath("artifacts/dock-color.mp4");
             if (!System.IO.File.Exists(fixture)) throw new System.IO.FileNotFoundException("dense-dispatch playback fixture", fixture);
-            player.PlayLocalFile(fixture); Pump(800);
+            player.PlayLocalFile(fixture);
             var media = (LibVLCSharp.Shared.MediaPlayer)player.GetType().GetField("_mp", Hidden)!.GetValue(player)!;
+            var startDeadline = Stopwatch.StartNew();
+            while ((!media.IsPlaying || media.Length <= 0) && startDeadline.ElapsedMilliseconds < 8000) Pump(30);
             media.Mute = true;
             check(media.IsPlaying && media.Length > 0, "dense-dispatch regression uses actual local playback");
             var now = media.Time / 1000.0;

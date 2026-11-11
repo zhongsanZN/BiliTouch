@@ -16,7 +16,7 @@
 #
 # 注意: 这里的默认版本号要跟 App.AppVersion / csproj 的 <Version> / installer.iss 的
 # MyAppVersion 一起改 —— 它只决定 zip 的文件名, 不参与程序内部显示。
-param([string]$Version = "0.2.18-fix1")
+param([string]$Version = "0.3.1", [string]$Configuration = "Release")
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -63,13 +63,13 @@ foreach ($dir in @($PortableDir, $InstallerDir)) {
 }
 
 Write-Host "== 1/5 便携版(自包含 + 压缩) =="
-dotnet publish (Join-Path $Root "BiliTouch\BiliTouch.csproj") -c Release -r win-x64 `
+dotnet publish (Join-Path $Root "BiliTouch\BiliTouch.csproj") -c $Configuration -p:Optimize=true -r win-x64 `
     --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false `
     -o $PortableDir
 if ($LASTEXITCODE -ne 0) { throw "便携版发布失败" }
 
 Write-Host "== 2/5 安装器载荷(依赖 .NET 10+ 桌面运行时) =="
-dotnet publish (Join-Path $Root "BiliTouch\BiliTouch.csproj") -c Release -r win-x64 `
+dotnet publish (Join-Path $Root "BiliTouch\BiliTouch.csproj") -c $Configuration -p:Optimize=true -r win-x64 `
     --self-contained false -p:PublishSingleFile=false `
     -o $InstallerDir
 if ($LASTEXITCODE -ne 0) { throw "安装器载荷发布失败" }

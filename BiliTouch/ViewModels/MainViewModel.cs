@@ -35,6 +35,7 @@ public class MainViewModel : ObservableObject
     private bool _isLoggedIn;
     private string _userName = "";
     private string _userFace = "";
+    private int _userGeneration;
 
     public PageKey Current
     {
@@ -50,6 +51,7 @@ public class MainViewModel : ObservableObject
     public bool IsLoggedIn { get => _isLoggedIn; private set => SetProperty(ref _isLoggedIn, value); }
     public string UserName { get => _userName; private set => SetProperty(ref _userName, value); }
     public string UserFace { get => _userFace; private set => SetProperty(ref _userFace, value); }
+    public MessageUnreadService MessageUnread => Svc.MessageUnread;
 
     public event Action? PageChanged;
     public event Action? UserChanged;
@@ -60,20 +62,18 @@ public class MainViewModel : ObservableObject
     {
         NavigateCommand = new RelayCommand(
             p => { if (p is PageKey k) Navigate(k); });
-        SessionManager.Instance.Changed += OnSessionChanged;
+        WeakEventManager<SessionManager, EventArgs>.AddHandler(Svc.Session,
+            nameof(SessionManager.AccountChanged), OnSessionChanged);
         _ = RefreshUserAsync();
     }
 
-    private void OnSessionChanged()
+    private void OnSessionChanged(object? sender, EventArgs e)
     {
+        ++_userGeneration;
+        UserName = UserFace = "";
         IsLoggedIn = SessionManager.Instance.HasLogin;
+        UserChanged?.Invoke();
         if (IsLoggedIn) _ = RefreshUserAsync();
-        else
-        {
-            UserName = "";
-            UserFace = "";
-            UserChanged?.Invoke();
-        }
     }
 
     public void Navigate(PageKey key)
@@ -105,6 +105,8 @@ public class MainViewModel : ObservableObject
     /// <summary>刷新登录用户信息(nav 接口)</summary>
     public async System.Threading.Tasks.Task RefreshUserAsync()
     {
+        var generation = ++_userGeneration;
+        var account = Svc.Session.CaptureAccount();
         try
         {
             var has = SessionManager.Instance.HasLogin;
@@ -118,6 +120,7 @@ public class MainViewModel : ObservableObject
             }
 
             var (_, _, user) = await Svc.Api.GetUserStateAsync();
+            if (!account.IsCurrent || generation != _userGeneration) return;
             if (user is { IsLogin: true })
             {
                 UserName = user.Name;

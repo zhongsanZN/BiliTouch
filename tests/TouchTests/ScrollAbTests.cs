@@ -17,7 +17,7 @@ using BiliTouch.Views.Pages;
 //   Run()      keeps one fixture and toggles global rendering settings.
 //   Surfaces() keeps the user's settings and swaps the surface.
 // Each PRESENT line therefore differs from the one before it by exactly one thing.
-internal static class ScrollAbTests
+internal static partial class ScrollAbTests
 {
     private enum CardCache { Xaml, Off, DeviceScale }
 
@@ -80,13 +80,16 @@ internal static class ScrollAbTests
             Console.WriteLine($"MAIN-WINDOW items={list.Items.Count} filled in {limit.ElapsedMilliseconds}ms " +
                               $"row={(Descendants<VirtualizingCardWallPanel>(home).FirstOrDefault()?.RowHeight ?? 0):F0} " +
                               $"scrollable={viewport.ScrollableHeight:F0} scale={UiScale.Factor:F2}");
-            var blank = RealCovers(artifacts, 240, blankCovers: true);
+            var panel = Descendants<VirtualizingCardWallPanel>(viewport).First();
+            Console.WriteLine($"MAIN-GEOMETRY window={main.ActualWidth:F0}x{main.ActualHeight:F0} viewport={viewport.ViewportWidth:F0}x{viewport.ViewportHeight:F0} " +
+                $"panel={panel.ActualWidth:F0} columns={CardWall.GetColumns(panel)} fixed={CardWall.FixedColumns} aspect={CardWall.GetAspect(panel):F3}");
             var decorated = (UIElement)main.FindName("SharedHeaderSurface")!;
             Settle(main, viewport);
             Measure(main, viewport, "real MainWindow home");
+            if (Environment.GetCommandLineArgs().Contains("--main-fast")) { check(true, "main-window scroll measurement completed"); return; }
             Measure(main, viewport, "no covers",
-                () => Reload(vm, blank),
-                () => Reload(vm, items));
+                () => SetCoversHidden(main, true),
+                () => SetCoversHidden(main, false));
             Measure(main, viewport, "shared header hidden",
                 () => decorated.Visibility = Visibility.Collapsed,
                 () => decorated.Visibility = Visibility.Visible);
@@ -268,6 +271,13 @@ internal static class ScrollAbTests
     /// <summary>Cards realized while a variant is active have to get that variant's cache mode too.</summary>
     private static void ApplyCache(VideoCard card)
     {
+        if (card.FindName("CoverBox") is Border image && card.DataContext is VideoItem item)
+        {
+            var source = _coversHidden ? null : item.Cover;
+            if (Cover.GetSource(image) != source) Cover.SetSource(image, source);
+        }
+        if (_coverScaling.HasValue && card.FindName("CoverBox") is Border cover)
+            RenderOptions.SetBitmapScalingMode(cover, _coverScaling.Value);
         switch (_cardCache)
         {
             case CardCache.Off:
@@ -285,6 +295,13 @@ internal static class ScrollAbTests
                 card.ClearValue(UIElement.CacheModeProperty);
                 break;
         }
+    }
+
+    private static bool _coversHidden;
+    private static void SetCoversHidden(Window window, bool hidden)
+    {
+        _coversHidden = hidden;
+        foreach (var card in Descendants<VideoCard>(window)) ApplyCache(card);
     }
 
     // ---------------------------------------------------------------- settings snapshot

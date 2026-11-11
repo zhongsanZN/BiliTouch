@@ -319,22 +319,26 @@ public class SettingsStore
     ///   那边是可空类型, 缺字段(null)在 ApplySanitized 里被归一成 true。
     /// </summary>
     public bool HardwareAccelerationEnabled { get; set; } = true;
+    public string DecoderAdapterId { get; private set; } = "auto";
+    public void SetDecoderAdapter(string? id)
+    {
+        var normalized = VideoDecode.Normalize(id);
+        if (DecoderAdapterId == normalized) return;
+        DecoderAdapterId = normalized;
+        Save();
+    }
 
     /// <summary>
-    /// 实验性：vmem 自定义输出（视频变成普通 WPF 元素）。
-    /// ★ 默认 关 —— 保守走原来的 VideoView；用户想试「画面本体变形」再自己开。
-    /// ★ 与 Models.AppSettings.UseVmemRenderer 是读写契约, 两处必须一致;
-    ///   那边可空, 缺字段(null)在这里归一成 false。
-    /// ★ 只影响**下一个打开的播放器窗口**(视频宿主在窗口构造时定死), 不用重启整个应用。
+    /// 视频默认由 WPF 合成，保留圆角和连续变形。原生宿主仅供内部诊断对照。
+    /// 此项不再从用户配置读取，也不再显示为可选设置。
     /// </summary>
-    public bool UseVmemRenderer { get; set; }
+    public bool UseVmemRenderer { get; private set; } = true;
 
-    /// <summary>改 vmem 渲染开关并落盘。</summary>
+    /// <summary>内部诊断可临时对照原生输出，不写入用户配置。</summary>
     public void SetVmemRenderer(bool value)
     {
         if (UseVmemRenderer == value) return;
         UseVmemRenderer = value;
-        Save();
     }
 
     /// <summary>
@@ -620,6 +624,8 @@ public class SettingsStore
         // ★ 默认画质要 Normalize: 手改过的配置可能有 0 / 已下线的档位 / 串到别处
         //   的值, 直接流进取流请求会变成一个谁也不认识的 qn(表现为画质莫名其妙)。
         PreferredQualityQn = QualityPreference.Normalize(s.PreferredQualityQn);
+        PreferredAudioQuality = Enum.IsDefined(s.PreferredAudioQuality)
+            ? s.PreferredAudioQuality : Models.AudioQuality.Auto;
 
         // ★ 算法选择已删除(2026-10-03): 固定网页版, 不再从配置读 ——
         //   老配置里存着 App 的会被纠正(那一档实测对第三方客户端不提供个性化),
@@ -644,9 +650,10 @@ public class SettingsStore
         //   null 必须按"开"处理 —— bool 默认的 false 会被误读成"用户主动关了",
         //   升级后全体老用户静默掉进软件渲染, 那是比崩溃更难查的性能回归。
         HardwareAccelerationEnabled = s.HardwareAccelerationEnabled ?? true;
+        DecoderAdapterId = VideoDecode.Normalize(s.DecoderAdapterId ?? s.EnhancementAdapterId);
 
-        // ★ vmem 渲染(实验): 老配置缺字段 ⇒ null ⇒ 按"关"处理(保守)。
-        UseVmemRenderer = s.UseVmemRenderer ?? false;
+        // All profiles use composited video, including legacy profiles with false.
+        UseVmemRenderer = true;
 
         // ★ CdnManualId 要校验: 老配置里的 Id 可能已从候选表下线,
         //   留着它会让"手动模式"指到一条不存在的线路(见 CdnService.SelectUrlAsync)。
@@ -857,7 +864,7 @@ public class SettingsStore
         SkippedVersion = SkippedVersion,
         NoLogin1080P = NoLogin1080P,
         HardwareAccelerationEnabled = HardwareAccelerationEnabled,
-        UseVmemRenderer = UseVmemRenderer,
+        DecoderAdapterId = DecoderAdapterId,
         CdnMode = CdnMode,
         CdnManualId = CdnManualId,
         BlockPcdn = BlockPcdn,

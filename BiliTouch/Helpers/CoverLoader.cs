@@ -146,11 +146,12 @@ public static class CoverLoader
     /// 为什么按"字节预算"而不是"条数": 条数上限完全约束不住内存 —— 同样是 250 条,
     /// 全是小头像可能只有十几 MB, 全是 1280 宽的封面能到两百多 MB。按解码后的像素字节算才准。
     ///
-    /// 2026-09-24 从 48MB 收到 32MB: 配合"解码宽度跟着 DPI 走"(见 Cover.LoadAsync),
-    /// 单张封面的开销已经降到原来的一半左右, 32MB 仍能装下 120 张以上大封面,
-    /// 足够覆盖"来回滚一屏"的复用; 而首页四个 tab 全点一遍时的峰值内存明显下降。
+    /// 225% DPI 的封面通常落在 720/960 档，每张约 1.1/2 MB，32 MB 只够
+    /// 十几至二十几张，装不下当前虚拟化视口及首页预热，回滚会反复解码。
+    /// 可用内存至少 4 GB 时保留 96 MB；低内存环境仍限制为 32 MB。
     /// </summary>
-    private const long MaxCacheBytes = 32L * 1024 * 1024;
+    private static readonly long MaxCacheBytes =
+        (GC.GetGCMemoryInfo().TotalAvailableMemoryBytes >= 4L * 1024 * 1024 * 1024 ? 96L : 32L) * 1024 * 1024;
 
     /// <summary>条数上限作为第二道保险(极端情况下大量小图也不至于让字典无限增长)</summary>
     private const int MaxCacheCount = 400;
@@ -242,10 +243,9 @@ public static class CoverLoader
             foreach (var step in WidthSteps)
                 if (step > width && step <= MaxCoverDecodeWidth &&
                     MemCache.TryGetValue($"{url}|w{step}", out hit!)) return true;
-        // 如果有任何已解码的尺寸（即使稍小），也直接复用，避免重新走冷解码和淡入
-        foreach (var step in WidthSteps)
-            if (MemCache.TryGetValue($"{url}|w{step}", out hit!)) return true;
-        if (MemCache.TryGetValue(url, out hit!)) return true;
+        // Only full-size originals may satisfy every requested size. A smaller
+        // thumbnail must not masquerade as a large decode (or an original preview).
+        if (width > 0 && MemCache.TryGetValue(url, out hit!)) return true;
         hit = null!;
         return false;
     }
@@ -442,7 +442,8 @@ public static class CoverLoader
             bi.CacheOption = BitmapCacheOption.OnLoad;
             bi.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
             if (effectiveDecodeWidth > 0) bi.DecodePixelWidth = effectiveDecodeWidth;
-            bi.StreamSource = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            bi.StreamSource = stream;
             bi.EndInit();
             // 必须 Freeze: 位图是在后台线程创建的, 只有冻结后才能安全地被 UI 线程使用
             bi.Freeze();
@@ -490,7 +491,8 @@ public static class CoverLoader
             bi.CacheOption = BitmapCacheOption.OnLoad;   // 立刻读完, 之后 MemoryStream 可以释放
             bi.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
             if (effectiveDecodeWidth > 0) bi.DecodePixelWidth = effectiveDecodeWidth;
-            bi.StreamSource = new MemoryStream(bytes, writable: false);
+            using var stream = new MemoryStream(bytes, writable: false);
+            bi.StreamSource = stream;
             bi.EndInit();
             // 必须 Freeze: 位图是在后台线程创建的, 只有冻结后才能安全地被 UI 线程使用
             bi.Freeze();
@@ -706,7 +708,7 @@ public static class Cover
         // ★ 宽度还量不出来时**等一等**, 而不是退化成固定 480(2026-09-28 改):
         //   DataTemplate 一实例化绑定就生效, 那一刻 ActualWidth 必然还是 0 —— 于是
         //   "一屏几百张卡片全部按 480 解码", 而按真实宽度(VideoCard 236px → 320 档)其实
-        //   只要 1/2.25 的内存。更要命的是 CoverLoader 那 32MB 的缓存上限**管不到它**:
+        //   只要 1/2.25 的内存。更要命的是 CoverLoader 的缓存上限**管不到它**:
         //   卡片自己攥着 ImageBrush/BitmapImage 的引用, 缓存把条目挤掉位图也释放不掉。
         //   这正是「稍后再看」两三百条一打开内存爆掉、加载也卡的直接原因。
         //   等到 SizeChanged 报出真实宽度再解码; 元素中途被卸载就放弃, 不留挂起的等待。

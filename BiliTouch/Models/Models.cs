@@ -1422,6 +1422,7 @@ public class BlockedUpEntry
 /// <summary>应用设置</summary>
 public class AppSettings
 {
+    public string? DecoderAdapterId { get; set; }
     public bool ExperimentalVideoEnhancement {get;set;}
     public bool VideoEnhancementActive {get;set;}=true;
     public string VideoEnhancementMode {get;set;}="自动厂商增强";
@@ -1689,18 +1690,6 @@ public class AppSettings
     /// ★ 与 Services/SettingsStore.cs 的同名属性是读写契约, 两处必须一致。
     /// </summary>
     public bool? HardwareAccelerationEnabled { get; set; }
-
-    /// <summary>
-    /// 实验性：用 vmem 自定义输出把视频画成普通 WPF 元素（而不是 HwndHost）。
-    ///
-    /// ★ 这是「小窗动画能做到澎湃OS 那种画面本体变形」的**唯一**前提：
-    ///   `VideoView` 是 HwndHost，不参与 WPF 合成，不能圆角/阴影/连续缩放。
-    /// ★ 可空：老配置没有这个字段时按 **关** 处理（保守，走原来的 VideoView）。
-    /// ★ 代价：vmem 走软件解码 + BGRA 转换。1080p60 实测 59.8fps / 每帧约 1ms，
-    ///   但 4K 的每帧字节数是 1080p 的 4 倍，未必扛得住 —— 所以默认关，用户自己开。
-    /// ★ 与 Services/SettingsStore.cs 的同名属性是读写契约, 两处必须一致。
-    /// </summary>
-    public bool? UseVmemRenderer { get; set; }
 
     /// <summary>
     /// 用户点过「跳过此版本」的版本号(如 "1.2.0")。空 = 没跳过任何版本。

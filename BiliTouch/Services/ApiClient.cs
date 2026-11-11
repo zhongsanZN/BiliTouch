@@ -85,12 +85,15 @@ public partial class ApiClient
     private async Task<(int code, string? msg, JsonElement? data)> GetJsonAsync(
         string url, Dictionary<string, string>? ps, bool sign = false, bool allowRetry = true,
         string? referer = null, bool fingerprint = true, string payloadKey = "data",
-        int riskRetries = RiskRetryMax)
+        int riskRetries = RiskRetryMax, SessionAccount? requestAccount = null)
     {
-        ps ??= new Dictionary<string, string>();
+        var account = requestAccount ?? SessionManager.Instance.CaptureAccount();
+        if (!account.IsCurrent) return (-101, "账号已切换，请重试", null);
+        ps = ps != null ? new Dictionary<string, string>(ps) : new Dictionary<string, string>();
         if (sign)
         {
             var mixin = await GetMixinKeyAsync();
+            if (!account.IsCurrent) return (-101, "账号已切换，请重试", null);
             if (mixin == null) return (-400, "WBI 密钥获取失败", null);
             SignParams(ps, mixin);
         }
@@ -113,8 +116,10 @@ public partial class ApiClient
             req.Headers.TryAddWithoutValidation("Referer", referer ?? "https://www.bilibili.com/");
 
             await ThrottleAsync();
+            if (!account.IsCurrent) return (-101, "账号已切换，请重试", null);
             using var resp = await _http.SendAsync(req);
             text = await resp.Content.ReadAsStringAsync();
+            if (!account.IsCurrent) return (-101, "账号已切换，请重试", null);
             int code;
             string? msg;
             JsonElement? data;
@@ -144,7 +149,8 @@ public partial class ApiClient
                 //   不该留下设备痕迹)。它一旦撞上 -403, 重试就会突然**带上**指纹, 把"匿名访问"
                 //   变成"带设备指纹访问", 正好与该调用点的用意相反。参数原样传下去才不会走样。
                 return await GetJsonAsync(url, ps, sign: true, allowRetry: false,
-                    referer: referer, fingerprint: fingerprint, payloadKey: payloadKey);
+                    referer: referer, fingerprint: fingerprint, payloadKey: payloadKey,
+                    requestAccount: account);
             }
 
             // ★★★ -412「request was banned」= **IP 级限流**, 等一下重试即可(2026-10-17 修)
@@ -175,7 +181,7 @@ public partial class ApiClient
                 await Task.Delay(RiskBackoffMs * riskRetries);
                 return await GetJsonAsync(url, ps, sign: sign, allowRetry: allowRetry,
                     referer: referer, fingerprint: fingerprint, payloadKey: payloadKey,
-                    riskRetries: riskRetries - 1);
+                    riskRetries: riskRetries - 1, requestAccount: account);
             }
 
             // 退避重试之后**仍然是** -412: 说明限流窗口比我们退避的那一下更长。
@@ -248,6 +254,7 @@ public partial class ApiClient
 
     private static void SignParams(Dictionary<string, string> ps, string mixin)
     {
+        ps.Remove("w_rid");
         ps["wts"] = DateTimeOffset.Now.ToUnixTimeSeconds().ToString();
         var query = string.Join("&",
             ps.OrderBy(kv => kv.Key, StringComparer.Ordinal)
@@ -3459,6 +3466,7 @@ public partial class ApiClient
     private async Task<(int code, string? msg)> PostFormCodeAsync(
         string url, Dictionary<string, string> ps, string? referer = null)
     {
+        var account = SessionManager.Instance.CaptureAccount();
         var csrf = SessionManager.Instance.Current.BiliJct;
         if (string.IsNullOrEmpty(csrf)) return (-101, "未登录");
         ps["csrf"] = csrf;
@@ -3467,6 +3475,7 @@ public partial class ApiClient
             // ★ 写操作(点赞/投币/收藏/三连)的风控门比读接口严, 实测要点见下面 EnsureWriteReadyAsync。
             //   在真正发写请求前把设备身份预热一次, 不做的话新登录用户第一次点赞极易撞 -352。
             await EnsureWriteReadyAsync();
+            if (!account.IsCurrent) return (-101, "账号已切换，操作已停止");
 
             using var req = new HttpRequestMessage(HttpMethod.Post, url);
             req.Headers.TryAddWithoutValidation("Cookie",
@@ -3478,8 +3487,10 @@ public partial class ApiClient
             req.Headers.TryAddWithoutValidation("Origin", OriginFor(referer));
             req.Content = new FormUrlEncodedContent(ps);
             await ThrottleAsync();
+            if (!account.IsCurrent) return (-101, "账号已切换，操作已停止");
             using var resp = await _http.SendAsync(req);
             var text = await resp.Content.ReadAsStringAsync();
+            if (!account.IsCurrent) return (-101, "账号已切换，操作已停止");
             using var doc = JsonDocument.Parse(text);
             var code = doc.RootElement.TryGetProperty("code", out var c) ? c.GetInt32() : -999;
             if (code != 0)
@@ -4760,12 +4771,12 @@ public partial class ApiClient
     }
 
     /// <summary>把某个会话标记为已读(失败无所谓, 只是未读数不准)</summary>
-    public async Task MarkMsgReadAsync(long talkerId, long ackSeqno)
+    public async Task<bool> MarkMsgReadAsync(long talkerId, long ackSeqno)
     {
-        if (talkerId <= 0 || ackSeqno <= 0) return;
+        if (talkerId <= 0 || ackSeqno <= 0) return false;
         try
         {
-            await PostFormAsync(
+            var result = await PostFormAsync(
                 "https://api.vc.bilibili.com/session_svr/v1/session_svr/update_ack",
                 new Dictionary<string, string>
                 {
@@ -4776,8 +4787,9 @@ public partial class ApiClient
                     ["mobi_app"] = "web"
                 },
                 referer: MsgReferer);
+            return result.ok;
         }
-        catch { /* 已读回执失败不影响功能 */ }
+        catch { return false; }
     }
 
 
@@ -6000,6 +6012,7 @@ public partial class ApiClient
                       + Uri.EscapeDataString(q);
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com/");
+            await ThrottleAsync(ct);
             using var resp = await _http.SendAsync(req, ct);
             if (!resp.IsSuccessStatusCode) return list;
 

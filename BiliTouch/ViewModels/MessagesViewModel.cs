@@ -2,6 +2,7 @@
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using System.Windows;
 using BiliTouch.Helpers;
 using BiliTouch.Models;
 using BiliTouch.Services;
@@ -14,6 +15,7 @@ namespace BiliTouch.ViewModels;
 /// </summary>
 public partial class MessagesViewModel : ObservableObject
 {
+    public MessageUnreadService Unread => Svc.MessageUnread;
     public ObservableCollection<MsgSession> Sessions { get; } = new();
     public ObservableCollection<MsgItem> Messages { get; } = new();
 
@@ -24,6 +26,10 @@ public partial class MessagesViewModel : ObservableObject
     private string _threadError = "";
     private string _draft = "";
     private bool _sending;
+    private SessionAccount _account = Svc.Session.CaptureAccount();
+    private SessionAccount _conversationAccount;
+    private int _accountGeneration;
+    private int _conversationGeneration;
 
     public bool Loading { get => _loading; private set => SetProperty(ref _loading, value); }
     public string Error { get => _error; private set => SetProperty(ref _error, value); }
@@ -35,9 +41,14 @@ public partial class MessagesViewModel : ObservableObject
         set
         {
             if(ReferenceEquals(_current,value))return;
+            ++_conversationGeneration;
+            LoadingOlder = false;
+            if (_current?.TalkerId != value?.TalkerId)
+            { Messages.Clear(); Draft = ""; _hasOlder = false; }
             if(_current!=null)_current.IsSelected=false;
             if (!SetProperty(ref _current, value)) return;
             if(value!=null)value.IsSelected=true;
+            _conversationAccount = _account;
             OnPropertyChanged(nameof(HasCurrent));
             OnPropertyChanged(nameof(CurrentTitle));
             OnPropertyChanged(nameof(CanSend));OnPropertyChanged(nameof(CanCompose));
@@ -60,7 +71,8 @@ public partial class MessagesViewModel : ObservableObject
     public bool Sending { get => _sending; private set => SetProperty(ref _sending, value); }
 
     /// <summary>输入框有内容且不是正在发送 → 发送按钮可用</summary>
-    public bool CanCompose=>_current!=null && !_current.IsOfficial;
+    public bool CanCompose=>_current!=null && !_current.IsOfficial
+        && _conversationAccount.IsCurrent && _conversationAccount.IsLoggedIn;
     public bool CanSend => !_sending && !_threadLoading && !string.IsNullOrWhiteSpace(_draft) && CanCompose;
     private bool _hasOlder,_loadingOlder;
     public bool LoadingOlder {get=>_loadingOlder;private set=>SetProperty(ref _loadingOlder,value);}
@@ -72,11 +84,29 @@ public partial class MessagesViewModel : ObservableObject
     {
         RefreshCommand = new RelayCommand(() => _ = LoadAsync());
         SendCommand = new RelayCommand(() => _ = SendAsync());
+        WeakEventManager<SessionManager, EventArgs>.AddHandler(Svc.Session,
+            nameof(SessionManager.AccountChanged), OnAccountChanged);
     }
+
+    private void OnAccountChanged(object? sender, EventArgs e)
+    {
+        _account = Svc.Session.CaptureAccount();
+        ++_accountGeneration; ++_notificationGeneration;
+        _pendingThread = _loadingThread = null;
+        Loading = ThreadLoading = LoadingOlder = Sending = NotificationLoading = false;
+        _hasOlder = false; NotificationMore = false; _fansPage = 1; _noticeCursors.Clear();
+        Current = null; Draft = ""; Sessions.Clear(); Messages.Clear(); Notifications.Clear();
+        ThreadError = ""; Error = Svc.Session.HasLogin ? "" : "查看消息需要先登录 B 站账号";
+        OnPropertyChanged(nameof(CanCompose)); OnPropertyChanged(nameof(CanSend));
+    }
+
+    private void EnsureAccount()
+    { if (!_account.IsCurrent) OnAccountChanged(null, EventArgs.Empty); }
 
     /// <summary>加载会话列表</summary>
     public async Task LoadAsync()
     {
+        EnsureAccount();
         if(!IsPrivateChannel){await LoadNotificationsAsync();return;}
         if (Loading) return;
         if (!Svc.Session.HasLogin)
@@ -87,10 +117,13 @@ public partial class MessagesViewModel : ObservableObject
 
         Loading = true;
         Error = "";
+        var account = Svc.Session.CaptureAccount();
+        var generation = _accountGeneration;
         MsgSession? reload = null;
         try
         {
             var (ok, err, sessions) = await Svc.Api.GetMsgSessionsAsync();
+            if (!account.IsCurrent || generation != _accountGeneration) return;
             if (!ok || sessions == null)
             {
                 Error = err ?? "会话列表加载失败";
@@ -104,6 +137,7 @@ public partial class MessagesViewModel : ObservableObject
             foreach (var s in sessions.OrderByDescending(x => x.Timestamp)) Sessions.Add(s);
             if (Sessions.Count == 0)
             {
+                Current = null; Messages.Clear(); Draft = "";
                 Error = "没有会话记录";
                 return;
             }
@@ -113,14 +147,14 @@ public partial class MessagesViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            Error = ex.Message;
+            if (account.IsCurrent && generation == _accountGeneration) Error = ex.Message;
         }
         finally
         {
-            Loading = false;
+            if (account.IsCurrent && generation == _accountGeneration) Loading = false;
         }
 
-        if (reload != null) await LoadThreadAsync(reload);
+        if (reload != null && account.IsCurrent && generation == _accountGeneration) await LoadThreadAsync(reload);
     }
 
     /// <summary>最近一次被请求打开的会话(上一个还没加载完时先记下来)</summary>
@@ -138,7 +172,10 @@ public partial class MessagesViewModel : ObservableObject
     /// </summary>
     public async Task LoadThreadAsync(MsgSession? session)
     {
-        if (session == null) return;
+        EnsureAccount();
+        if (session == null || !Svc.Session.HasLogin || !Sessions.Contains(session)) return;
+        var account = Svc.Session.CaptureAccount();
+        var generation = _accountGeneration;
 
         // 先把标题切过去, 让点击有即时反馈(不必等接口回来)
         Current = session;
@@ -154,7 +191,7 @@ public partial class MessagesViewModel : ObservableObject
         try
         {
             var target = session;
-            while (target != null)
+            while (target != null && account.IsCurrent && generation == _accountGeneration)
             {
                 _pendingThread = null;
                 _loadingThread = target;
@@ -164,20 +201,24 @@ public partial class MessagesViewModel : ObservableObject
         }
         finally
         {
-            _loadingThread = null;
-            _pendingThread = null;
-            ThreadLoading = false;
+            if (account.IsCurrent && generation == _accountGeneration)
+            {
+                _loadingThread = null;
+                _pendingThread = null;
+                ThreadLoading = false;
+            }
         }
     }
 
     private async Task LoadThreadCoreAsync(MsgSession session)
     {
+        var account = Svc.Session.CaptureAccount();
         ThreadError = "";
         Messages.Clear();
         try
         {
             var (ok, err, items, more) = await Svc.Api.GetMsgHistoryAsync(session.TalkerId);
-            if(Current?.TalkerId!=session.TalkerId)return;
+            if (!account.IsCurrent || !ReferenceEquals(Current, session)) return;
             _hasOlder=more;
             if (!ok || items == null)
             {
@@ -191,35 +232,46 @@ public partial class MessagesViewModel : ObservableObject
             var lastSeq = Messages.Count > 0 ? Messages[^1].Seqno : 0;
             if (lastSeq > 0)
             {
-                session.UnreadCount = 0;
-                _ = Svc.Api.MarkMsgReadAsync(session.TalkerId, lastSeq);
+                if (await Svc.Api.MarkMsgReadAsync(session.TalkerId, lastSeq))
+                {
+                    if (!account.IsCurrent || !ReferenceEquals(Current, session)) return;
+                    session.UnreadCount = 0;
+                    if (Svc.MessageUnread.IsStarted) await Svc.MessageUnread.RefreshAsync(true);
+                }
             }
         }
         catch (Exception ex)
         {
-            if(Current?.TalkerId==session.TalkerId)ThreadError = ex.Message;
+            if(account.IsCurrent && ReferenceEquals(Current, session))ThreadError = ex.Message;
         }
     }
     public async Task LoadOlderAsync()
     {
+        EnsureAccount();
+        var account = Svc.Session.CaptureAccount();
+        var generation = _accountGeneration;
         var session=Current;
+        var conversation = _conversationGeneration;
         if(session==null || ThreadLoading || LoadingOlder || !_hasOlder || Messages.Count==0)return;
         LoadingOlder=true;
         try
         {
             var(ok,error,items,more)=await Svc.Api.GetMsgHistoryAsync(session.TalkerId,30,Messages[0].Seqno);
-            if(Current?.TalkerId!=session.TalkerId)return;
+            if(!account.IsCurrent || !ReferenceEquals(Current, session))return;
             if(!ok || items==null){ThreadError=error??"较早消息加载失败";return;}
             var seen=Messages.Select(m=>m.Seqno).ToHashSet();int at=0;
             foreach(var item in items)if(seen.Add(item.Seqno))Messages.Insert(at++,item);
             _hasOlder=more && at>0;
         }
-        finally{LoadingOlder=false;}
+        finally{if(account.IsCurrent && generation==_accountGeneration && conversation==_conversationGeneration)LoadingOlder=false;}
     }
 
     /// <summary>发送当前输入框里的文字</summary>
     public async Task SendAsync()
     {
+        EnsureAccount();
+        var account = Svc.Session.CaptureAccount();
+        var generation = _accountGeneration;
         var session = _current;
         if (session == null || !CanSend) return;
         var text = (_draft ?? "").Trim();
@@ -235,14 +287,15 @@ public partial class MessagesViewModel : ObservableObject
         try
         {
             var (ok, err) = await Svc.Api.SendMsgAsync(session.TalkerId, text);
+            if (!account.IsCurrent || generation != _accountGeneration) return;
             if (!ok)
             {
                 Svc.Toast.Show("发送失败: " + (err ?? "未知错误"));
                 return;
             }
 
-            // 乐观追加一条, 不等服务端回包: 体验上"发出去就出现"比等一秒重要得多
-            Messages.Add(new MsgItem
+            // A send may finish after the user opens a different conversation.
+            if (ReferenceEquals(Current, session)) Messages.Add(new MsgItem
             {
                 IsMine = true,
                 Text = text,
@@ -251,12 +304,15 @@ public partial class MessagesViewModel : ObservableObject
             });
             session.Preview = text;
             session.TimeText = DateTime.Now.ToString("MM-dd HH:mm");
-            if(Current?.TalkerId==session.TalkerId)Draft = "";
+            if(ReferenceEquals(Current, session) && Draft.Trim() == text)Draft = "";
         }
         finally
         {
-            Sending = false;
-            OnPropertyChanged(nameof(CanSend));
+            if (account.IsCurrent && generation == _accountGeneration)
+            {
+                Sending = false;
+                OnPropertyChanged(nameof(CanSend));
+            }
         }
     }
 }

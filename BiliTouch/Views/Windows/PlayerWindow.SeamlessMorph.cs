@@ -48,6 +48,9 @@ public partial class PlayerWindow
         public readonly RectangleGeometry HeroClip = new();
         public readonly TranslateTransform InfoPanelShift = new(0, 0);
         public bool TransformsMounted;
+        public Window? EntryWindow;
+        public bool EntryPresented;
+        public Action? PendingPresentation;
     }
 
     private readonly SeamlessMorphState _seamless = new();
@@ -111,6 +114,8 @@ public partial class PlayerWindow
         if (TopBar != null) TopBar.Opacity = 0;
         if (InfoPanel != null) InfoPanel.Opacity = 0;
         if (WebLeftPane != null) WebLeftPane.Opacity = 0;
+        ApplySharedCoverArtwork(anchor.CoverImage, anchor.FallbackBrush);
+        MountSeamlessEntryWindow(anchor);
     }
 
     /// <summary>
@@ -119,18 +124,24 @@ public partial class PlayerWindow
     internal bool TryStartSeamlessEntry(string bvid)
     {
         if (_closing || string.IsNullOrEmpty(bvid) || RootGrid == null) return false;
-        if (!SeamlessTransitionDirector.TryConsumeForPlayer(bvid, this, RootGrid, out var anchor, out var startRect))
+        if (!SeamlessTransitionDirector.TryConsumeForPlayer(bvid, this, SeamlessStage, out var anchor, out var startRect))
         {
             if (_seamless.PreShowPrepared)
             {
                 _seamless.PreShowPrepared = false;
                 RestorePlayerChromeAfterSeamless();
+                UnmountSeamlessEntryWindow();
             }
             return false;
         }
 
         _seamless.PreShowPrepared = false;
         _seamless.IsClosingMorph = false;
+        if (_seamless.EntryWindow is { } stage)
+        {
+            stage.Topmost = false;
+            stage.Topmost = true;
+        }
         ApplySeamlessWindowSnapshot(anchor.SourceWindowBackdrop,
             anchor.SourceWindow?.TryGetTarget(out var sourceWindow) == true ? sourceWindow : null);
         ApplySharedCoverArtwork(anchor.CoverImage, anchor.FallbackBrush);
@@ -167,7 +178,7 @@ public partial class PlayerWindow
         ApplySeamlessWindowSnapshot(backdrop, srcWin);
         SeamlessWindowSnapshot.Opacity = 0;
 
-        if (_vmemMode && VmemView?.Source is System.Windows.Media.Imaging.BitmapSource liveFrame)
+        if (_vmemMode && VmemView?.CaptureFrame() is System.Windows.Media.Imaging.BitmapSource liveFrame)
         {
             // ★ VmemView.Source 是解码线程持续 Lock/写入的 WriteableBitmap：
             //   直接包进 ImageBrush 再 Freeze 会把它连带冻结，之后每一帧 PresentFrame
@@ -192,7 +203,7 @@ public partial class PlayerWindow
         double cardRadius = 8.0;
         if (anchor != null && (string.IsNullOrEmpty(_currentBvid) || string.Equals(anchor.Bvid, _currentBvid, StringComparison.OrdinalIgnoreCase)))
         {
-            cardRect = SeamlessTransitionDirector.ResolveStageStartRect(anchor, this, RootGrid);
+            cardRect = SeamlessTransitionDirector.ResolveStageStartRect(anchor, this, SeamlessStage);
             cardRadius = Math.Max(6.0, anchor.CornerRadius);
         }
         else
@@ -358,7 +369,7 @@ public partial class PlayerWindow
             // 正向一镜到底（从源卡片展开至播放器舞台）：
             // 1. 源窗口快照层在前半程承接视觉连续性，随主容器展开平滑退场
             if (SeamlessWindowSnapshot != null && SeamlessWindowSnapshot.Background != null)
-                SeamlessWindowSnapshot.Opacity = 1.0 - SpringMotion.StageProgress(p, 0.22, 0.86);
+                SeamlessWindowSnapshot.Opacity = 1.0 - SpringMotion.StageProgress(p, _seamless.EntryWindow != null ? .62 : .22, .98);
             // 2. 背景阻尼遮罩在初段渐显压暗源背景，末段随主容器落位消散
             if (SeamlessBackdrop != null)
                 SeamlessBackdrop.Opacity = Math.Sin(Math.Clamp(p, 0, 1) * Math.PI) * 0.68;
@@ -394,8 +405,8 @@ public partial class PlayerWindow
         if (source?.Content is not FrameworkElement content || !IsVisible) return;
         try
         {
-            var topLeft = RootGrid.PointFromScreen(content.PointToScreen(new Point()));
-            var bottomRight = RootGrid.PointFromScreen(content.PointToScreen(new Point(content.ActualWidth, content.ActualHeight)));
+            var topLeft = SeamlessStage.PointFromScreen(content.PointToScreen(new Point()));
+            var bottomRight = SeamlessStage.PointFromScreen(content.PointToScreen(new Point(content.ActualWidth, content.ActualHeight)));
             SeamlessWindowSnapshot.HorizontalAlignment = HorizontalAlignment.Left;
             SeamlessWindowSnapshot.VerticalAlignment = VerticalAlignment.Top;
             SeamlessWindowSnapshot.Width = Math.Max(1, bottomRight.X - topLeft.X);
@@ -427,6 +438,7 @@ public partial class PlayerWindow
 
     internal void StopSeamlessMorph()
     {
+        UnmountSeamlessEntryWindow();
         var wasClosing = _seamless.IsClosingMorph;
         _seamless.IsRunning = false;
         _seamless.IsReverse = false;
@@ -479,6 +491,9 @@ public partial class PlayerWindow
     {
         try
         {
+            if (_seamless.EntryWindow != null && VideoSurface.IsVisible && VideoSurface.ActualWidth > 4)
+                return new Rect(SeamlessStage.PointFromScreen(VideoSurface.PointToScreen(new Point())),
+                    SeamlessStage.PointFromScreen(VideoSurface.PointToScreen(new Point(VideoSurface.ActualWidth, VideoSurface.ActualHeight))));
             if (VideoSurface != null && RootGrid != null && VideoSurface.ActualWidth > 4 && VideoSurface.ActualHeight > 4)
             {
                 return VideoSurface.TransformToAncestor(RootGrid)

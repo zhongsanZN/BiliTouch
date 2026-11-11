@@ -234,7 +234,7 @@ internal static class VlcPlacePictureGuard
     /// 恰恰是**间接调用**（反汇编实测 <c>call qword ptr [rip+…]</c> → thunk → IAT），
     /// 改 IAT 是唯一不需要碰指令流的做法。
     /// </summary>
-    private static bool TryPatchImport(IntPtr module, string importedFrom, string importName,
+    internal static bool TryPatchImport(IntPtr module, string importedFrom, string importName,
         IntPtr replacement, out string detail)
     {
         detail = "";

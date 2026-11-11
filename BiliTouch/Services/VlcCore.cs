@@ -75,6 +75,7 @@ public static class VlcCore
             //     在 new LibVLC **之前**(否则第一帧就可能崩在这个窗口期里)。
             //   细节与反汇编证据见 VlcPlacePictureGuard 的注释。
             VlcPlacePictureGuard.Install();
+            VideoDecode.Initialize();
 
             // 显式给一份插件绝对路径(和 libvlc.dll 同目录那份是同一个地方)。
             // ★ 不要再传 `--plugin-path=`: VLC 3.0.20 已经删掉了这个选项, 传了会打印
@@ -102,6 +103,7 @@ public static class VlcCore
             if(profile.Enabled) options.AddRange(profile.Options);
             var instance = new LibVLC(options.ToArray());
             VideoEnhancement.Observe(instance,profile);
+            VideoDecode.Observe(instance);
             // Keep every profile instance alive until process shutdown. Core.Initialize is process-wide;
             // toggling must never dispose a LibVLC instance while a player still references it.
             if(profile.Enabled)EnhancementInstances[profile.Key]=instance;else _instance=instance;
@@ -129,6 +131,7 @@ public static class VlcCore
                 Environment.SetEnvironmentVariable("LIBVLC_PATH", libvlcDir);
             try { Core.Initialize(Directory.Exists(libvlcDir) ? libvlcDir : null); } catch { }
             VlcPlacePictureGuard.Install();
+            VideoDecode.Initialize();
             Environment.SetEnvironmentVariable("VLC_PLUGIN_PATH", PluginsDirectory);
             var caching = BufferPolicy.Resolve(BufferMediaKind.VodSingle, null, shortVideo: false,
                 SettingsStore.Instance.NetworkCachingMs, SettingsStore.Instance.AutoBufferPolicy);
@@ -140,6 +143,7 @@ public static class VlcCore
             };
             _vmemInstance = new LibVLC(options.ToArray());
             VideoEnhancement.Observe(_vmemInstance, profile);
+            VideoDecode.Observe(_vmemInstance);
             return _vmemInstance;
         }
     }

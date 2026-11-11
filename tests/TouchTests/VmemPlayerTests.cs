@@ -54,12 +54,14 @@ internal static class VmemPlayerTests
         PlayerWindow? player = null;
         try
         {
-            Svc.Settings.SetVmemRenderer(true);
+            check(Svc.Settings.UseVmemRenderer, "composited video is enabled by default");
             player = new PlayerWindow { Width = 1280, Height = 820, Topmost = true, ShowActivated = false };
             player.Show();
             Pump(500);
 
             check(Field<bool>(player, "_vmemMode"), "player window builds in vmem mode");
+            check(Field<LibVLCSharp.Shared.MediaPlayer>(player, "_mp").EnableHardwareDecoding,
+                "the composited player explicitly requests hardware decoding after callback attachment");
 
             var vmem = (FrameworkElement)player.FindName("VmemView");
             var surface = (Grid)player.FindName("VideoSurface");

@@ -8,9 +8,9 @@
    <helpers:SkinSurface Kind="Home"/>
    <TextBlock Text="消息" Style="{StaticResource PageTitleStyle}" Margin="24,20,24,8" VerticalAlignment="Top"/>
    <helpers:NavigationTabs x:Name="ModuleTabs" HorizontalAlignment="Left" VerticalAlignment="Bottom" Height="44" Margin="24,0,80,0"><StackPanel Orientation="Horizontal">
-    <RadioButton Content="私信" GroupName="MessageChannel" Style="{StaticResource UnderlineTabStyle}" IsChecked="{Binding PrivateTab,Mode=TwoWay}"/>
-    <RadioButton Content="回复与@" GroupName="MessageChannel" Style="{StaticResource UnderlineTabStyle}" IsChecked="{Binding ReplyTab,Mode=TwoWay}"/>
-    <RadioButton Content="收到的喜欢" GroupName="MessageChannel" Style="{StaticResource UnderlineTabStyle}" IsChecked="{Binding LikeTab,Mode=TwoWay}"/>
+    <RadioButton Content="{Binding Unread.PrivateTitle}" GroupName="MessageChannel" Style="{StaticResource UnderlineTabStyle}" IsChecked="{Binding PrivateTab,Mode=TwoWay}"/>
+    <RadioButton Content="{Binding Unread.ReplyTitle}" GroupName="MessageChannel" Style="{StaticResource UnderlineTabStyle}" IsChecked="{Binding ReplyTab,Mode=TwoWay}"/>
+    <RadioButton Content="{Binding Unread.LikeTitle}" GroupName="MessageChannel" Style="{StaticResource UnderlineTabStyle}" IsChecked="{Binding LikeTab,Mode=TwoWay}"/>
     <RadioButton Content="新增粉丝" GroupName="MessageChannel" Style="{StaticResource UnderlineTabStyle}" IsChecked="{Binding FansTab,Mode=TwoWay}"/>
    </StackPanel></helpers:NavigationTabs>
    <Button HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,24,8" Style="{StaticResource IconButtonStyle}" Command="{Binding RefreshCommand}" ToolTip="刷新"><helpers:SkinGlyph Kind="Refresh" IconSize="20" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15"/></helpers:SkinGlyph></Button>

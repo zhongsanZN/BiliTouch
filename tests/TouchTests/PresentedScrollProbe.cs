@@ -89,6 +89,7 @@ internal static class PresentedScrollProbe
             {
                 timeBeginPeriod(1);
                 clock.Restart();
+                state.Start();
                 CompositionTarget.Rendering += state.OnFrame;
             });
         };
@@ -122,6 +123,7 @@ internal static class PresentedScrollProbe
         finally
         {
             CompositionTarget.Rendering -= state.OnFrame;
+            state.Stop();
             timeEndPeriod(1);
             timeout.Stop();
             TrackpadScroll.Cancel(viewer);
@@ -156,10 +158,12 @@ internal static class PresentedScrollProbe
             var seconds = clock.Elapsed.TotalSeconds;
             if (seconds >= StartTime)
             {
-                if (_lastClockSeconds >= 0) _intervals.Add((time - previous).TotalMilliseconds);
+                if (seconds <= EndTime && _lastClockSeconds >= StartTime)
+                    _intervals.Add((time - previous).TotalMilliseconds);
                 Drive(seconds);
             }
             if (seconds >= EndTime && !_endTaken) { _end = Snapshot(); _endTaken = true; }
+            _lastClockSeconds = seconds;
         }
 
         private bool _beginTaken, _endTaken;
@@ -192,6 +196,20 @@ internal static class PresentedScrollProbe
         private double _lastDrive = -1;
 
         private ScrollChangedEventHandler? _watch;
+        internal void Start()
+        {
+            _watch = (_, e) =>
+            {
+                if (e.VerticalChange != 0 && clock.Elapsed.TotalSeconds is >= StartTime and <= EndTime)
+                    _offsets++;
+            };
+            viewer.ScrollChanged += _watch;
+        }
+        internal void Stop()
+        {
+            if (_watch != null) viewer.ScrollChanged -= _watch;
+            _watch = null;
+        }
 
         private Counters Snapshot() => new(
             UiCpuMs(), clock.Elapsed.TotalMilliseconds, GC.GetAllocatedBytesForCurrentThread(),

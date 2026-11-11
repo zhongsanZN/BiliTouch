@@ -119,19 +119,25 @@ internal static class SeamlessTransitionDirector
             int h = Math.Clamp((int)Math.Round(height), 64, 1200);
             var rtb = new RenderTargetBitmap(w, h, 96.0 * w / width, 96.0 * h / height, PixelFormats.Pbgra32);
             var visual = new DrawingVisual();
-            var opacity = exclude?.Opacity ?? 1;
-            try
             {
-                exclude?.SetCurrentValue(UIElement.OpacityProperty, 0.0);
                 using (var dc = visual.RenderOpen())
                 {
                     dc.DrawRectangle(win.Background ?? Brushes.Black, null, new Rect(0, 0, width, height));
+                    // Mask only the captured drawing. Mutating the live card's opacity
+                    // here can commit a blank frame to the source window during capture.
+                    var masked = exclude != null && exclude.IsDescendantOf(content ?? (Visual)win);
+                    if (masked)
+                    {
+                        var excluded = exclude!.TransformToAncestor(content ?? (Visual)win).TransformBounds(new Rect(exclude.RenderSize));
+                        dc.PushClip(new CombinedGeometry(GeometryCombineMode.Exclude,
+                            new RectangleGeometry(new Rect(0, 0, width, height)), new RectangleGeometry(excluded)));
+                    }
                     dc.DrawRectangle(new VisualBrush(content ?? (Visual)win) { Stretch = Stretch.Fill, ViewboxUnits = BrushMappingMode.Absolute, Viewbox = new Rect(0, 0, width, height) }, null,
                         new Rect(0, 0, width, height));
+                    if (masked) dc.Pop();
                 }
                 rtb.Render(visual);
             }
-            finally { exclude?.SetCurrentValue(UIElement.OpacityProperty, opacity); }
             if (rtb.CanFreeze) rtb.Freeze();
             var brush = new ImageBrush(rtb)
             {

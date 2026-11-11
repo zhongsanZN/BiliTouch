@@ -36,6 +36,9 @@ public partial class MessagesViewModel
  public ICommand LoadMoreNotificationsCommand=>new RelayCommand(()=>_ = LoadNotificationsAsync(true));
  private async Task LoadNotificationsAsync(bool more=false)
  {
+  EnsureAccount();
+  if(!Svc.Session.HasLogin){Notifications.Clear();NotificationMore=false;Error="查看消息需要先登录 B 站账号";return;}
+  var account=Svc.Session.CaptureAccount();
   if(NotificationLoading && more)return;
   var generation=++_notificationGeneration;var channel=Channel;NotificationLoading=true;Error="";
   if(!more){Notifications.Clear();_fansPage=1;_noticeCursors.Clear();}
@@ -43,19 +46,19 @@ public partial class MessagesViewModel
    List<MessageNotification> items;bool next=false;
    if(channel=="回复与@"){
     var results=await Task.WhenAll(FetchNotice("reply",more),FetchNotice("at",more));
-    if(generation!=_notificationGeneration)return;
+    if(generation!=_notificationGeneration || !account.IsCurrent)return;
     KeepNoticeCursor("reply",results[0].items,results[0].more);KeepNoticeCursor("at",results[1].items,results[1].more);
     next=results.Any(x=>x.more);items=results.SelectMany(x=>x.items).OrderByDescending(x=>x.Timestamp).ToList();
     var errors=results.Where(x=>!x.ok).Select(x=>x.error).ToArray();if(errors.Length>0)Error=string.Join("；",errors);
    }else{
     var kind=channel=="新增粉丝"?"fans":"like";
     var result=await FetchNotice(kind,more);
-    if(generation!=_notificationGeneration)return;
+    if(generation!=_notificationGeneration || !account.IsCurrent)return;
     items=result.items;next=result.more;KeepNoticeCursor(kind,items,next);if(more && result.ok)_fansPage++;if(!result.ok)Error=result.error??"消息加载失败";
    }
    var seen=Notifications.Select(x=>x.Id).ToHashSet();var added=0;foreach(var item in items)if(seen.Add(item.Id)){Notifications.Add(item);added++;}
    NotificationMore=next && (!more || added>0);
-  }catch(Exception ex){if(generation==_notificationGeneration)Error="消息加载失败："+ex.Message;}
-  finally{if(generation==_notificationGeneration){NotificationLoading=false;OnPropertyChanged(nameof(NotificationsEmpty));}}
+  }catch(Exception ex){if(generation==_notificationGeneration && account.IsCurrent)Error="消息加载失败："+ex.Message;}
+  finally{if(generation==_notificationGeneration && account.IsCurrent){NotificationLoading=false;OnPropertyChanged(nameof(NotificationsEmpty));if(Svc.MessageUnread.IsStarted)_ = Svc.MessageUnread.RefreshAsync(true);}}
  }
 }

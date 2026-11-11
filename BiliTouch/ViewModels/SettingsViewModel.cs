@@ -20,6 +20,8 @@ public partial class SettingsViewModel : ObservableObject
     private string _userFace = "";
     private int _userLevel;
     private double _userCoins;
+    private int _userGeneration;
+    private SessionAccount _profileAccount;
     private string _cacheSizeText = "计算中…";
     private string _videoCacheSizeText = "计算中…";
 
@@ -529,6 +531,13 @@ public partial class SettingsViewModel : ObservableObject
     // ★ 0 = 自动(按窗口宽度算, 沿用原有行为); 2~8 = 固定列数。
     // ★ 作用于**所有**卡片页: 首页/历史/收藏/搜索/分区/稍后再看/关注/个人空间 共用同一套卡片墙。
 
+    public IReadOnlyList<GraphicsAdapter> DecoderAdapters => VideoDecode.Choices;
+    public string DecoderAdapterId
+    {
+        get => Svc.Settings.DecoderAdapterId;
+        set { Svc.Settings.SetDecoderAdapter(value); OnPropertyChanged(); }
+    }
+    public VideoDecodeStatus DecodeStatus => VideoDecodeStatus.Instance;
     public bool ExperimentalVideoEnhancement{get=>Svc.Settings.ExperimentalVideoEnhancement;set{Svc.Settings.UpdateVideoEnhancement(experimental:value);OnPropertyChanged();}}
     public bool VideoEnhancementActive{get=>Svc.Settings.VideoEnhancementActive;set{Svc.Settings.UpdateVideoEnhancement(active:value);OnPropertyChanged();}}
     public string[] EnhancementModes{get;}={"自动厂商增强","视频处理器缩放"};
@@ -711,29 +720,6 @@ public partial class SettingsViewModel : ObservableObject
     public string HardwareAccelerationHint => Svc.Settings.HardwareAccelerationEnabled
         ? "允许 WPF 使用硬件加速；改完需重启应用生效"
         : "WPF 使用 CPU 软件渲染；改完需重启应用生效";
-
-    // ----------------- 实验性：vmem 渲染 -----------------
-
-    /// <summary>
-    /// vmem 自定义输出开关。开了之后视频变成普通 WPF 元素，小窗动画才能做
-    /// 「画面本体连续变形」（原来 HwndHost 只能拿假卡片盖着）。
-    /// ★ 只对**下一个打开的播放器窗口**生效，不用重启应用。
-    /// </summary>
-    public bool UseVmemRenderer
-    {
-        get => Svc.Settings.UseVmemRenderer;
-        set
-        {
-            if (value == Svc.Settings.UseVmemRenderer) return;
-            Svc.Settings.SetVmemRenderer(value);
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(UseVmemRendererHint));
-        }
-    }
-
-    public string UseVmemRendererHint => Svc.Settings.UseVmemRenderer
-        ? "已开启：视频由 WPF 合成，可圆角/阴影/连续变形；4K 片源可能掉帧，卡就关掉"
-        : "关闭：走原生 VideoView（硬解最优）。开启后重开播放器生效，用于小窗动效预览";
 
     // ----------------- 默认画质 -----------------
 
@@ -1517,6 +1503,11 @@ public partial class SettingsViewModel : ObservableObject
 
     public async System.Threading.Tasks.Task RefreshUserAsync()
     {
+        var account = Svc.Session.CaptureAccount();
+        var generation = ++_userGeneration;
+        if (!_profileAccount.IsCurrent)
+        { UserName = UserFace = ""; UserLevel = 0; UserCoins = 0; }
+        _profileAccount = account;
         IsLoggedIn = Svc.Session.HasLogin;
         if (!IsLoggedIn)
         {
@@ -1528,6 +1519,7 @@ public partial class SettingsViewModel : ObservableObject
         }
 
         var (_, _, user) = await Svc.Api.GetUserStateAsync();
+        if (!account.IsCurrent || generation != _userGeneration) return;
         if (user is { IsLogin: true })
         {
             UserName = user.Name;

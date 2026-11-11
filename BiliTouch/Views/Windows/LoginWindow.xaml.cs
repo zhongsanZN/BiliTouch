@@ -329,7 +329,7 @@ public partial class LoginWindow : FluentWindow
                     // ★ 用户已经切走了就不再理会这一轮结果: 请求是切走之前发出去的,
                     //   当场关窗会变成"正在输密码, 窗口自己没了"。
                     if (cookies != null && QrPanel.Visibility == Visibility.Visible)
-                        FinishLogin(cookies, syncToWebProfile: true);
+                        await FinishLoginAsync(cookies, syncToWebProfile: true);
                     break;
                 default:
                     // 单轮失败不改界面: 网络抖一下不该把已经掏出来的二维码判死, 下一轮接着问。
@@ -625,7 +625,7 @@ public partial class LoginWindow : FluentWindow
             var cookies = await WebView2Service.ReadBiliCookiesAsync(Wv);
             if (_closing) return;
             if (cookies.TryGetValue("SESSDATA", out var sess) && !string.IsNullOrWhiteSpace(sess))
-                FinishLogin(cookies, syncToWebProfile: false);
+                await FinishLoginAsync(cookies, syncToWebProfile: false);
         }
         catch
         {
@@ -646,8 +646,10 @@ public partial class LoginWindow : FluentWindow
     /// 扫码那条路要额外把凭据写进浏览器 Profile —— 它只落在 session.json 里, 而内嵌网页读的是 Profile;
     /// 密码那条路本来就是官方页面写进去的, 不用再写一遍。
     /// </param>
-    private void FinishLogin(IReadOnlyDictionary<string, string> cookies, bool syncToWebProfile)
+    private bool _finishingLogin;
+    private async Task FinishLoginAsync(IReadOnlyDictionary<string, string> cookies, bool syncToWebProfile)
     {
+        if (_finishingLogin) return;
         if (!cookies.TryGetValue("SESSDATA", out var sess) || string.IsNullOrWhiteSpace(sess))
         {
             // 判定成功却没带回凭据: 宁可让用户重来, 也不能写一份没有凭据的"登录态"。
@@ -657,6 +659,7 @@ public partial class LoginWindow : FluentWindow
             return;
         }
 
+        _finishingLogin = true;
         _qrTimer.Stop();
         _webTimer.Stop();
         _pageTimer.Stop();
@@ -668,15 +671,11 @@ public partial class LoginWindow : FluentWindow
         //   写接口被判"设备不一致"而报 -352。
         //   这里补一次: 本地没有就现领一对, 让"接口侧"与"浏览器侧"用同一个设备身份。
         //
-        // ★★ 必须**同步等它做完**再往下走(2026-10-12 16:33 实测教训):
-        //   上一版这里是 `_ = Svc.Api.EnsureBuvidAsync();`(fire-and-forget),
-        //   而下面第 12 行就是 `Close()` —— 用户重新扫码登录后 session.json 里
-        //   buvid3/buvid4/b_nut **全是空的**, 点赞照旧报风控。
-        //   探针 bd-probe-ensure 单独验证过: `await` 时领得到、也落得了盘
-        //   ⇒ 不是逻辑错, 是窗口关闭把未完成的异步任务掐断了。
-        //   代价: 多等一次 SPI 往返(通常 <300ms), 发生在"登录成功"提示之后、关窗之前,
-        //   用户感知不到; 而它决定了下一次点赞会不会被风控。
-        Svc.Api.EnsureBuvidAsync().GetAwaiter().GetResult();
+        // Wait for persistence before closing, while keeping the dispatcher free
+        // for the HTTP continuation and window input.
+        var account = Svc.Session.CaptureAccount();
+        await Svc.Api.EnsureBuvidAsync();
+        if (!IsLoaded || !account.IsCurrent) return;
 
         Svc.Toast.Show("登录成功");
 

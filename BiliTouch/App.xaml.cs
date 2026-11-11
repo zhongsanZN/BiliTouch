@@ -17,7 +17,7 @@ public partial class App : Application
     /// 同步点(漏一个就会出现"关于页写 1.2.3、安装包文件名还是 1.2.2"这种不一致):
     ///   BiliTouch.csproj 的 &lt;Version&gt;、Publish\installer.iss 的 MyAppVersion、发布.ps1 的默认 $Version。
     /// </summary>
-    public const string AppVersion = "0.2.18-fix1";
+    public const string AppVersion = "0.3.1";
 
     public static MainViewModel MainVm { get; } = new();
 
@@ -161,6 +161,8 @@ public partial class App : Application
         // (声明窗口已经占过一次 MainWindow 的位置, 这里不重新指认的话关掉主窗口不会退出程序)
         MainWindow = main;
         ShutdownMode = ShutdownMode.OnMainWindowClose;
+        Svc.MessageUnread.Start();
+        main.Activated += (_, _) => _ = Svc.MessageUnread.RefreshAsync();
         main.Show();
 
         // ★ 预热播放器窗口(2026-11-04): 主窗口起来后**空闲**时把 PlayerWindow 建出来。
@@ -312,6 +314,7 @@ public partial class App : Application
     /// <summary>进程退出: 释放共享的 LibVLC 原生实例(窗口关闭时不释放, 避免反复创建销毁)</summary>
     protected override void OnExit(ExitEventArgs e)
     {
+        Svc.MessageUnread.Stop();
         IsExiting = true;
         // 设置是"异步合并写"的(见 SettingsStore.Save), 退出前把还在队列里的最后一次写入落盘,
         // 否则刚改完设置就退出会丢(表现是"改了的选项下次启动又变回去了")
