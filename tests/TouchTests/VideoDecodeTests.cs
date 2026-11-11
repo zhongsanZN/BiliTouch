@@ -32,9 +32,13 @@ internal static class VideoDecodeTests
             check(Svc.Settings.DecoderAdapterId == "auto", "invalid decoder identifiers fall back to automatic selection");
             File.WriteAllText(Path.Combine(profile, "settings.json"), "{\"EnhancementAdapterId\":\"00000000:00abcdef\"}");
             var migrated = new SettingsStore(); migrated.Load();
+            // Legacy loads queue a migration write. Complete it before replacing
+            // this fixture, and before restoring the shared profile directory.
+            migrated.SaveNow();
             check(migrated.DecoderAdapterId == "00000000:00ABCDEF", "legacy explicit adapter preference migrates to decoder selection");
             File.WriteAllText(Path.Combine(profile, "settings.json"), "{}");
             var defaults = new SettingsStore(); defaults.Load();
+            defaults.SaveNow();
             check(defaults.DecoderAdapterId == "auto", "profiles without a decoder selection retain automatic hardware decoding");
             var choices = VideoDecode.Choices;
             check(choices[0].Id == "auto" && choices[^1].Id == "software", "decoder choices retain automatic and compatible playback modes");
