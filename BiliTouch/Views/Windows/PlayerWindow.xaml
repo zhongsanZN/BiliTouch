@@ -1361,17 +1361,20 @@
                                             <helpers:SkinGlyph Kind="DanmakuSettings" IconSize="24" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White"><TextBlock Text="弹幕设置" Foreground="#F2FFFFFF"/></helpers:SkinGlyph>
                                         </Button>
                                         <Popup x:Name="DanmakuAreaPopup"
-                                               Placement="Top" StaysOpen="False" AllowsTransparency="True"
-                                               PopupAnimation="Fade">
+                                               Placement="Top" StaysOpen="True" AllowsTransparency="True"
+                                               PopupAnimation="None">
                                             <!-- ★ 宽度从 190 放宽到 240: 现在这一张里要放三行
                                                  "标签 + 滑杆 + 数值", 190 会让「不透明度 100%」
-                                                 这类标签+数值挤到一行放不下(用户截图里就是这么挤的)。 -->
+                                                 这类标签+数值挤到一行放不下(用户截图里就是这么挤的)。
+                                                 ★ StaysOpen=True + Focusable=False: 避开 PopupRoot 的 SubTree 捕获竞争,
+                                                 外部关闭由点击/触摸外部/再次点击按钮/Esc 显式收起(与 VolumePopup 同款)。 -->
                                             <Border Background="#F0202226" CornerRadius="8" Padding="12,10"
                                                     BorderBrush="#33FFFFFF" BorderThickness="1" Width="240">
                                                 <StackPanel>
-                                                    <Button Content="恢复显示全部类型" Style="{StaticResource PlayerTextBtn}" Click="OnRestoreDanmakuTypesClick" HorizontalAlignment="Left" Margin="0,0,0,10" />
+                                                    <Button Content="恢复显示全部类型" Style="{StaticResource PlayerTextBtn}" Focusable="False" Click="OnRestoreDanmakuTypesClick" HorizontalAlignment="Left" Margin="0,0,0,10" />
                                                     <TextBlock Text="弹幕显示区域" Foreground="#E6FFFFFF" FontSize="12" />
                                                     <Slider x:Name="DanmakuAreaSlider" Style="{StaticResource PlayerSlider}"
+                                                            Focusable="False"
                                                             Minimum="25" Maximum="100" Value="25"
                                                             Margin="0,10,0,4" IsSnapToTickEnabled="True"
                                                             TickFrequency="5" ValueChanged="OnDanmakuAreaChanged" />
@@ -1398,7 +1401,7 @@
                                                         </Grid.ColumnDefinitions>
                                                         <TextBlock Grid.Column="0" Text="不透明度" Style="{StaticResource DanmakuRowLabelStyle}" />
                                                         <Slider Grid.Column="1" x:Name="DanmakuOpacitySlider"
-                                                                Style="{StaticResource PlayerSlider}"
+                                                                Style="{StaticResource PlayerSlider}" Focusable="False"
                                                                 Minimum="20" Maximum="100" Value="80"
                                                                 Margin="8,0,8,0" IsSnapToTickEnabled="True"
                                                                 TickFrequency="5" ValueChanged="OnDanmakuOpacityChanged" />
@@ -1414,7 +1417,7 @@
                                                         </Grid.ColumnDefinitions>
                                                         <TextBlock Grid.Column="0" Text="弹幕字号" Style="{StaticResource DanmakuRowLabelStyle}" />
                                                         <Slider Grid.Column="1" x:Name="DanmakuFontSlider"
-                                                                Style="{StaticResource PlayerSlider}"
+                                                                Style="{StaticResource PlayerSlider}" Focusable="False"
                                                                 Minimum="50" Maximum="300" Value="100"
                                                                 Margin="8,0,8,0" IsSnapToTickEnabled="True"
                                                                 TickFrequency="25" ValueChanged="OnDanmakuFontChanged" />
@@ -1437,12 +1440,33 @@
                                                              把它夹到 2 —— 于是滑杆显示"2.37"而实际是"适中",
                                                              看着就是"滑块不准"。 -->
                                                         <Slider Grid.Column="1" x:Name="DanmakuSpeedSlider"
-                                                                Style="{StaticResource PlayerSlider}"
+                                                                Style="{StaticResource PlayerSlider}" Focusable="False"
                                                                 Minimum="0" Maximum="4" Value="2"
                                                                 Margin="8,0,8,0" IsSnapToTickEnabled="True"
                                                                 TickFrequency="1" ValueChanged="OnDanmakuSpeedChanged" />
                                                         <TextBlock Grid.Column="2" x:Name="DanmakuSpeedValue" Text="适中"
                                                                    Style="{StaticResource DanmakuRowValueStyle}" />
+                                                    </Grid>
+
+                                                    <Grid Margin="0,14,0,0" Background="Transparent" Cursor="Hand"
+                                                          MouseLeftButtonUp="OnDanmakuOutlineRowClick">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="70" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" Text="弹幕描边" Style="{StaticResource DanmakuRowLabelStyle}" />
+                                                        <TextBlock Grid.Column="1" x:Name="DanmakuOutlineStateText" Text="已关闭"
+                                                                   FontSize="11" Foreground="#99FFFFFF"
+                                                                   VerticalAlignment="Center" HorizontalAlignment="Right"
+                                                                   Margin="0,0,8,0" />
+                                                        <CheckBox Grid.Column="2" x:Name="DanmakuOutlineCheck"
+                                                                  Style="{StaticResource SettingsToggleStyle}"
+                                                                  Focusable="False"
+                                                                  AutomationProperties.Name="弹幕描边"
+                                                                  VerticalAlignment="Center" HorizontalAlignment="Right"
+                                                                  Checked="OnDanmakuOutlineChanged"
+                                                                  Unchecked="OnDanmakuOutlineChanged" />
                                                     </Grid>
                                                 </StackPanel>
                                             </Border>
@@ -2306,6 +2330,8 @@
                                                 Tag="on" Visibility="Collapsed"
                                                 Click="OnCommentSortHotClick" ToolTip="按热度排序" />
                                         <StackPanel Orientation="Horizontal">
+                                            <Button x:Name="BtnRetryComments" Content="重试" Click="OnRetryCommentsClick"
+                                                    Style="{StaticResource SubtleButtonStyle}" Visibility="Collapsed" />
                                             <controls:LoadingRing x:Name="CommentLoadingRing" Width="14" Height="14" Visibility="Collapsed" />
                                             <TextBlock x:Name="CommentHint" Style="{StaticResource MetaTextStyle}"
                                                        Text="加载评论中…" Margin="6,0,0,0" VerticalAlignment="Center"
@@ -2320,6 +2346,10 @@
                                             </ItemsPanelTemplate>
                                         </ItemsControl.ItemsPanel>
                                     </ItemsControl>
+
+                                    <Button x:Name="BtnMoreComments" Visibility="Collapsed" Content="加载更多评论"
+                                            Click="OnMoreCommentsClick" Style="{StaticResource SubtleButtonStyle}"
+                                            HorizontalAlignment="Center" Margin="0,8,0,16" />
 
                                     <!-- ===== 评论详情(点"查看详情"进入) =====
                                          楼主区在上方(头像 + 昵称 + 时间/属地 + 正文 + 点赞),

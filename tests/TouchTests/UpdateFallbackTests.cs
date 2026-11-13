@@ -28,5 +28,18 @@ internal static class UpdateFallbackTests
         var noId = info.WithInstaller("https://github.com/a/b/releases/download/v1/x.exe", 123, null);
         check(noId.SetupAssetId == 0,
             "omitting the asset id keeps backwards compatibility (default 0)");
+
+        check(UpdateChecker.IsNewerVersion("v0.3.2", "0.3.2-test"),
+            "test prerelease detects the official release of the same version");
+        check(UpdateChecker.IsNewerVersion("v0.3.2-fix1", "0.3.2-test"),
+            "test prerelease detects a hotfix release of the same version");
+        check(UpdateChecker.IsNewerVersion("v0.3.3", "0.3.2-test"),
+            "test prerelease detects a higher version");
+        check(!UpdateChecker.IsNewerVersion("v0.3.2-test", "0.3.2-test"),
+            "identical test version does not trigger a duplicate update");
+        check(!UpdateChecker.IsNewerVersion("v0.3.2-test", "0.3.2"),
+            "official release does not downgrade to a prerelease tag");
+        check(UpdateChecker.IsNewerVersion("v0.3.2-test2", "0.3.2-test1"),
+            "higher prerelease suffix is recognized as newer");
     }
 }

@@ -139,6 +139,17 @@ public partial class SettingsPage : UserControl
         if (fallback2 != null) fallback2.Visibility = Visibility.Collapsed;
     }
 
+    private static void IsolatePeerRadioGroups(DependencyObject root, int targetIndex)
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(root))
+        {
+            if (child is RadioButton rb && !string.IsNullOrEmpty(rb.GroupName) && !rb.GroupName.StartsWith("__peer_", StringComparison.Ordinal))
+                rb.GroupName = $"__peer_{targetIndex}_{rb.GroupName}";
+            if (child is DependencyObject dep)
+                IsolatePeerRadioGroups(dep, targetIndex);
+        }
+    }
+
     private UIElement? CreatePeerPreview(int targetIndex)
     {
         var key = targetIndex switch
@@ -149,6 +160,9 @@ public partial class SettingsPage : UserControl
             _ => "GeneralTabTemplate"
         };
         if (SettingsTabContent?.TryFindResource(key) is not DataTemplate template) return null;
+        if (template.LoadContent() is not FrameworkElement body) return null;
+        body.DataContext = DataContext;
+        IsolatePeerRadioGroups(body, targetIndex);
         return new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
@@ -159,13 +173,12 @@ public partial class SettingsPage : UserControl
                 Margin = new Thickness(36, 12, 36, 32),
                 Children =
                 {
-                    new ContentControl
+                    new ContentPresenter
                     {
                         Margin = new Thickness(0, 4, 0, 0),
                         HorizontalAlignment = HorizontalAlignment.Stretch,
                         Focusable = false,
-                        Content = DataContext,
-                        ContentTemplate = template
+                        Content = body
                     }
                 }
             }

@@ -819,6 +819,22 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                            <TextBlock Text="弹幕描边" Style="{StaticResource SettingsRowTitleStyle}" />
+                            <TextBlock Text="为弹幕文字添加深色轮廓，高亮画面下更清晰"
+                                       Style="{StaticResource SettingsRowDescStyle}" />
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
+                                  VerticalAlignment="Center"
+                                  IsChecked="{Binding DanmakuOutline, Mode=TwoWay}" />
+                    </Grid>
+                    <Border Style="{StaticResource SettingsRowDivider}" />
+
+                    <Grid Style="{StaticResource SettingsRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
                             <TextBlock Text="智能屏蔽" Style="{StaticResource SettingsRowTitleStyle}" />
                             <TextBlock Text="过滤超长弹幕与刷屏弹幕, 减少加载量与卡顿"
                                        Style="{StaticResource SettingsRowDescStyle}" />

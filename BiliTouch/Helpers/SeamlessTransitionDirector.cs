@@ -80,7 +80,6 @@ internal static class SeamlessTransitionDirector
             }
 
             var (img, fallback) = ExtractVisualCover(imageCarrier ?? visualTarget);
-            var backdrop = CaptureWindowSnapshotBrush(win, visualTarget);
 
             var anchor = new SeamlessAnchor
             {
@@ -90,7 +89,7 @@ internal static class SeamlessTransitionDirector
                 CornerRadius = Math.Max(0, cornerRadius),
                 CoverImage = img,
                 FallbackBrush = fallback,
-                SourceWindowBackdrop = backdrop,
+                SourceWindowBackdrop = null,
                 SourceElement = new WeakReference<FrameworkElement>(visualTarget),
                 SourceWindow = win != null ? new WeakReference<Window>(win) : null,
                 CapturedAtTick = Environment.TickCount64,
@@ -113,10 +112,12 @@ internal static class SeamlessTransitionDirector
         try
         {
             var content = win.Content as FrameworkElement;
+            var target = content ?? (Visual)win;
             var width = content?.ActualWidth ?? win.ActualWidth;
             var height = content?.ActualHeight ?? win.ActualHeight;
-            int w = Math.Clamp((int)Math.Round(width), 64, 1920);
-            int h = Math.Clamp((int)Math.Round(height), 64, 1200);
+            var dpi = VisualTreeHelper.GetDpi(target);
+            int w = Math.Clamp((int)Math.Ceiling(width * dpi.DpiScaleX), 64, 4096);
+            int h = Math.Clamp((int)Math.Ceiling(height * dpi.DpiScaleY), 64, 4096);
             var rtb = new RenderTargetBitmap(w, h, 96.0 * w / width, 96.0 * h / height, PixelFormats.Pbgra32);
             var visual = new DrawingVisual();
             {
@@ -170,7 +171,7 @@ internal static class SeamlessTransitionDirector
             ScreenPixelRect = sourceDipRect,
             CornerRadius = Math.Max(0, cornerRadius),
             CoverImage = coverImage,
-            SourceWindowBackdrop = CaptureWindowSnapshotBrush(win),
+            SourceWindowBackdrop = null,
             SourceElement = sourceElement != null ? new WeakReference<FrameworkElement>(sourceElement) : null,
             SourceWindow = win != null ? new WeakReference<Window>(win) : null,
             CapturedAtTick = Environment.TickCount64,
@@ -331,8 +332,201 @@ internal static class SeamlessTransitionDirector
 
     internal static void Clear()
     {
+        StopReturnMorph();
         _pending = null;
         _lastActive = null;
+    }
+
+    private static Grid? _returnOverlay;
+    private static Panel? _returnHost;
+    private static EventHandler? _returnTick;
+
+    internal static void StopReturnMorph()
+    {
+        if (_returnTick != null)
+        {
+            CompositionTarget.Rendering -= _returnTick;
+            _returnTick = null;
+        }
+        if (_returnOverlay != null && _returnHost != null)
+        {
+            _returnHost.Children.Remove(_returnOverlay);
+        }
+        _returnOverlay = null;
+        _returnHost = null;
+    }
+
+    /// <summary>
+    /// 在宿主窗口（如主窗口）GPU 合成层上执行关闭视频页时的逆向「一镜到底」落位动画：
+    /// 播放器窗口立即隐藏露出实时宿主窗口，无需截取全屏位图快照，零闪烁、零重排。
+    /// </summary>
+    internal static bool PlayReturnMorph(
+        Window targetWindow,
+        Rect startScreenRect,
+        double startRadius,
+        Brush? heroBrush,
+        SeamlessAnchor? anchor,
+        string? bvid)
+    {
+        if (targetWindow.Content is not Panel rootPanel || !targetWindow.IsVisible || targetWindow.WindowState == WindowState.Minimized)
+            return false;
+        if (PresentationSource.FromVisual(rootPanel) is not { CompositionTarget: not null })
+            return false;
+
+        StopReturnMorph();
+
+        try
+        {
+            var sTl = rootPanel.PointFromScreen(startScreenRect.TopLeft);
+            var sBr = rootPanel.PointFromScreen(startScreenRect.BottomRight);
+            var startRect = new Rect(
+                Math.Min(sTl.X, sBr.X),
+                Math.Min(sTl.Y, sBr.Y),
+                Math.Max(16, Math.Abs(sBr.X - sTl.X)),
+                Math.Max(16, Math.Abs(sBr.Y - sTl.Y)));
+
+            var rootW = rootPanel.ActualWidth > 0 ? rootPanel.ActualWidth : targetWindow.ActualWidth;
+            var rootH = rootPanel.ActualHeight > 0 ? rootPanel.ActualHeight : targetWindow.ActualHeight;
+
+            Rect endRect = Rect.Empty;
+            double endRadius = 8.0;
+            if (anchor != null)
+            {
+                endRadius = Math.Max(6.0, anchor.CornerRadius);
+                if (anchor.SourceElement != null
+                    && anchor.SourceElement.TryGetTarget(out var liveEl)
+                    && liveEl.IsLoaded
+                    && liveEl.IsVisible
+                    && liveEl.ActualWidth >= 4
+                    && liveEl.ActualHeight >= 4
+                    && liveEl.IsDescendantOf(rootPanel))
+                {
+                    endRect = liveEl.TransformToAncestor(rootPanel).TransformBounds(new Rect(liveEl.RenderSize));
+                }
+                else if (anchor.ScreenPixelRect.Width >= 4 && anchor.ScreenPixelRect.Height >= 4)
+                {
+                    var eTl = rootPanel.PointFromScreen(anchor.ScreenPixelRect.TopLeft);
+                    var eBr = rootPanel.PointFromScreen(anchor.ScreenPixelRect.BottomRight);
+                    endRect = new Rect(
+                        Math.Min(eTl.X, eBr.X),
+                        Math.Min(eTl.Y, eBr.Y),
+                        Math.Max(8, Math.Abs(eBr.X - eTl.X)),
+                        Math.Max(8, Math.Abs(eBr.Y - eTl.Y)));
+                }
+            }
+
+            if (endRect.IsEmpty || endRect.Width < 8 || endRect.Height < 8)
+            {
+                var cw = Math.Clamp(rootW * 0.22, 220, 340);
+                var ch = cw * 9.0 / 16.0;
+                endRect = new Rect((rootW - cw) * 0.5, (rootH - ch) * 0.5, cw, ch);
+            }
+
+            var baseW = Math.Max(1, Math.Max(startRect.Width, endRect.Width));
+            var baseH = Math.Max(1, Math.Max(startRect.Height, endRect.Height));
+
+            var scale = new ScaleTransform(1, 1);
+            var translate = new TranslateTransform(0, 0);
+            var group = new TransformGroup();
+            group.Children.Add(scale);
+            group.Children.Add(translate);
+            var clip = new RectangleGeometry(new Rect(0, 0, baseW, baseH));
+
+            var hero = new Border
+            {
+                Width = baseW,
+                Height = baseH,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Background = heroBrush ?? Brushes.Black,
+                RenderTransformOrigin = new Point(0, 0),
+                RenderTransform = group,
+                Clip = clip,
+            };
+            RenderOptions.SetBitmapScalingMode(hero, BitmapScalingMode.Linear);
+
+            var backdrop = new Border
+            {
+                Background = new SolidColorBrush(Color.FromArgb(0x52, 0x0A, 0x0C, 0x10)),
+                Opacity = 1.0,
+            };
+
+            var overlay = new Grid
+            {
+                ClipToBounds = true,
+                IsHitTestVisible = false,
+            };
+            Panel.SetZIndex(overlay, 9999);
+            if (rootPanel is Grid grid)
+            {
+                Grid.SetRowSpan(overlay, Math.Max(1, grid.RowDefinitions.Count));
+                Grid.SetColumnSpan(overlay, Math.Max(1, grid.ColumnDefinitions.Count));
+            }
+            overlay.Children.Add(backdrop);
+            overlay.Children.Add(hero);
+            rootPanel.Children.Add(overlay);
+
+            _returnOverlay = overlay;
+            _returnHost = rootPanel;
+
+            double progress = 0;
+            double velocity = 0;
+            long lastTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            TimeSpan lastRenderTime = TimeSpan.MinValue;
+
+            void ApplyFrame(double p)
+            {
+                var rect = SpringMotion.InterpolateRect(startRect, endRect, p);
+                var sx = rect.Width / baseW;
+                var sy = rect.Height / baseH;
+                scale.ScaleX = sx;
+                scale.ScaleY = sy;
+                translate.X = rect.X;
+                translate.Y = rect.Y;
+
+                var radius = SpringMotion.InterpolateRadius(startRadius, endRadius, p);
+                var invScale = Math.Max(0.05, Math.Min(sx, sy));
+                clip.RadiusX = clip.RadiusY = radius / invScale;
+
+                backdrop.Opacity = 1.0 - SpringMotion.StageProgress(p, 0.0, 0.85);
+                hero.Opacity = 1.0 - SpringMotion.StageProgress(p, 0.86, 1.0) * 0.25;
+            }
+
+            ApplyFrame(0);
+
+            _returnTick = (_, e) =>
+            {
+                if (!targetWindow.IsVisible || targetWindow.WindowState == WindowState.Minimized)
+                {
+                    StopReturnMorph();
+                    return;
+                }
+                if (e is RenderingEventArgs frame)
+                {
+                    if (lastRenderTime == frame.RenderingTime) return;
+                    lastRenderTime = frame.RenderingTime;
+                }
+                var now = System.Diagnostics.Stopwatch.GetTimestamp();
+                var dt = Math.Clamp(System.Diagnostics.Stopwatch.GetElapsedTime(lastTicks, now).TotalSeconds, 0.001, 0.05);
+                lastTicks = now;
+
+                (progress, velocity) = SpringMotion.Advance(progress, velocity, 1.0, dt, SpringMotion.HyperOmegaInterrupt);
+                ApplyFrame(progress);
+
+                if (Math.Abs(progress - 1.0) < 0.008 && Math.Abs(velocity) < 0.12)
+                {
+                    StopReturnMorph();
+                    PlayReturnToSourceCard(bvid);
+                }
+            };
+            CompositionTarget.Rendering += _returnTick;
+            return true;
+        }
+        catch
+        {
+            StopReturnMorph();
+            return false;
+        }
     }
 
     private static FrameworkElement? FindCoverElement(DependencyObject root, int depth = 0)

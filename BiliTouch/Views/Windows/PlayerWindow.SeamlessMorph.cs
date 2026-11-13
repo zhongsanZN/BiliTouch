@@ -56,6 +56,7 @@ public partial class PlayerWindow
     private readonly SeamlessMorphState _seamless = new();
 
     internal bool IsSeamlessMorphRunning => _seamless.IsRunning;
+    internal bool IsSeamlessEntryActive => _seamless.EntryWindow != null && _seamless.IsRunning && !_seamless.IsReverse;
     internal double SeamlessMorphProgress => _seamless.Progress;
     internal Rect SeamlessCurrentRect => _seamless.CurrentRect;
 
@@ -105,15 +106,23 @@ public partial class PlayerWindow
         if (anchor == null) return;
 
         _seamless.PreShowPrepared = true;
-        ApplySeamlessWindowSnapshot(anchor.SourceWindowBackdrop,
-            anchor.SourceWindow?.TryGetTarget(out var sourceWindow) == true ? sourceWindow : null);
-        if (SeamlessBackdrop != null) SeamlessBackdrop.Opacity = 0;
+        if (SeamlessWindowSnapshot != null)
+        {
+            SeamlessWindowSnapshot.Background = null;
+            SeamlessWindowSnapshot.Opacity = 0;
+            SeamlessWindowSnapshot.Visibility = Visibility.Collapsed;
+        }
+        if (SeamlessBackdrop != null)
+        {
+            SeamlessBackdrop.Opacity = 0;
+            SeamlessBackdrop.Visibility = Visibility.Collapsed;
+        }
         if (SeamlessMorphOverlay != null) SeamlessMorphOverlay.Visibility = Visibility.Visible;
         if (!_vmemMode && VideoView != null) { DetachVideoOverlay(); VideoView.Visibility = Visibility.Hidden; }
-        if (LoadingPoster != null) LoadingPoster.Opacity = 0;
-        if (TopBar != null) TopBar.Opacity = 0;
-        if (InfoPanel != null) InfoPanel.Opacity = 0;
-        if (WebLeftPane != null) WebLeftPane.Opacity = 0;
+        if (LoadingPoster != null) LoadingPoster.Opacity = 1;
+        if (TopBar != null) TopBar.Opacity = 1;
+        if (InfoPanel != null) InfoPanel.Opacity = 1;
+        if (WebLeftPane != null) WebLeftPane.Opacity = 1;
         ApplySharedCoverArtwork(anchor.CoverImage, anchor.FallbackBrush);
         MountSeamlessEntryWindow(anchor);
     }
@@ -142,9 +151,13 @@ public partial class PlayerWindow
             stage.Topmost = false;
             stage.Topmost = true;
         }
-        ApplySeamlessWindowSnapshot(anchor.SourceWindowBackdrop,
-            anchor.SourceWindow?.TryGetTarget(out var sourceWindow) == true ? sourceWindow : null);
         ApplySharedCoverArtwork(anchor.CoverImage, anchor.FallbackBrush);
+        ApplyAlternateLayoutPreference(allowPreLoad: true);
+        if (_webLayoutMounted)
+        {
+            _webDockProgress = _webAnimationTo = 0;
+            _webSavedScroll = 0;
+        }
         return StartSeamlessMorph(startRect, ResolveVideoStageTargetRect(), anchor.CornerRadius, ResolveVideoStageTargetRadius(), reverse: false);
     }
 
@@ -153,7 +166,9 @@ public partial class PlayerWindow
     /// </summary>
     internal bool TryBeginSeamlessClose()
     {
-        if (_closing || _seamless.IsClosingMorph || !IsVisible || WindowState == WindowState.Minimized || _isFullscreen)
+        if (_closing || _seamless.IsClosingMorph || WindowState == WindowState.Minimized || _isFullscreen)
+            return false;
+        if (_seamless.EntryWindow == null && !IsVisible)
             return false;
         if (RootGrid == null || SeamlessMorphOverlay == null || SeamlessHeroCard == null)
             return false;
@@ -172,31 +187,90 @@ public partial class PlayerWindow
         StopDanmakuClock();
         DetachVideoOverlay();
 
-        FrameworkElement? sourceCard = null;
-        anchor?.SourceElement?.TryGetTarget(out sourceCard);
-        var backdrop = SeamlessTransitionDirector.CaptureWindowSnapshotBrush(srcWin, sourceCard) ?? anchor?.SourceWindowBackdrop;
-        ApplySeamlessWindowSnapshot(backdrop, srcWin);
-        SeamlessWindowSnapshot.Opacity = 0;
-
+        Brush? heroBrush = null;
         if (_vmemMode && VmemView?.CaptureFrame() is System.Windows.Media.Imaging.BitmapSource liveFrame)
         {
-            // ★ VmemView.Source 是解码线程持续 Lock/写入的 WriteableBitmap：
-            //   直接包进 ImageBrush 再 Freeze 会把它连带冻结，之后每一帧 PresentFrame
-            //   都抛 "IsFrozen 必须为 false"（关闭时那一串报错）。这里只冻结一份拷贝。
-            System.Windows.Media.Imaging.BitmapSource still = liveFrame;
-            try { still = liveFrame.Clone(); if (still.CanFreeze) still.Freeze(); } catch { still = liveFrame; }
-            var frameBrush = new ImageBrush(still)
+            var frameBrush = new ImageBrush(liveFrame)
             {
                 Stretch = Stretch.UniformToFill,
                 AlignmentX = AlignmentX.Center,
                 AlignmentY = AlignmentY.Center
             };
-            if (still.IsFrozen && frameBrush.CanFreeze) frameBrush.Freeze();
+            if (liveFrame.IsFrozen && frameBrush.CanFreeze) frameBrush.Freeze();
+            heroBrush = frameBrush;
             SeamlessHeroCard.Background = frameBrush;
         }
         else if (anchor?.CoverImage != null)
         {
             ApplySharedCoverArtwork(anchor.CoverImage, anchor.FallbackBrush);
+            heroBrush = SeamlessHeroCard.Background;
+        }
+        else
+        {
+            heroBrush = LoadingPoster?.Background ?? SeamlessHeroCard.Background ?? anchor?.FallbackBrush;
+        }
+
+        // 1. 若还在独立入场浮窗阶段被打断关闭，直接在 EntryWindow 原地反向收拢
+        if (_seamless.EntryWindow != null)
+        {
+            Rect entryCardRect;
+            double entryCardRadius = 8.0;
+            if (anchor != null && (string.IsNullOrEmpty(_currentBvid) || string.Equals(anchor.Bvid, _currentBvid, StringComparison.OrdinalIgnoreCase)))
+            {
+                entryCardRect = SeamlessTransitionDirector.ResolveStageStartRect(anchor, this, SeamlessStage);
+                entryCardRadius = Math.Max(6.0, anchor.CornerRadius);
+            }
+            else
+            {
+                var sw = SeamlessStage.ActualWidth > 0 ? SeamlessStage.ActualWidth : 1280;
+                var sh = SeamlessStage.ActualHeight > 0 ? SeamlessStage.ActualHeight : 760;
+                var cw = Math.Clamp(sw * 0.22, 220, 340);
+                entryCardRect = new Rect((sw - cw) * 0.5, (sh - cw * 9.0 / 16.0) * 0.5, cw, cw * 9.0 / 16.0);
+            }
+
+            _seamless.IsClosingMorph = true;
+            if (!StartSeamlessMorph(entryCardRect, ResolveVideoStageTargetRect(), entryCardRadius, ResolveVideoStageTargetRadius(), reverse: true))
+            {
+                _seamless.IsClosingMorph = false;
+                return false;
+            }
+            _seamless.Omega = SpringMotion.HyperOmegaInterrupt;
+            return true;
+        }
+
+        // 2. 正常关闭回宿主窗口（MainWindow）：立即隐藏播放器露出实时宿主窗口，
+        //    在宿主窗口 GPU 合成层上执行零截图、零重排、零闪烁的逆向落位动画。
+        if (srcWin != null)
+        {
+            Rect startScreenRect;
+            if (VideoSurface != null && VideoSurface.IsVisible && VideoSurface.ActualWidth > 4 && VideoSurface.ActualHeight > 4 &&
+                PresentationSource.FromVisual(VideoSurface) is { CompositionTarget: not null })
+            {
+                var tl = VideoSurface.PointToScreen(new Point(0, 0));
+                var br = VideoSurface.PointToScreen(new Point(VideoSurface.ActualWidth, VideoSurface.ActualHeight));
+                startScreenRect = new Rect(tl, br);
+            }
+            else
+            {
+                var target = ResolveVideoStageTargetRect();
+                var tl = PointToScreen(target.TopLeft);
+                var br = PointToScreen(target.BottomRight);
+                startScreenRect = new Rect(tl, br);
+            }
+
+            if (SeamlessTransitionDirector.PlayReturnMorph(srcWin, startScreenRect, ResolveVideoStageTargetRadius(), heroBrush, anchor, _currentBvid))
+            {
+                Close();
+                return true;
+            }
+        }
+
+        // 3. 无宿主窗口时的兜底（如独立单窗测试场景）：窗内反向收拢
+        if (SeamlessWindowSnapshot != null)
+        {
+            SeamlessWindowSnapshot.Background = null;
+            SeamlessWindowSnapshot.Opacity = 0;
+            SeamlessWindowSnapshot.Visibility = Visibility.Collapsed;
         }
 
         Rect cardRect;
@@ -292,7 +366,7 @@ public partial class PlayerWindow
 
         _seamless.IsRunning = true;
         ApplySeamlessMorphFrame(0);
-        if (_seamless.HasPresented || !_seamless.PresentationHooked) AttachSeamlessFrameClock();
+        if (_seamless.HasPresented || _seamless.EntryPresented || !_seamless.PresentationHooked) AttachSeamlessFrameClock();
         return true;
     }
 
@@ -309,14 +383,21 @@ public partial class PlayerWindow
             seconds,
             _seamless.Omega);
 
+        if (_seamless.EntryWindow != null && !_seamless.IsReverse && !_seamless.IsClosingMorph && !IsVisible && !_closing && _seamless.Progress >= 0.90)
+        {
+            RevealPlayerUnderSeamlessEntry();
+        }
+
         ApplySeamlessMorphFrame(_seamless.Progress);
 
-        var settleTolerance = _seamless.IsClosingMorph ? 0.015 : 0.00075;
-        var velTolerance = _seamless.IsClosingMorph ? 0.18 : 0.025;
+        var settleTolerance = _seamless.IsClosingMorph ? 0.015 : 0.002;
+        var velTolerance = _seamless.IsClosingMorph ? 0.18 : 0.04;
         if (Math.Abs(_seamless.Progress - _seamless.Target) < settleTolerance && Math.Abs(_seamless.Velocity) < velTolerance)
         {
             _seamless.Progress = _seamless.Target;
             _seamless.Velocity = 0;
+            if (_seamless.EntryWindow != null && !_seamless.IsReverse && !_seamless.IsClosingMorph && !IsVisible && !_closing)
+                RevealPlayerUnderSeamlessEntry();
             ApplySeamlessMorphFrame(_seamless.Progress);
             var wasClosing = _seamless.IsClosingMorph;
             StopSeamlessMorph();
@@ -325,6 +406,27 @@ public partial class PlayerWindow
                 Close();
             }
         }
+    }
+
+    private void RevealPlayerUnderSeamlessEntry()
+    {
+        if (IsVisible || _closing) return;
+        _seamless.InfoPanelShift.X = 0;
+        _seamless.InfoPanelShift.Y = 0;
+        if (TopBar != null) TopBar.Opacity = 1;
+        if (InfoPanel != null) InfoPanel.Opacity = 1;
+        if (WebLeftPane != null) WebLeftPane.Opacity = 1;
+        if (LoadingPoster != null) LoadingPoster.Opacity = 1;
+        ApplyAlternateLayoutPreference(allowPreLoad: true);
+        if (!_vmemMode && VideoView != null)
+        {
+            VideoView.Content = VideoAreaRoot;
+            VideoView.Visibility = Visibility.Visible;
+            HookOverlayKeyboard();
+        }
+        Show();
+        if (_webLayoutMounted) UpdateWebMeasurements();
+        Activate();
     }
 
     private void ApplySeamlessMorphFrame(double p)
@@ -346,6 +448,23 @@ public partial class PlayerWindow
         var invScale = Math.Max(0.05, Math.Min(sx, sy));
         _seamless.HeroClip.Rect = new Rect(0, 0, baseW, baseH);
         _seamless.HeroClip.RadiusX = _seamless.HeroClip.RadiusY = radius / invScale;
+
+        if (_seamless.EntryWindow != null)
+        {
+            // 独立入场浮窗阶段：仅驱动英雄卡片几何与末段溶入，不重绘整屏分层窗口透明度。
+            if (_seamless.IsReverse)
+            {
+                SeamlessHeroCard.Opacity = 1.0 - SpringMotion.StageProgress(p, 0.85, 1.0) * 0.25;
+                SeamlessHeroShade.Opacity = 0;
+            }
+            else
+            {
+                var dissolve = IsVisible ? SpringMotion.StageProgress(p, 0.90, 1.0) : 0.0;
+                SeamlessHeroCard.Opacity = 1.0 - dissolve * 0.95;
+                SeamlessHeroShade.Opacity = 0;
+            }
+            return;
+        }
 
         if (_seamless.IsReverse)
         {
@@ -471,7 +590,8 @@ public partial class PlayerWindow
 
     private void OnSeamlessMorphRendering(object? sender, EventArgs e)
     {
-        if (_closing || !IsVisible || WindowState == WindowState.Minimized)
+        var stageVisible = _seamless.EntryWindow != null ? _seamless.EntryWindow.IsVisible : IsVisible;
+        if (_closing || !stageVisible || WindowState == WindowState.Minimized)
         {
             StopSeamlessMorph();
             return;
@@ -491,6 +611,39 @@ public partial class PlayerWindow
     {
         try
         {
+            if (_seamless.EntryWindow != null && !IsVisible &&
+                PresentationSource.FromVisual(SeamlessStage) is { CompositionTarget: not null })
+            {
+                var dpi = VisualTreeHelper.GetDpi(SeamlessStage);
+                var wa = SystemParameters.WorkArea;
+                if (_seamless.EntryWindow.Owner is { } owner && PresentationSource.FromVisual(owner) != null)
+                {
+                    var handle = new WindowInteropHelper(owner).Handle;
+                    if (handle != IntPtr.Zero)
+                    {
+                        var bounds = System.Windows.Forms.Screen.FromHandle(handle).WorkingArea;
+                        wa = new Rect(bounds.Left / dpi.DpiScaleX, bounds.Top / dpi.DpiScaleY,
+                            bounds.Width / dpi.DpiScaleX, bounds.Height / dpi.DpiScaleY);
+                    }
+                }
+                var targetRect = WindowState == WindowState.Maximized
+                    ? wa
+                    : new Rect(
+                        double.IsNaN(Left) ? wa.Left : Left,
+                        double.IsNaN(Top) ? wa.Top : Top,
+                        ActualWidth > 0 ? ActualWidth : (Width > 0 ? Width : wa.Width),
+                        ActualHeight > 0 ? ActualHeight : (Height > 0 ? Height : wa.Height));
+                var webLayout = _webLayoutMounted || ShouldUseWebPlayerLayout;
+                var rail = _isFullscreen || _isFillWindow ? 0 : InfoPanelWidthFor(targetRect.Width);
+                var vw = Math.Max(320, targetRect.Width - rail - (webLayout ? 8 : 0));
+                var th = _isFullscreen ? 0 : 44;
+                var vh = webLayout
+                    ? Math.Min(vw * 9.0 / 16.0, Math.Max(180, targetRect.Height - th))
+                    : Math.Max(180, targetRect.Height - th);
+                var tl = SeamlessStage.PointFromScreen(new Point(targetRect.Left * dpi.DpiScaleX, (targetRect.Top + th) * dpi.DpiScaleY));
+                var br = SeamlessStage.PointFromScreen(new Point((targetRect.Left + vw) * dpi.DpiScaleX, (targetRect.Top + th + vh) * dpi.DpiScaleY));
+                return new Rect(tl, br);
+            }
             if (_seamless.EntryWindow != null && VideoSurface.IsVisible && VideoSurface.ActualWidth > 4)
                 return new Rect(SeamlessStage.PointFromScreen(VideoSurface.PointToScreen(new Point())),
                     SeamlessStage.PointFromScreen(VideoSurface.PointToScreen(new Point(VideoSurface.ActualWidth, VideoSurface.ActualHeight))));

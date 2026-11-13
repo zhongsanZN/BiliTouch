@@ -49,6 +49,74 @@ public static class DashRemuxer
 {
     private const int CopyBufSize = 256 * 1024;
 
+    /// <summary>快速探测 .m4s 的媒体轨道类型("vide" / "soun"), 只读取文件头与 moov。</summary>
+    internal static string? TryDetectTrackKind(string path)
+    {
+        try
+        {
+            using var fs = OpenRead(path);
+            var len = fs.Length;
+            var hdr = new byte[16];
+            var pos = DetectM4sStartOffset(fs);
+            while (pos + 8 <= len)
+            {
+                fs.Position = pos;
+                if (!ReadExactly(fs, hdr, 0, 8)) break;
+                long size = ReadU32(hdr, 0);
+                var type = Encoding.ASCII.GetString(hdr, 4, 4);
+                var header = 8;
+                if (size == 1)
+                {
+                    if (!ReadExactly(fs, hdr, 8, 8)) break;
+                    size = (long)ReadU64(hdr, 8);
+                    header = 16;
+                }
+                else if (size == 0) size = len - pos;
+                if (size < header || pos + size > len) break;
+                if (type == "moov")
+                {
+                    if (size > 8 * 1024 * 1024) return null;
+                    var moov = ReadBox(fs, pos, size);
+                    var hdlr = FindPath(moov, header, moov.Length, "trak", "mdia", "hdlr");
+                    if (hdlr.Count == 3 && hdlr[2].Offset + 20 <= moov.Length)
+                        return Encoding.ASCII.GetString(moov, hdlr[2].Offset + 16, 4);
+                    return null;
+                }
+                if (type == "mdat" || type == "moof") break;
+                pos += size;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>剥离单路 .m4s 前置的 ASCII '0' 混淆头写出完整可播文件(原文件不动)。</summary>
+    internal static bool TryStripLeadingZeros(string srcPath, string outPath, out string? error)
+    {
+        error = null;
+        var tmp = outPath + ".tmp";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
+            using var src = OpenRead(srcPath);
+            var skip = DetectM4sStartOffset(src);
+            using (var dst = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, CopyBufSize, false))
+                CopyBytes(src, skip, dst, src.Length - skip);
+            if (File.Exists(outPath)) File.Delete(outPath);
+            File.Move(tmp, outPath);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+        finally
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+        }
+    }
+
     /// <summary>合流。失败返回 false 并给出原因(调用方会当作"没这个优化", 照旧远端播放)</summary>
     public static bool TryMerge(string videoPath, string audioPath, string outPath, out string? error)
     {
@@ -651,12 +719,35 @@ public static class DashRemuxer
     private static FileStream OpenRead(string path) =>
         new(path, FileMode.Open, FileAccess.Read, FileShare.Read, CopyBufSize, false);
 
+    /// <summary>
+    /// 识别 B 站桌面客户端 .m4s 前置的 ASCII '0' 混淆填充(如 9 字节 "000000000")。
+    /// 标准 MP4/m4s 的第 4..7 字节就是 "ftyp", 返回 0; 命中填充时返回 ftyp box 真实起点。
+    /// </summary>
+    internal static long DetectM4sStartOffset(FileStream fs)
+    {
+        if (fs.Length < 12) return 0;
+        Span<byte> probe = stackalloc byte[32];
+        fs.Position = 0;
+        var n = fs.Read(probe);
+        if (n >= 8 && probe[4] == (byte)'f' && probe[5] == (byte)'t' &&
+            probe[6] == (byte)'y' && probe[7] == (byte)'p')
+            return 0;
+        for (var offset = 1; offset <= n - 8; offset++)
+        {
+            if (probe[offset - 1] != (byte)'0') break;
+            if (probe[offset + 4] == (byte)'f' && probe[offset + 5] == (byte)'t' &&
+                probe[offset + 6] == (byte)'y' && probe[offset + 7] == (byte)'p')
+                return offset;
+        }
+        return 0;
+    }
+
     private static List<Box> TopLevelBoxes(FileStream fs)
     {
         var list = new List<Box>();
         var len = fs.Length;
         var hdr = new byte[16];
-        long pos = 0;
+        long pos = DetectM4sStartOffset(fs);
         while (pos + 8 <= len)
         {
             fs.Position = pos;

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -53,6 +54,61 @@ public partial class PlayerWindow
         await LoadCommentsAsync();
     }
 
+    private ApiClient.VideoCommentCursor? _nextCommentPage;
+    private bool _loadingCommentPage;
+    private bool _commentPageFailed;
+
+    private void UpdateCommentPageButton()
+    {
+        BtnMoreComments.Visibility = _nextCommentPage != null && !IsCommentDetailOpen
+            ? Visibility.Visible : Visibility.Collapsed;
+        BtnMoreComments.IsEnabled = !_loadingCommentPage && CommentLoadingRing.Visibility != Visibility.Visible;
+        BtnMoreComments.Content = _loadingCommentPage ? "正在加载更多评论…" :
+            _commentPageFailed ? "加载失败，点击重试" : "加载更多评论";
+    }
+
+    private void PrefetchCommentPage(ScrollViewer scroll, ScrollChangedEventArgs e)
+    {
+        if (_nextCommentPage != null && !_commentPageFailed && e.VerticalChange > 0
+            && CommentList.IsVisible && ReferenceEquals(e.OriginalSource, scroll)
+            && scroll.ScrollableHeight - scroll.VerticalOffset < scroll.ViewportHeight * 0.75)
+            _ = LoadNextCommentPageAsync();
+    }
+
+    private async void OnMoreCommentsClick(object sender, RoutedEventArgs e) => await LoadNextCommentPageAsync();
+
+    private async Task LoadNextCommentPageAsync()
+    {
+        var cursor = _nextCommentPage;
+        if (_closing || _loadingCommentPage || cursor == null || IsCommentDetailOpen
+            || CommentLoadingRing.Visibility == Visibility.Visible
+            || CommentList.ItemsSource is not ObservableCollection<CommentItem> comments) return;
+        var version = _commentRequestVersion;
+        var generation = _loadGen;
+        var aid = _aid;
+        _loadingCommentPage = true;
+        _commentPageFailed = false;
+        UpdateCommentPageButton();
+        try
+        {
+            var page = await Svc.Api.GetVideoCommentsPageAsync(aid, 30, _loadedCommentSort, cursor);
+            if (_closing || version != _commentRequestVersion || generation != _loadGen || aid != _aid) return;
+            if (!page.ok) { _commentPageFailed = true; return; }
+            var seen = new HashSet<long>(comments.Select(c => c.Rpid));
+            foreach (var item in page.items)
+                if (seen.Add(item.Rpid)) comments.Add(item);
+            _nextCommentPage = page.next;
+        }
+        finally
+        {
+            if (version == _commentRequestVersion && generation == _loadGen && aid == _aid && !_closing)
+            {
+                _loadingCommentPage = false;
+                UpdateCommentPageButton();
+            }
+        }
+    }
+
     private bool _commentsLoaded;
 
     /// <summary>
@@ -73,17 +129,20 @@ public partial class PlayerWindow
     /// <summary>当前视频的根评论总数(来自接口 cursor.all_count, 不是本页条数)</summary>
     private long _commentTotal;
 
+    private int _commentRequestVersion;
+    private int _loadedCommentSort = 3;
     private Task? _commentsRequest;
     private (long aid, int sort, int generation) _commentsRequestKey;
     private Task LoadCommentsAsync(bool force = false)
     {
         var key = (_aid, _commentSort, _loadGen);
         if (_commentsRequest is { IsCompleted: false } && key == _commentsRequestKey && !force) return _commentsRequest;
+        if (_commentsLoaded && !force) return Task.CompletedTask;
         _commentsRequestKey = key;
-        return _commentsRequest = LoadCommentsCoreAsync(force);
+        return _commentsRequest = LoadCommentsCoreAsync(force, ++_commentRequestVersion);
     }
 
-    private async Task LoadCommentsCoreAsync(bool force = false)
+    private async Task LoadCommentsCoreAsync(bool force, int requestVersion)
     {
         if (_closing) return;
         // ★ 记住发起时的 aid: 网络回来时用户可能已经换片了。没有这道的话,
@@ -91,6 +150,22 @@ public partial class PlayerWindow
         var aidAtStart = _aid;
         var generationAtStart = _loadGen;
         var sortAtStart = _commentSort;
+        bool IsCurrent() => !_closing && _aid == aidAtStart && generationAtStart == _loadGen
+            && sortAtStart == _commentSort && requestVersion == _commentRequestVersion;
+        void ShowLoadError(string message)
+        {
+            CommentLoadingRing.Visibility = Visibility.Collapsed;
+            CommentHint.Text = message;
+            BtnRetryComments.Visibility = Visibility.Visible;
+            UpdateCommentPageButton();
+            if (_commentsLoaded)
+            {
+                _effectiveCommentSort = _loadedCommentSort;
+                if (IsCommentDetailOpen) SortDetailReplies();
+            }
+            UpdateCommentSortUi(IsCommentDetailOpen || CommentList.Items.Count > 0, _effectiveCommentSort);
+        }
+
         WriteLibVLCDebug($"\n[Comments] start aid={aidAtStart} loaded={_commentsLoaded} force={force}\n");
         // force: 刚发表完评论要重新拉一次(rpid/楼层/审核状态本地编不出来)。
         // 但"看过就不再拉"这个短路必须保留 —— 切 Tab 会反复调到这里, 不短路就是白刷接口。
@@ -111,7 +186,10 @@ public partial class PlayerWindow
             UpdateCommentSortUi(visible: false);
             return;
         }
+        BtnRetryComments.Visibility = Visibility.Collapsed;
         CommentLoadingRing.Visibility = Visibility.Visible;
+        _loadingCommentPage = false;
+        UpdateCommentPageButton();
         CommentHint.Text = force ? "正在刷新评论…" : "加载评论中…";
         // 重拉期间先把两个词收起来: 否则"正在刷新评论…"右边还挂着可点的排序词, 会出现
         // "点一下又刷新一次"的连点窗口期。
@@ -120,7 +198,8 @@ public partial class PlayerWindow
         _effectiveCommentSort = _commentSort;
         try
         {
-            var (cmtOk, cmtErr, list, total) = await Svc.Api.GetCommentsAsync(aidAtStart, 30, _commentSort);
+            var (cmtOk, cmtErr, list, total, next) = await Svc.Api.GetVideoCommentsPageAsync(aidAtStart, 30, sortAtStart, null);
+            if (!IsCurrent()) return;
             // 实际拿到的列表按哪个顺序排(热门的"空列表回退"会把它改成 2)。
             // ★ 不回写 _commentSort: 那是用户跨视频记住的偏好, 不能因为一个视频热门为空
             //   就永久改成时间; 排序入口只按本次实际顺序点亮。
@@ -130,12 +209,15 @@ public partial class PlayerWindow
             //   同一时刻 mode=2(时间) 能正常返回 14 条。接口不给热门列表, 不是我们解析错。
             //   这里在"热门 + 只剩置顶"时按时间重拉一次, 排序入口切到「时间」——
             //   否则热门一直亮着、列表却只有置顶, 用户会以为评论区坏了。
-            if (cmtOk && _commentSort == 3 && total > 0 && list.Count <= 1)
+            var hotRootCount = list.Count(c => !c.IsPinned);
+            if (cmtOk && _commentSort == 3 && total > hotRootCount &&
+                ((total >= 10 && hotRootCount <= 3) || list.Count <= 1))
             {
-                var (fbOk, _, fbList, fbTotal) = await Svc.Api.GetCommentsAsync(aidAtStart, 30, 2);
+                var (fbOk, _, fbList, fbTotal, fbNext) = await Svc.Api.GetVideoCommentsPageAsync(aidAtStart, 30, 2, null);
                 if (fbOk && fbList.Count > list.Count && _commentSort == 3)
                 {
                     list = fbList;
+                    next = fbNext;
                     if (fbTotal > 0) total = fbTotal;
                     cmtOk = true;
                     cmtErr = null;
@@ -144,8 +226,15 @@ public partial class PlayerWindow
             }
             await Dispatcher.InvokeAsync(() =>
             {
-                if (_closing || _aid != aidAtStart || generationAtStart != _loadGen || sortAtStart != _commentSort) return;
-                CommentList.ItemsSource = list;
+                if (!IsCurrent()) return;
+                if (!cmtOk)
+                {
+                    ShowLoadError(cmtErr ?? "评论加载失败");
+                    return;
+                }
+                CommentList.ItemsSource = new ObservableCollection<CommentItem>(list.DistinctBy(c => c.Rpid));
+                _nextCommentPage = next;
+                _commentPageFailed = false;
                 // ★ 立刻暖前 5 条评论的头像(纯暖缓存, 不碰任何控件)。放在 ItemsSource 之后:
                 //   此时评论容器还没生成、Cover.Source 绑定还没跑 —— 由我们先把下载+解码发出去,
                 //   等容器真的生成时 CoverLoader 直接命中(它自带 in-flight 去重), 头像一上屏就有图,
@@ -153,17 +242,17 @@ public partial class PlayerWindow
                 PrimeCommentAvatars(list, aidAtStart);
                 _commentsLoaded = cmtOk;
                 _commentTotal = total;
-                _effectiveCommentSort = displaySort;
+                _loadedCommentSort = _effectiveCommentSort = displaySort;
                 // 热门没数据回退成时间时, 详情页里的楼中楼也要跟着换回"时间"顺序:
                 // 否则按钮亮的是「时间」, 眼前回复还是「热门」序。
                 if (IsCommentDetailOpen) SortDetailReplies();
                 CommentLoadingRing.Visibility = Visibility.Collapsed;
+                UpdateCommentPageButton();
                 // ★ 原来"接口失败"和"这视频真的一条评论都没有"都显示"暂无评论" ——
                 //   网络失败被伪装成了正常状态。现在失败时说清原因。
                 // ★ 条数用接口给的**总数**(_commentTotal), 不再拿 list.Count —— 一页只拉 30 条,
                 //   拿它当总数的话几千条评论的视频会显示成"共 30 条评论"。总数缺失(0)时才回落到本页条数。
-                CommentHint.Text = !cmtOk ? (cmtErr ?? "评论加载失败")
-                    : list.Count == 0 ? "暂无评论"
+                CommentHint.Text = list.Count == 0 ? "暂无评论"
                     : $"共 {VideoItem.FormatCount(total > 0 ? total : list.Count)} 条评论";
                 // 只有真的加载成功且有评论, 排序入口才出现
                 // ★ 详情页开着时不受"列表为空/失败"影响: 用户还在详情页里,
@@ -174,12 +263,7 @@ public partial class PlayerWindow
         }
         catch
         {
-            if (_closing || _aid != aidAtStart) return;
-            CommentLoadingRing.Visibility = Visibility.Collapsed;
-            CommentHint.Text = "评论加载失败";
-            // 详情页里切换排序失败时保留两个排序词: 否则用户被卡在详情页,
-            // 连"再点一次重试/切回原排序"的入口都没有了。
-            UpdateCommentSortUi(visible: IsCommentDetailOpen);
+            if (IsCurrent()) ShowLoadError("评论加载失败");
         }
     }
 
@@ -287,6 +371,8 @@ public partial class PlayerWindow
         }
     }
 
+    private async void OnRetryCommentsClick(object sender, RoutedEventArgs e) => await LoadCommentsAsync(force: true);
+
     private void OnCommentSortHotClick(object sender, RoutedEventArgs e) => SetCommentSort(3);
 
     private void OnCommentSortTimeClick(object sender, RoutedEventArgs e) => SetCommentSort(2);
@@ -390,6 +476,7 @@ public partial class PlayerWindow
         SetReplyTarget(threadRoot, focus: false);
         CommentList.Visibility = Visibility.Collapsed;
         CommentDetailPanel.Visibility = Visibility.Visible;
+        UpdateCommentPageButton();
         UpdateCommentFabVisibility();
         // "楼中楼自动展开所有评论": 进来就把这条线程剩下的回复补全, 不再要用户点"展开更多"
         if (threadRoot.HasMoreReplies) _ = AutoCompleteThreadRepliesAsync(threadRoot);
@@ -419,6 +506,7 @@ public partial class PlayerWindow
             {
                 var (_, _, more) = await Svc.Api.GetReplyRepliesAsync(aidAtStart, root.Rpid, pn: root.RepliesNextPage, ps: 20);
                 if (_closing || _aid != aidAtStart) return;
+                if (!IsCommentDetailOpen || !ReferenceEquals(_detailThreadRoot, root)) return;
                 if (more.Count == 0)
                 {
                     // 服务端取不全: 用实际条数收口, 否则按钮会一直挂着
@@ -459,16 +547,19 @@ public partial class PlayerWindow
         CloseCommentPicture();
         // ★ 记下"刚才在看哪一条", 供返回后滚回去用(见 _commentReturnRpid)。
         //   必须在清空 _detailThreadRoot **之前**取, 否则信息就没了。
-        _commentReturnRpid = _detailThreadRoot?.Rpid ?? 0;
+        var closingRoot = _detailThreadRoot;
+        _commentReturnRpid = closingRoot?.Rpid ?? 0;
         CommentDetailPanel.Visibility = Visibility.Collapsed;
         CommentDetailCard.Content = null;
         CommentDetailHost.DataContext = null;
+        closingRoot?.TrimRepliesToPreview();
         _detailThreadRoot = _detailFocus = null;
         ClearReplyTarget();
         // tab 文案与返回链接一起还原
         TabComments.Content = "评论";
         BtnBackToComments.Visibility = Visibility.Collapsed;
         CommentList.Visibility = Visibility.Visible;
+        UpdateCommentPageButton();
         // ★ 用户报"从某条评论的回复返回后, 列表回到顶部, 得重新下拉找那条评论"
         //   (2026-10-13): 默认回到**刚才那条评论**所在的位置。
         //   ★ 走 Dispatcher 排队: 上面刚把 CommentList 从 Collapsed 恢复成 Visible,

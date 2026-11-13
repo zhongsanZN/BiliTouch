@@ -998,6 +998,19 @@ public class CommentItem : System.ComponentModel.INotifyPropertyChanged
         PreviewReplies.Clear();
         foreach (var r in Replies.Take(max)) PreviewReplies.Add(r);
     }
+
+    /// <summary>
+    /// 关闭评论详情后回收已加载的楼中楼, 仅保留列表预览(最多 PreviewReplies 条),
+    /// 并将下一页游标复位, 下次进详情页时重新向后拉取。
+    /// </summary>
+    public void TrimRepliesToPreview()
+    {
+        if (Replies.Count <= PreviewReplies.Count) return;
+        Replies.Clear();
+        foreach (var r in PreviewReplies) Replies.Add(r);
+        RepliesNextPage = 1;
+        NotifyRepliesChanged();
+    }
 }
 
 /// <summary>云端收藏夹(账号下的一个收藏夹分组)</summary>
@@ -1590,6 +1603,9 @@ public class AppSettings
 
     /// <summary>弹幕速度档位(0 最慢 ~ 4 最快)。与 SettingsStore 同名属性是读写契约。</summary>
     public int DanmakuSpeedLevel { get; set; } = 2;
+
+    /// <summary>弹幕文字描边(默认不开启)。与 SettingsStore 同名属性是读写契约。</summary>
+    public bool DanmakuOutline { get; set; } = false;
 
     // ------------------------------------------------------------ 列表屏蔽(FilterService)
 

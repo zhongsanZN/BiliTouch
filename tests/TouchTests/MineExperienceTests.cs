@@ -111,13 +111,13 @@ internal static class MineExperienceTests
         check(edit==1 && item.IsSelected,"finger hold selects a card once without release toggling it off");
         finger.Down(80,60);finger.Move(80,95);Pump(600);finger.Up(80,95);
         check(edit==1 && refresh==0,$"drag cancels hold and a short pull never refreshes (edit={edit}, refresh={refresh})");
-        scroll.ScrollToTop();Pump(80);finger.Down(80,60);finger.Move(80,155);finger.Up(80,155);Pump(60);
+        scroll.ScrollToTop();Pump(80);finger.Down(80,60);finger.Move(80,195);finger.Up(80,195);Pump(60);
         check(refresh==1,"pulling from the top refreshes once on release");
         scroll.ScrollToVerticalOffset(300);Pump(100);finger.Down(80,60);finger.Move(80,165);finger.Up(80,165);Pump(60);
         check(refresh==1,"mid-list vertical drag does not refresh");
         scroll.ScrollToTop();Pump(100);
-        card.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice,Environment.TickCount,120){RoutedEvent=UIElement.PreviewMouseWheelEvent,Source=card});
-        card.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice,Environment.TickCount,120){RoutedEvent=UIElement.PreviewMouseWheelEvent,Source=card});Pump(260);
+        for(var n=0;n<4;n++)card.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice,Environment.TickCount,120){RoutedEvent=UIElement.PreviewMouseWheelEvent,Source=card});
+        Pump(260);
         check(refresh==2,"trackpad and mouse wheel overscroll refresh once after the stream ends");
         card.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice,Environment.TickCount,MouseButton.Left){RoutedEvent=Mouse.PreviewMouseDownEvent,Source=card});Pump(600);
         card.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice,Environment.TickCount,MouseButton.Left){RoutedEvent=Mouse.PreviewMouseUpEvent,Source=card});

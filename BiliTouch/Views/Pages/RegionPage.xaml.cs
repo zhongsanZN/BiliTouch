@@ -33,6 +33,7 @@ public partial class RegionPage : UserControl
     public RegionPage()
     {
         InitializeComponent();
+        ModuleGestures.Install(this, RefreshRegionAsync, hintHost: RegionBody);
         // 屏蔽筛掉一批卡片后补下一页(否则分区页会停在半屏空白上)
         FilterService.Instance.Changed += OnFilterApplied;
     }
@@ -170,10 +171,12 @@ public partial class RegionPage : UserControl
     /// ★ 由页面(而不是 VM)来做"滚回顶部": 刷新会把整批内容换成服务端此刻的快照, 停在
     ///   原来的滚动位置毫无意义; 而滚动位置是视图的事(首页 OnRefreshClick 同款分工)。
     /// </summary>
-    private void OnRefreshClick(object sender, RoutedEventArgs e)
+    private async Task RefreshRegionAsync()
     {
         if (DataContext is not RegionViewModel vm) return;
         ListScroll.ScrollToTop();
-        _ = vm.RefreshAsync();
+        await vm.RefreshAsync();
     }
+
+    private void OnRefreshClick(object sender, RoutedEventArgs e) => _ = RefreshRegionAsync();
 }

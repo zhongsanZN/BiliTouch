@@ -122,7 +122,7 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
             currentTop = currentBottom;
         }
 
-        if (first < 0) first = 0;
+        if (first < 0) return (count - 1, count - 1);
         if (last < first) last = Math.Min(count - 1, first + 10);
         last = Math.Min(count - 1, last);
 
@@ -145,6 +145,7 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
         var width = double.IsFinite(availableSize.Width) && availableSize.Width > 0
             ? availableSize.Width
             : (_scroll?.ViewportWidth > 0 ? _scroll.ViewportWidth : (_lastWidth > 0 ? _lastWidth : 400));
+        if (width != _lastWidth) _heights.Clear();
         _lastWidth = width;
 
         var (first, last) = VisibleRange(count);
@@ -218,15 +219,19 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
         var generator = ItemContainerGenerator;
         var width = finalSize.Width;
 
+        int nextIndex = -1;
+        double top = 0;
         for (int i = 0; i < InternalChildren.Count; i++)
         {
             var child = InternalChildren[i];
             var index = generator.IndexFromGeneratorPosition(new GeneratorPosition(i, 0));
             if (index < 0) continue;
 
-            var top = GetTop(index);
+            if (index != nextIndex) top = GetTop(index);
             var h = _heights.TryGetValue(index, out var cached) && cached > 0 ? cached : child.DesiredSize.Height;
             child.Arrange(new Rect(0, top, width, h));
+            top += GetHeight(index);
+            nextIndex = index + 1;
         }
 
         return finalSize;

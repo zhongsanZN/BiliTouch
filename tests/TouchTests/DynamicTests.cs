@@ -320,6 +320,40 @@ internal static class DynamicTests
             check(Descendants<DynamicPicturePanel>(window).Any(), $"render picture panel {count}");
         }
         // Exercise the native page with a full detail response and real WPF templates.
+        handler.PagedComments = true;
+        var paged = new DynamicDetailViewModel(Parse(Draw));
+        Wait(paged.InitializeAsync());
+        check(paged.Comments.Count == 20 && paged.CanLoadMore && handler.CommentPages.SequenceEqual(new[]{1}),
+            "opening detail requests only the first comment page");
+        var firstComment = paged.Comments[0];
+        Wait(paged.LoadCommentsAsync());
+        check(paged.CommentLoadError.Length > 0 && !paged.CanLoadMore && paged.Comments.Count == 20,
+            "page failure keeps loaded comments and pauses prefetch");
+        Wait(paged.RetryCommentsAsync());
+        check(handler.CommentPages.SequenceEqual(new[]{1,2,2}) && ReferenceEquals(firstComment, paged.Comments[0])
+            && paged.Comments.Count == 21 && !paged.HasMore, "retry resumes failed page in place");
+        handler.PagedComments = false;
+        var player = new BiliTouch.Views.PlayerWindow();
+        try
+        {
+            const BindingFlags hidden = BindingFlags.Instance | BindingFlags.NonPublic;
+            typeof(BiliTouch.Views.PlayerWindow).GetField("_aid", hidden)!.SetValue(player, 123L);
+            var load = typeof(BiliTouch.Views.PlayerWindow).GetMethod("LoadCommentsAsync", hidden)!;
+            var playerComments = (ItemsControl)player.FindName("CommentList");
+            var retry = (Button)player.FindName("BtnRetryComments");
+            Wait((Task)load.Invoke(player, new object[] { true })!);
+            var original = playerComments.ItemsSource;
+            handler.FailPlayerRefresh = true;
+            Wait((Task)load.Invoke(player, new object[] { true })!);
+            check(playerComments.Items.Count == 1 && ReferenceEquals(original, playerComments.ItemsSource) && retry.Visibility == Visibility.Visible,
+                "player keeps its comments and exposes retry after refresh failure");
+            handler.FailPlayerRefresh = false;
+            retry.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Wait((Task)load.Invoke(player, new object[] { false })!);
+            check(playerComments.Items.Count == 1 && !ReferenceEquals(original, playerComments.ItemsSource) && retry.Visibility == Visibility.Collapsed,
+                "player retry refreshes the visible list");
+        }
+        finally { player.Close(); }
         var detail=new DynamicDetailPage(draw);
         window.Content=detail;Pump();Wait(detail.ViewModel.InitializeAsync());
         while(detail.ViewModel.Loading)Pump();
@@ -353,12 +387,13 @@ internal static class DynamicTests
         var detailScroll=Descendants<ScrollViewer>(detailList).First();
         PlayerCommentsScrollTests.Trace(detailScroll,detailList.ItemContainerGenerator.ContainerFromIndex(0) as UIElement ?? detailScroll,"dynamic comments",check);
         PlayerCommentsScrollTests.ScrollBench(detailScroll,detailList,"dynamic comments");
-        var home=new HomeViewModel {IsPopularTab=true,IsRecommendTab=false};
-        typeof(HomeViewModel).GetField("_popularPage",BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(home,1);
+        var home = new HomeViewModel();
+        home.PopularItems.Add(new VideoItem { Bvid = "cached-first-page" });
+        Wait(home.SwitchToPopularAsync());
         handler.FailPopular=true;Wait(home.LoadMoreAsync());
         check((int)typeof(HomeViewModel).GetField("_popularPage",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(home)! == 1,"home failed page retains cursor");
         handler.FailPopular=false;Wait(home.LoadMoreAsync());
-        check(handler.Paths.Last().Contains("pn=2") && home.PopularItems.Count==1,"home retries same page successfully");
+        check(handler.Paths.Last().Contains("pn=2") && home.PopularItems.Count==2,"home retries same page successfully");
         var gallery=new BiliTouch.Views.Windows.ImagePreviewWindow();gallery.Show();
         Wait(gallery.LoadGalleryAsync(new[]{"",""}));
         check(((TextBlock)gallery.FindName("GalleryIndex")).Text=="1 / 2","gallery starts at selected image");
@@ -451,6 +486,9 @@ internal static class DynamicTests
     {
         public List<string> Paths {get;}=new();
         public List<string> Forms {get;}=new();
+        public bool FailPlayerRefresh { get; set; }
+        public bool PagedComments { get; set; }
+        public List<int> CommentPages { get; } = new();
         public bool FailPost {get;set;}
         public bool FailPopular {get;set;}
         public bool DelayPopular {get;set;}
@@ -469,6 +507,18 @@ internal static class DynamicTests
             else if(url.Contains("/popular?")) json=FailPopular?"{\"code\":-400,\"message\":\"failed\"}":"""{"code":0,"data":{"list":[{"bvid":"BV1234567890","title":"home test","owner":{"mid":1,"name":"UP"}}]}}""";
             else if(url.Contains("/detail?"))json="{\"code\":0,\"data\":{\"item\":"+Draw+"}}";
             else if(url.Contains("/reply/reply?"))json="""{"code":0,"data":{"replies":[{"rpid":8101,"content":{"message":"reply one"},"member":{"uname":"first"}},{"rpid":8102,"content":{"message":"reply two"},"member":{"uname":"second"}}]}}""";
+            else if (url.Contains("/reply/main?"))
+                json = FailPlayerRefresh ? """{"code":-400,"message":"refresh failed"}"""
+                    : """{"code":0,"data":{"cursor":{"all_count":1},"replies":[{"rpid":4321,"content":{"message":"player comment"},"member":{"uname":"viewer"}}]}}""";
+            else if (PagedComments && url.Contains("/reply?"))
+            {
+                int page = url.Contains("pn=2") ? 2 : 1;
+                CommentPages.Add(page);
+                var replies = Enumerable.Range(page == 1 ? 1 : 21, page == 1 ? 20 : 1)
+                    .Select(id => new { rpid = id, content = new { message = "comment" }, member = new { uname = "user" } });
+                json = page == 2 && CommentPages.Count == 2 ? """{"code":-400,"message":"page unavailable"}"""
+                    : System.Text.Json.JsonSerializer.Serialize(new { code = 0, data = new { page = new { count = 21 }, replies } });
+            }
             else if(url.Contains("/reply?"))json="""{"code":0,"data":{"page":{"count":1},"replies":[{"rpid":8001,"rcount":2,"content":{"message":"这是原生评论区，可选择文字、回复和点赞。"},"member":{"uname":"viewer"},"like":5}]}}""";
             else json="""{"code":0,"data":{"has_more":false,"offset":"terminal","items":[{"id_str":"PLACEHOLDER","type":"DYNAMIC_TYPE_WORD","text":"fixture"}]}}""".Replace("PLACEHOLDER",id);
             return new HttpResponseMessage(HttpStatusCode.OK) {Content=new StringContent(json)};

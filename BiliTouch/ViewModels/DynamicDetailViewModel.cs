@@ -9,7 +9,9 @@ public sealed class DynamicDetailViewModel : ObservableObject
 {
     public DynamicItem Item { get; }
     public ObservableCollection<CommentItem> Comments { get; } = new();
-    private bool _initialized, _loading, _sending, _hasMore=true;
+    private Task? _initialization;
+    private bool _commentsReady, _loading, _sending, _hasMore=true;
+    private readonly HashSet<long> _commentIds = new();
     private int _page, _generation, _sort=2;
     private string _error="", _draft="", _status="", _detailError="";
     private bool _detailLoading;
@@ -23,7 +25,7 @@ public sealed class DynamicDetailViewModel : ObservableObject
     public bool Sending { get=>_sending; private set {SetProperty(ref _sending,value);OnPropertyChanged(nameof(CanSend));OnPropertyChanged(nameof(CanEdit));} }
     public bool CanEdit => !Sending;
     public bool HasMore { get=>_hasMore; private set {SetProperty(ref _hasMore,value);OnPropertyChanged(nameof(CanLoadMore));} }
-    public bool CanLoadMore => !Loading && HasMore;
+    public bool CanLoadMore => _commentsReady && !Loading && HasMore && CommentLoadError.Length == 0;
     public string Error { get=>_error;private set=>SetProperty(ref _error,value); }
     public string Status { get=>_status;private set=>SetProperty(ref _status,value); }
     public string Draft {get=>_draft;set {SetProperty(ref _draft,value);OnPropertyChanged(nameof(CanSend));} }
@@ -33,12 +35,20 @@ public sealed class DynamicDetailViewModel : ObservableObject
     public bool HasReplyTarget => _reply!=null || Reposting;
     private long _root;
     public DynamicDetailViewModel(DynamicItem item,bool repost=false) { Item=item;Reposting=repost; }
-    public async Task InitializeAsync()
+    public Task InitializeAsync() => _initialization ??= InitializeCoreAsync();
+
+    private async Task InitializeCoreAsync()
     {
-        if(_initialized)return;
-        _initialized=true;
+        var identity = (Item.CommentOid, Item.CommentType);
+        var hasIdentity = long.TryParse(identity.CommentOid, out var oid) && oid > 0 && identity.CommentType > 0;
+        _commentsReady = hasIdentity;
+        var comments = hasIdentity ? LoadCommentsAsync(true) : Task.CompletedTask;
         await RefreshDetailAsync();
-        await LoadCommentsAsync(true);
+        _commentsReady = true;
+        if (!hasIdentity || identity != (Item.CommentOid, Item.CommentType))
+            await LoadCommentsAsync(true);
+        else
+            await comments;
     }
     public async Task RefreshDetailAsync()
     {
@@ -62,36 +72,70 @@ public sealed class DynamicDetailViewModel : ObservableObject
         finally {DetailLoading=false;}
 
     }
-    public async Task LoadCommentsAsync(bool reset=false)
+    private string _commentLoadError = "";
+    public string CommentLoadError
     {
-        if(!reset && (Loading || !HasMore || Error.Length>0))return;
-        int generation=reset?++_generation:_generation;
-        var sort=_sort;
-        Loading=true;Error="";
-        int page=reset?1:_page+1;
-        bool replace=reset;
+        get => _commentLoadError;
+        private set
+        {
+            SetProperty(ref _commentLoadError, value);
+            OnPropertyChanged(nameof(CanLoadMore));
+        }
+    }
+
+    public Task RetryCommentsAsync()
+    {
+        if (Loading || CommentLoadError.Length == 0) return Task.CompletedTask;
+        CommentLoadError = "";
+        return LoadCommentsAsync(_page == 0);
+    }
+
+    public async Task LoadCommentsAsync(bool reset = false)
+    {
+        if (!_commentsReady || (!reset && !CanLoadMore)) return;
+        int generation = reset ? ++_generation : _generation;
+        if (reset) _page = 0;
+        int page = _page + 1;
+        Loading = true;
+        CommentLoadError = "";
         try
         {
-            // A useful initial batch, followed by viewport-driven continuation.
-            for(int batch=0;batch<(reset?3:2);batch++,page++)
+            var result = await Svc.Api.GetDynamicRepliesAsync(Item.CommentOid, Item.CommentType, page, _sort);
+            if (generation != _generation) return;
+            if (!result.ok)
             {
-                var r=await Svc.Api.GetDynamicRepliesAsync(Item.CommentOid,Item.CommentType,page,sort);
-                if(generation!=_generation)return;
-                if(!r.ok){Error=r.err??"评论加载失败";break;}
-                if(replace){Comments.Clear();replace=false;}
-                var seen=new HashSet<long>(Comments.Select(c=>c.Rpid));
-                int added=0;
-                foreach(var c in r.items)if(seen.Add(c.Rpid)){Comments.Add(c);added++;}
-                _page=page;HasMore=r.hasMore && added>0;
-                Status=Comments.Count==0?"还没有评论，来说两句吧":"";
-                if(!HasMore)break;
-                await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+                CommentLoadError = result.err ?? "评论加载失败";
+                return;
             }
+            if (reset)
+            {
+                Comments.Clear();
+                _commentIds.Clear();
+                _replyPages.Clear();
+            }
+            foreach (var comment in result.items)
+                if (_commentIds.Add(comment.Rpid)) Comments.Add(comment);
+            _page = page;
+            HasMore = result.hasMore;
+            Status = Comments.Count == 0 ? "还没有评论，来说两句吧" : "";
         }
-        catch(Exception ex){if(generation==_generation)Error="评论加载失败："+ex.Message;}
-        finally{if(generation==_generation)Loading=false;}
+        catch (Exception ex)
+        {
+            if (generation == _generation) CommentLoadError = "评论加载失败：" + ex.Message;
+        }
+        finally
+        {
+            if (generation == _generation) Loading = false;
+        }
     }
-    public Task SortAsync(bool newest) { _sort=newest?0:2;return LoadCommentsAsync(true); }
+
+    public Task SortAsync(bool newest)
+    {
+        var sort = newest ? 0 : 2;
+        if (_sort == sort) return Task.CompletedTask;
+        _sort = sort;
+        return LoadCommentsAsync(true);
+    }
     public void ComposeReply(CommentItem? reply,long root=0)
     {
         _reply=reply;_root=root>0?root:reply?.Rpid ?? 0;Reposting=false;NotifyComposer();
@@ -120,6 +164,7 @@ public sealed class DynamicDetailViewModel : ObservableObject
     {
         if(c.LikeBusy || !long.TryParse(Item.CommentOid,out var oid))return;
         c.LikeBusy=true;
+        Error="";
         try
         {
             var liked=!c.IsLiked;
@@ -130,24 +175,26 @@ public sealed class DynamicDetailViewModel : ObservableObject
         catch(Exception ex) {Error="点赞失败："+ex.Message;}
         finally {c.LikeBusy=false;}
     }
-    private readonly Dictionary<long,int> _replyPages=new();
-    private readonly HashSet<long> _replyBusy=new();
+    private readonly Dictionary<CommentItem,int> _replyPages=new();
+    private readonly HashSet<CommentItem> _replyBusy=new();
     public async Task LoadRepliesAsync(CommentItem c)
     {
-        if(!long.TryParse(Item.CommentOid,out var oid) || !_replyBusy.Add(c.Rpid))return;
+        if(!long.TryParse(Item.CommentOid,out var oid) || !_replyBusy.Add(c))return;
+        Error="";
         try
         {
-            int page=_replyPages.GetValueOrDefault(c.Rpid)+1;
+            int page=_replyPages.GetValueOrDefault(c)+1;
             var r=await Svc.Api.GetReplyRepliesAsync(oid,c.Rpid,page,20,Item.CommentType);
+            if(!Comments.Contains(c))return;
             if(!r.ok) {Error=r.err ?? "回复加载失败";return;}
             if(page==1)c.Replies.Clear();
             var seen=new HashSet<long>(c.Replies.Select(x=>x.Rpid));
             foreach(var reply in r.items)if(seen.Add(reply.Rpid))c.Replies.Add(reply);
-            _replyPages[c.Rpid]=page;
+            _replyPages[c]=page;
             if(r.items.Count<20)c.ReplyCount=c.Replies.Count;
             c.NotifyRepliesChanged();
         }
-        catch(Exception ex) {Error="回复加载失败："+ex.Message;}
-        finally {_replyBusy.Remove(c.Rpid);}
+        catch(Exception ex) {if(Comments.Contains(c))Error="回复加载失败："+ex.Message;}
+        finally {_replyBusy.Remove(c);}
     }
 }

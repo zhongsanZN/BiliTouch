@@ -3829,6 +3829,16 @@ public partial class ApiClient
     public async Task<(bool ok, string? err, List<CommentItem> items, long total)> GetCommentsAsync(
         long aid, int count = 20, int mode = 3)
     {
+        var page = await GetVideoCommentsPageAsync(aid, count, mode, null);
+        return (page.ok, page.err, page.items, page.total);
+    }
+
+    internal sealed record VideoCommentCursor(long Next, string Offset, int Page);
+
+    internal async Task<(bool ok, string? err, List<CommentItem> items, long total, VideoCommentCursor? next)> GetVideoCommentsPageAsync(
+        long aid, int count, int mode, VideoCommentCursor? after)
+    {
+        VideoCommentCursor? next = null;
         var result = new List<CommentItem>();
         var total = 0L;
         try
@@ -3839,8 +3849,14 @@ public partial class ApiClient
                 ["type"] = "1",
                 ["mode"] = mode.ToString(),
                 ["ps"] = count.ToString(),
-                ["pn"] = "1"
+                ["pn"] = (after?.Page ?? 1).ToString()
             };
+            if (after != null)
+            {
+                ps["next"] = after.Next.ToString();
+                if (after.Offset.Length > 0)
+                    ps["pagination_str"] = JsonSerializer.Serialize(new { offset = after.Offset });
+            }
             // ★ fingerprint: 按**登录态**决定带不带 Cookie。
             //
             // 实测(2026-09-25, 冷启动单请求, 同一个 aid):
@@ -3855,12 +3871,21 @@ public partial class ApiClient
                 "https://api.bilibili.com/x/v2/reply/main", ps,
                 fingerprint: SessionManager.Instance.HasLogin);
             if (code != 0 || data == null)
-                return (false, msg ?? $"获取评论失败 (code {code})", result, 0);
+                return (false, msg ?? $"获取评论失败 (code {code})", result, 0, null);
 
             // 根评论总数(不受 ps 分页影响)。缺失时保持 0, 由调用方回落到"本页条数"。
             if (data.Value.TryGetProperty("cursor", out var cursor) &&
                 cursor.ValueKind == JsonValueKind.Object)
+            {
                 total = GetLongSafe(cursor, "all_count");
+                var position = GetLongLoose(cursor, "next");
+                var pagination = TryObject(cursor, "pagination_reply");
+                var offset = pagination.HasValue ? GetStr(pagination.Value, "next_offset") : "";
+                if ((!cursor.TryGetProperty("is_end", out var end) || end.ValueKind != JsonValueKind.True)
+                    && (position > 0 || offset.Length > 0)
+                    && (after == null || position != after.Next || offset != after.Offset))
+                    next = new(position, offset, (after?.Page ?? 1) + 1);
+            }
 
             // 本稿件的 UP 主 mid: 用来给"UP 主自己的评论"打 [UP] 标
             var upperMid = data.Value.TryGetProperty("upper", out var up) &&
@@ -3873,7 +3898,7 @@ public partial class ApiClient
             //   实测(data.top.upper.rpid=315658667873 在 replies 里搜不到)。
             //   ★ 放在 replies **之前**: 置顶本来就该排在最前面。
             //   ★ 两个都可能有值, 但语义上只应展示一条置顶, 所以 upper 优先、admin 兜底。
-            if (data.Value.TryGetProperty("top", out var top) && top.ValueKind == JsonValueKind.Object)
+            if (after == null && data.Value.TryGetProperty("top", out var top) && top.ValueKind == JsonValueKind.Object)
             {
                 var topEl = TryObject(top, "upper") ?? TryObject(top, "admin");
                 if (topEl != null)
@@ -3901,9 +3926,9 @@ public partial class ApiClient
             // 堆栈首行一起带出去: "invalid format"这类错误只有堆栈才能定位到具体字段
             var stackTop = (ex.StackTrace ?? "").Split('\n')
                 .FirstOrDefault(l => l.Contains("BiliTouch") && !l.Contains("ThrowHelper")) ?? "";
-            return (false, "解析评论失败: " + ex.Message + (stackTop.Length > 0 ? " @ " + stackTop.Trim() : ""), result, 0);
+            return (false, "解析评论失败: " + ex.Message + (stackTop.Length > 0 ? " @ " + stackTop.Trim() : ""), result, 0, null);
         }
-        return (true, null, result, total);
+        return (true, null, result, total, next);
     }
 
     /// <summary>取对象里的某个子对象; 不存在或是 null 时返回 null(置顶评论可能只有 upper 或只有 admin)</summary>

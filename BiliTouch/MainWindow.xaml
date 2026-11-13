@@ -337,7 +337,7 @@
                 不再另开一个独立窗口 —— 独立窗口看起来像换了个程序, 关掉还容易顺手把主界面一起关掉。
                 它盖在 PageHost 之上, 自带一条"返回"头; 切换到任何导航页都会自动关掉它。
             -->
-            <Grid x:Name="EmbeddedHost" Visibility="Collapsed" Opacity="0"
+            <Grid x:Name="EmbeddedHost" Visibility="Collapsed"
                   Background="{DynamicResource AppBackgroundBrush}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />

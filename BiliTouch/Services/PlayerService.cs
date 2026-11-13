@@ -113,6 +113,15 @@ public class PlayerService
     public void PlayLocalFile(string path, string? title = null)
         => Play(title, win => win.PlayLocalFile(path));
 
+    /// <summary>播放离线缓存条目(支持原生缓存及哔哩哔哩官方 Windows 客户端缓存)。</summary>
+    public void PlayOfflineEntry(OfflineEntry entry)
+    {
+        var display = string.IsNullOrWhiteSpace(entry.PartTitle) || entry.Title == entry.PartTitle
+            ? entry.Title
+            : $"{entry.Title} · {entry.PartTitle}";
+        Play(display, win => win.PlayOfflineEntry(entry));
+    }
+
     /// <summary>
     /// 三种播放入口的共同外壳: 取(或新建)播放器窗口 → 交给具体分支起播 → 设标题。
     ///
@@ -135,10 +144,13 @@ public class PlayerService
         win.PresentPrepared(() =>
         {
             if (generation != _openGeneration || win.IsClosing) return;
-            if (!win.IsVisible) win.Show();
             start(win);
             if (!string.IsNullOrEmpty(title)) win.Title = title + " - BiliTouch";
-            win.Activate();
+            if (!win.IsSeamlessEntryActive)
+            {
+                if (!win.IsVisible) win.Show();
+                win.Activate();
+            }
         });
 
         // Shared entry waits for the source-card surface to render before Show().

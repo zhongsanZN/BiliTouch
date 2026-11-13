@@ -78,6 +78,12 @@ internal static class MineMessagesTests
    Save(host,Path.Combine(artifacts,"messages-private-cards.png"));host.Close();
    var robot=messageVm.Sessions.Single(s=>s.IsOfficial);Wait(messageVm.LoadThreadAsync(robot));messageVm.Draft="test";
    check(!messageVm.CanSend && !messageVm.CanCompose,"official notification channels do not offer an ineffective reply action");
+   var sessionsBefore = messageVm.Sessions.ToList();
+   messageVm.Channel = "新增粉丝";
+   Wait(messageVm.EnsureLoadedAsync());
+   messageVm.Channel = "私信";
+   Wait(messageVm.EnsureLoadedAsync());
+   check(messageVm.Sessions.SequenceEqual(sessionsBefore), "returning to cached message channels preserves loaded items without clearing/refetching");
    CheckRefresh(check,artifacts);
    CheckTouch(check,artifacts,1);CheckTouch(check,artifacts,2);
    check(handler.Sends==0,"read and render verification never sends a private message");

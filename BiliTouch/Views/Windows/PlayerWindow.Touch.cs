@@ -102,6 +102,13 @@ public partial class PlayerWindow
             return;
         }
         // Use the routed source, never IsMouseOver: a finger does not need a mouse cursor.
+        if (DanmakuAreaPopup?.IsOpen == true && !IsDescendantOf(e.OriginalSource as DependencyObject, BtnDanmakuArea) &&
+            !IsDescendantOf(e.OriginalSource as DependencyObject, ControlBar))
+        {
+            CloseDanmakuAreaPopup();
+            e.Handled = true;
+            return;
+        }
         if (IsTouchControl(e.OriginalSource as DependencyObject) || AnyPlayerPopupOpen || _mp == null) return;
         // ★ 首次用手指点视频: 自动弹一次手势说明(控制栏那个「触控」按钮已经删了)。
         //   只弹一次; 这一次触摸**只用于展示**, 不继续走单击/长按 —— 否则同一帧里

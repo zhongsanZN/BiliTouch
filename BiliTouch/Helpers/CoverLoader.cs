@@ -168,8 +168,9 @@ public static class CoverLoader
     /// 2560/4096 两档只有图片预览窗用(它传 4096 当"解码上限"): 不加这两档的话
     /// Quantize 会把 4096 砍回 1280, 预览大图时清晰度白白回退一截。
     /// 列表/头像的请求永远 ≤1280, 落在低档, 不受影响。
+    /// 256 / 384 / 576 档覆盖 125%~175% DPI 缩放下的卡片宽度, 减少像素内存冗余而不损失清晰度。
     /// </summary>
-    private static readonly int[] WidthSteps = { 64, 128, 192, 320, 480, 720, 960, 1280, 2560, 4096 };
+    private static readonly int[] WidthSteps = { 64, 128, 192, 256, 320, 384, 480, 576, 720, 960, 1280, 2560, 4096 };
 
     static CoverLoader()
     {
@@ -255,7 +256,12 @@ public static class CoverLoader
     {
         try
         {
-            var cacheFile = Path.Combine(AppPaths.CacheDir, Hashing.Md5Hex(url) + ".jpg");
+            var isLocalFile = !url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                && Path.IsPathFullyQualified(url);
+            var cacheFile = isLocalFile
+                ? url
+                : Path.Combine(AppPaths.CacheDir, Hashing.Md5Hex(url) + ".jpg");
             // ★★★ 下载与写盘分开记账(2026-10-11 修"封面加载不出来、标题却正常"):
             //   原来这两句在同一个 try 里, 一旦 File.WriteAllBytesAsync 抛异常(缓存目录不可写/
             //   磁盘满/被杀软锁住), 就走 catch 里的 `if (!File.Exists(cacheFile)) return null` ——
@@ -264,7 +270,7 @@ public static class CoverLoader
             //   ⇒ 现在把字节留在 downloaded 里, 写盘失败就退回内存解码: 封面照常显示,
             //     只是这一张不进磁盘缓存(下次再看会重新下载)。
             byte[]? downloaded = null;
-            if (!File.Exists(cacheFile))
+            if (!isLocalFile && !File.Exists(cacheFile))
             {
                 // ★ 下载闸门(2026-11-08): 一次铺满一屏会同时发起 20+ 条 HTTP,
                 //   叠上滚动加载就是几十条。8 个并发既够跑满带宽, 又不至于把 CDN 惹毛

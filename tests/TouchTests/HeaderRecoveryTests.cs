@@ -34,7 +34,7 @@ internal static class HeaderRecoveryTests
             handler.Release.TrySetResult();Until(()=>vm.Users.Count==1536 && !vm.LoadingUsers);
             check(vm.Users.Select(u=>u.Mid).Distinct().Count()==1536,"all 1536 following authors load automatically without a scroll gesture");
             var follow=new FollowPage{DataContext=vm};
-            var pages=new UserControl[]{new HomePage(),follow,new MinePage(),new SettingsPage{DataContext=new SettingsViewModel()}};
+            var pages=new UserControl[]{new HomePage(),follow,new MinePage(),new MessagesPage{DataContext=new MessagesViewModel()},new SettingsPage{DataContext=new SettingsViewModel()}};
             foreach(var page in pages) {
                 var shell=new Grid();shell.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(96)});shell.ColumnDefinitions.Add(new ColumnDefinition());
                 shell.Children.Add(new SkinSurface{Kind="Rail"});Grid.SetColumn(page,1);shell.Children.Add(page);window.Content=shell;

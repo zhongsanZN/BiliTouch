@@ -30,6 +30,9 @@ public partial class MessagesViewModel : ObservableObject
     private SessionAccount _conversationAccount;
     private int _accountGeneration;
     private int _conversationGeneration;
+    private bool _privateLoaded;
+    private int _cachedPrivateUnread;
+    private string _privateError = "";
 
     public bool Loading { get => _loading; private set => SetProperty(ref _loading, value); }
     public string Error { get => _error; private set => SetProperty(ref _error, value); }
@@ -95,6 +98,8 @@ public partial class MessagesViewModel : ObservableObject
         _pendingThread = _loadingThread = null;
         Loading = ThreadLoading = LoadingOlder = Sending = NotificationLoading = false;
         _hasOlder = false; NotificationMore = false; _fansPage = 1; _noticeCursors.Clear();
+        _privateLoaded = false; _cachedPrivateUnread = 0; _privateError = "";
+        _channelCache.Clear();
         Current = null; Draft = ""; Sessions.Clear(); Messages.Clear(); Notifications.Clear();
         ThreadError = ""; Error = Svc.Session.HasLogin ? "" : "查看消息需要先登录 B 站账号";
         OnPropertyChanged(nameof(CanCompose)); OnPropertyChanged(nameof(CanSend));
@@ -103,15 +108,26 @@ public partial class MessagesViewModel : ObservableObject
     private void EnsureAccount()
     { if (!_account.IsCurrent) OnAccountChanged(null, EventArgs.Empty); }
 
-    /// <summary>加载会话列表</summary>
-    public async Task LoadAsync()
+    /// <summary>按需加载当前子频道：首次进入或未读数增加时拉取，已缓存则直接复用。</summary>
+    public Task EnsureLoadedAsync() => LoadAsync(force: false);
+
+    /// <summary>加载会话列表（或当前通知频道）。</summary>
+    public Task LoadAsync() => LoadAsync(force: true);
+
+    public async Task LoadAsync(bool force)
     {
         EnsureAccount();
-        if(!IsPrivateChannel){await LoadNotificationsAsync();return;}
+        if(!IsPrivateChannel){await LoadNotificationsAsync(more:false,force:force);return;}
+        if (!force && _privateLoaded && !HasChannelUnreadIncrease("私信"))
+        {
+            Error = _privateError;
+            return;
+        }
         if (Loading) return;
         if (!Svc.Session.HasLogin)
         {
-            Error = "查看私信需要先登录 B 站账号";
+            _privateError = "查看私信需要先登录 B 站账号";
+            Error = _privateError;
             return;
         }
 
@@ -126,7 +142,8 @@ public partial class MessagesViewModel : ObservableObject
             if (!account.IsCurrent || generation != _accountGeneration) return;
             if (!ok || sessions == null)
             {
-                Error = err ?? "会话列表加载失败";
+                _privateError = err ?? "会话列表加载失败";
+                Error = _privateError;
                 return;
             }
 
@@ -135,19 +152,28 @@ public partial class MessagesViewModel : ObservableObject
 
             Sessions.Clear();
             foreach (var s in sessions.OrderByDescending(x => x.Timestamp)) Sessions.Add(s);
+            _privateLoaded = true;
+            _cachedPrivateUnread = ChannelUnreadCount("私信");
+            ChannelCacheUpdated?.Invoke();
             if (Sessions.Count == 0)
             {
                 Current = null; Messages.Clear(); Draft = "";
-                Error = "没有会话记录";
+                _privateError = "没有会话记录";
+                Error = _privateError;
                 return;
             }
 
+            _privateError = "";
             reload = Sessions.FirstOrDefault(s => s.TalkerId == keepId) ?? Sessions[0];
             Current = reload;
         }
         catch (Exception ex)
         {
-            if (account.IsCurrent && generation == _accountGeneration) Error = ex.Message;
+            if (account.IsCurrent && generation == _accountGeneration)
+            {
+                _privateError = ex.Message;
+                Error = _privateError;
+            }
         }
         finally
         {

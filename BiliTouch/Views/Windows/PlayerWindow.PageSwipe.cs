@@ -27,7 +27,24 @@ public partial class PlayerWindow
     private int _infoSettleTarget = -1;
     private double _infoWheelContactDx;
     private double _infoTouchOrigin, _infoWheelOrigin;
-    private bool _infoWheelPreviewActive;
+    private bool _infoWheelPreviewActive, _capturingInfoTouch;
+    private PanningMode? _savedInfoPanning;
+
+    private void SuspendInfoScrollPanning()
+    {
+        if (InfoScroll == null || _savedInfoPanning != null) return;
+        _savedInfoPanning = InfoScroll.PanningMode;
+        if (_savedInfoPanning != PanningMode.None)
+            InfoScroll.SetCurrentValue(ScrollViewer.PanningModeProperty, PanningMode.None);
+        BiliTouch.Helpers.TouchSupport.CancelPendingTap();
+    }
+
+    private void RestoreInfoScrollPanning()
+    {
+        if (InfoScroll == null || _savedInfoPanning is not { } saved) return;
+        _savedInfoPanning = null;
+        InfoScroll.SetCurrentValue(ScrollViewer.PanningModeProperty, saved);
+    }
 
     private double TakeOverInfoSettle()
     {
@@ -96,17 +113,23 @@ public partial class PlayerWindow
             if (Math.Max(Math.Abs(dx), Math.Abs(dy)) < PageDragSlop) return false;
             if (Math.Abs(dx) <= Math.Abs(dy) * 1.2)
             {
+                _infoSwipeArmed = false;
                 return false;
             }
             _infoHorizontalDecided = true;
             if (!_infoSwipeArmed) return false;
             _infoDragDx = dx;
+            SuspendInfoScrollPanning();
             if (_pendingCaptureDevice != null)
             {
-                try { InfoPanel.CaptureTouch(_pendingCaptureDevice); } catch { /* 已被别处捕获 */ }
+                _capturingInfoTouch = true;
+                try { InfoPanel.CaptureTouch(_pendingCaptureDevice); }
+                catch { /* 已被别处捕获 */ }
+                finally { _capturingInfoTouch = false; }
                 _pendingCaptureDevice = null;
             }
             _infoDraggingPage = BeginPageDrag();
+            if (!_infoDraggingPage) RestoreInfoScrollPanning();
         }
         _infoDragDx = dx + _infoTouchOrigin;
         if (!_infoDraggingPage) return true;
@@ -256,6 +279,7 @@ public partial class PlayerWindow
             _infoPageAnimating = false;
             _infoHorizontalDecided = false;
             _infoDraggingPage = false;
+            RestoreInfoScrollPanning();
         }
         _infoActiveSettle = Complete;
         _cancelInfoSettle = () =>
@@ -268,6 +292,7 @@ public partial class PlayerWindow
             o.BeginAnimation(TranslateTransform.XProperty, null);
             c.X = cx; o.X = ox;
             _infoPageAnimating = false;
+            RestoreInfoScrollPanning();
         };
 
         if (switchPage)
@@ -367,16 +392,18 @@ public partial class PlayerWindow
         _infoHorizontalDecided = false;
         _pendingCaptureDevice = null;
         try { InfoPanel.ReleaseTouchCapture(e.TouchDevice); } catch { }
+        RestoreInfoScrollPanning();
     }
 
     private void OnInfoTouchLostCapture(object? sender, TouchEventArgs e)
     {
-        if (ReferenceEquals(e.TouchDevice.Captured, InfoPanel)) return;
+        if (_capturingInfoTouch || !ReferenceEquals(e.OriginalSource, InfoPanel) || ReferenceEquals(e.TouchDevice.Captured, InfoPanel)) return;
         _infoSwipeArmed = false;
         if (_infoDraggingPage) FinishPageDrag(switchPage: false, PageIndex);
         _infoDraggingPage = false;
         _infoHorizontalDecided = false;
         _infoDragDx = 0;
+        RestoreInfoScrollPanning();
     }
 
     private void OnInfoStylusDown(object? sender, StylusEventArgs e)

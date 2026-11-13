@@ -58,6 +58,30 @@ public static class MemoryTrim
     /// </summary>
     public static void RequestTrimAndRelease() => Request(releaseWorkingSet: true, heavy: true);
 
+    private const long IdleReleaseMinWorkingSetBytes = 180L * 1024 * 1024;
+    private const int IdleReleaseCooldownMs = 60_000;
+    private static long _lastIdleReleaseTick;
+
+    /// <summary>
+    /// 窗口空闲/最小化/收进托盘后按冷却门槛交还空闲工作集(有活跃播放器时不触发)。
+    /// </summary>
+    public static void RequestIdleRelease()
+    {
+        if (BiliTouch.Services.VlcCore.HasActivePlayers) return;
+        try
+        {
+            var ws = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
+            if (ws > 0 && ws < IdleReleaseMinWorkingSetBytes) return;
+        }
+        catch { }
+
+        var now = Environment.TickCount64;
+        var last = Interlocked.Read(ref _lastIdleReleaseTick);
+        if (last != 0 && now - last < IdleReleaseCooldownMs) return;
+        Interlocked.Exchange(ref _lastIdleReleaseTick, now);
+        Request(releaseWorkingSet: true, heavy: true);
+    }
+
     private static void Request(bool releaseWorkingSet, bool heavy)
     {
         lock (Gate)

@@ -42,7 +42,7 @@ public partial class DynamicDetailPage : UserControl
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,new Action(async()=>
         {
             _prefetchScheduled=false;
-            if(!IsLoaded || !ViewModel.CanLoadMore || ViewModel.Error.Length>0)return;
+            if(!IsLoaded || !ViewModel.CanLoadMore)return;
             var scroll=FindScroll(CommentList);
             if(scroll!=null && NearCommentEnd(scroll))
                 await ViewModel.LoadCommentsAsync();
@@ -50,7 +50,7 @@ public partial class DynamicDetailPage : UserControl
     }
     private async void OnHot(object sender,RoutedEventArgs e) { if(IsLoaded)await ViewModel.SortAsync(false); }
     private async void OnNewest(object sender,RoutedEventArgs e) { if(IsLoaded)await ViewModel.SortAsync(true); }
-    private async void OnRetry(object sender,RoutedEventArgs e)=>await ViewModel.LoadCommentsAsync(true);
+    private async void OnRetry(object sender,RoutedEventArgs e)=>await ViewModel.RetryCommentsAsync();
     private async void OnReloadDetail(object sender,RoutedEventArgs e)=>await ViewModel.RefreshDetailAsync();
     private async void OnSend(object sender,RoutedEventArgs e)=>await ViewModel.SendAsync();
     private async void OnLike(object sender,RoutedEventArgs e) { if(sender is FrameworkElement {DataContext:CommentItem c})await ViewModel.LikeCommentAsync(c); }
@@ -124,6 +124,7 @@ public partial class DynamicDetailPage : UserControl
         InlineImageSurface.SetValue(BiliTouch.Helpers.Cover.SourceProperty,null);
         InlineImageSurface.SetValue(BiliTouch.Helpers.Cover.SourceProperty,urls[_inlineIndex]);
         InlineImageHost.BringIntoView();
+        InlineImageHost.Focus();
     }
 
     private void OnInlineImagePrev(object sender,RoutedEventArgs e)
@@ -132,12 +133,22 @@ public partial class DynamicDetailPage : UserControl
     private void OnInlineImageNext(object sender,RoutedEventArgs e)
     { if(_inlineIndex<_inlineImages.Count-1)ShowInlineImage(_inlineImages,_inlineIndex+1,InlineImageTitle.Text.Replace(" 的图片","")); }
 
-    private void OnInlineImageClose(object sender,RoutedEventArgs e)
+    private void OnPagePreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || InlineImageHost.Visibility != Visibility.Visible) return;
+        CloseInlineImage();
+        e.Handled = true;
+    }
+
+    private void OnInlineImageClose(object sender,RoutedEventArgs e) => CloseInlineImage();
+
+    private void CloseInlineImage()
     {
         InlineImageHost.Visibility=Visibility.Collapsed;
         InlineImageSurface.SetValue(BiliTouch.Helpers.Cover.SourceProperty,null);
         _inlineImages=new List<string>();
         _inlineIndex=0;
+        CommentList.Focus();
     }
 
     /// <summary>用图片查看器打开当前这张(需要缩放/保存时的出口)</summary>

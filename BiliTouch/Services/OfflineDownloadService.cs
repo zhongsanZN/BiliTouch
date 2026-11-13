@@ -32,18 +32,52 @@ public sealed class OfflineEntry : ObservableObject
     public long Done { get; set; }
     public long Total { get; set; }
     public string Error { get; set; }="";
-    [JsonIgnore] public string FilePath=>Path.Combine(RootDirectory,"videos",Id+".mp4");
+    [JsonIgnore] public bool IsExternalClientCache { get; set; }
+    [JsonIgnore] public string ExternalDirectory { get; set; } = "";
+    [JsonIgnore] public string ExternalDirectMediaPath { get; set; } = "";
+    [JsonIgnore] public string ExternalVideoPath { get; set; } = "";
+    [JsonIgnore] public string ExternalAudioPath { get; set; } = "";
+    [JsonIgnore] public string ExternalCoverPath { get; set; } = "";
+    [JsonIgnore] public string ExternalGroupKey { get; set; } = "";
+    [JsonIgnore] public string ExternalGroupTitle { get; set; } = "";
+    [JsonIgnore] public string ExternalGroupCoverPath { get; set; } = "";
+    [JsonIgnore] public string ExternalGroupCoverUrl { get; set; } = "";
+    [JsonIgnore] public int DurationSeconds { get; set; }
+    [JsonIgnore] public string GroupKey => ExternalGroupKey.Length > 0 ? ExternalGroupKey : (Bvid.Length > 0 ? $"bvid:{Bvid}" : $"id:{Id}");
+    [JsonIgnore] public string GroupTitle => ExternalGroupTitle.Length > 0 ? ExternalGroupTitle : Title;
+    [JsonIgnore] public string GroupCover => File.Exists(ExternalGroupCoverPath) ? ExternalGroupCoverPath : (!string.IsNullOrWhiteSpace(ExternalGroupCoverUrl) ? ExternalGroupCoverUrl : Cover);
+    [JsonIgnore] public string DisplayPartTitle => PartTitle.Length > 0 ? PartTitle : Title;
+    [JsonIgnore] public string DurationText => DurationSeconds <= 0 ? "" : TimeSpan.FromSeconds(DurationSeconds) is { TotalHours: >= 1 } ts ? ts.ToString(@"h\:mm\:ss") : TimeSpan.FromSeconds(DurationSeconds).ToString(@"mm\:ss");
+    [JsonIgnore] public string FilePath=>IsExternalClientCache && ExternalDirectMediaPath.Length>0?ExternalDirectMediaPath:Path.Combine(RootDirectory,"videos",Id+".mp4");
     [JsonIgnore] public string PartPath=>FilePath+".part";
     [JsonIgnore] public string CoverPath=>Path.Combine(RootDirectory,"covers",Id+".jpg");
-    [JsonIgnore] public string Cover=>File.Exists(CoverPath)?CoverPath:CoverUrl;
+    [JsonIgnore] public string Cover=>File.Exists(ExternalCoverPath)?ExternalCoverPath:(File.Exists(CoverPath)?CoverPath:CoverUrl);
+    [JsonIgnore] public bool HasPlayableMedia=>IsExternalClientCache?(ExternalDirectMediaPath.Length>0?File.Exists(ExternalDirectMediaPath):File.Exists(ExternalVideoPath)):File.Exists(FilePath);
     [JsonIgnore] public double Percent=>Total>0?Math.Clamp(Done*100.0/Total,0,100):0;
     [JsonIgnore] public bool IsComplete=>State==OfflineState.Completed;
     [JsonIgnore] public bool IsSelected {get=>_selected;set=>SetProperty(ref _selected,value);}
     private bool _selected;
-    [JsonIgnore] public string QualityText=>ImportSource.Length>0?"本地导入":Quality>=64?"720P":Quality>=32?"480P":"360P";
+    [JsonIgnore] public string QualityText
+    {
+        get
+        {
+            if (ImportSource.Length > 0) return "本地导入";
+            var q = Quality switch
+            {
+                >= 120 => "4K",
+                >= 116 => "1080P 60帧",
+                >= 112 => "1080P+",
+                >= 80 => "1080P",
+                >= 64 => "720P",
+                >= 32 => "480P",
+                _ => "360P"
+            };
+            return IsExternalClientCache ? $"{q} · B站客户端缓存" : q;
+        }
+    }
     [JsonIgnore] public string ActionText=>State is OfflineState.Downloading or OfflineState.Queued?"暂停":State==OfflineState.Completed?"播放":State==OfflineState.Failed?"重试":"继续";
     [JsonIgnore] public string StatusText=>State switch {
-        OfflineState.Completed=>$"已缓存 · {ByteSize.Format(Done)}",
+        OfflineState.Completed=>$"{(IsExternalClientCache ? "客户端缓存" : "已缓存")} · {ByteSize.Format(Done)}",
         OfflineState.Downloading=>Total>0?$"正在缓存 {Percent:0}% · {ByteSize.Format(Done)} / {ByteSize.Format(Total)}":$"正在缓存 · {ByteSize.Format(Done)}",
         OfflineState.Queued=>"等待缓存", OfflineState.Paused=>$"已暂停 · {ByteSize.Format(Done)}",
         _=>"缓存失败 · "+Error };
@@ -63,9 +97,10 @@ public sealed class OfflineDownloadService
     private readonly JsonSerializerOptions _json=new(){WriteIndented=true};
     private readonly Func<string,long,int,Task<(bool ok,string? err,string? url,string? audio,int quality)>> _source;
     private readonly HttpClient _http;
-    public OfflineDownloadService() : this((b,c,q)=>Svc.Api.GetOfflineDownloadSourceAsync(b,c,q),Http) {}
-    internal OfflineDownloadService(Func<string,long,int,Task<(bool ok,string? err,string? url,string? audio,int quality)>> source,HttpClient http)
-    { _source=source;_http=http; }
+    private readonly string? _externalCacheDir;
+    public OfflineDownloadService() : this((b,c,q)=>Svc.Api.GetOfflineDownloadSourceAsync(b,c,q),Http,BilibiliClientCacheScanner.DefaultCacheDirectory) {}
+    internal OfflineDownloadService(Func<string,long,int,Task<(bool ok,string? err,string? url,string? audio,int quality)>> source,HttpClient http,string? externalCacheDir=null)
+    { _source=source;_http=http;_externalCacheDir=externalCacheDir; }
     private bool _loaded;
     private bool _closing;
 
@@ -87,6 +122,55 @@ public sealed class OfflineDownloadService
             catch(Exception ex){App.ReportError(ex);throw new IOException("缓存记录读取失败，原记录已保留",ex);}
         }
         _loaded=true;
+    }
+
+    public async Task RefreshExternalCachesAsync()
+    {
+        Load();
+        if(string.IsNullOrWhiteSpace(_externalCacheDir))return;
+        var root=_externalCacheDir;
+        var detected=await Task.Run(()=>BilibiliClientCacheScanner.ScanDirectory(root));
+        MergeExternalCaches(detected);
+    }
+
+    internal void MergeExternalCaches(List<OfflineEntry> detected)
+    {
+        var changed=false;
+        var byId=detected.ToDictionary(e=>e.Id,StringComparer.Ordinal);
+        for(var i=Items.Count-1;i>=0;i--)
+        {
+            if(Items[i].IsExternalClientCache && !byId.ContainsKey(Items[i].Id))
+            {
+                Items.RemoveAt(i);
+                changed=true;
+            }
+        }
+        var existingExternalIds=Items.Where(e=>e.IsExternalClientCache).ToDictionary(e=>e.Id,StringComparer.Ordinal);
+        foreach(var ext in detected)
+        {
+            if(existingExternalIds.TryGetValue(ext.Id,out var old))
+            {
+                old.Title=ext.Title;
+                old.PartTitle=ext.PartTitle;
+                old.Author=ext.Author;
+                old.Quality=ext.Quality;
+                old.Done=ext.Done;
+                old.Total=ext.Total;
+                old.CoverUrl=ext.CoverUrl;
+                old.ExternalDirectory=ext.ExternalDirectory;
+                old.ExternalDirectMediaPath=ext.ExternalDirectMediaPath;
+                old.ExternalVideoPath=ext.ExternalVideoPath;
+                old.ExternalAudioPath=ext.ExternalAudioPath;
+                old.ExternalCoverPath=ext.ExternalCoverPath;
+                old.Notify();
+            }
+            else
+            {
+                Items.Add(ext);
+                changed=true;
+            }
+        }
+        if(changed)Changed?.Invoke();
     }
     public void Enqueue(VideoDetail video,IEnumerable<VideoPage> pages,int quality)
     {
@@ -125,12 +209,18 @@ public sealed class OfflineDownloadService
     }
     public void Resume(OfflineEntry e)
     {
-        if(_closing || _running.ContainsKey(e.Id) || !Items.Contains(e))return;
+        if(_closing || e.IsExternalClientCache || _running.ContainsKey(e.Id) || !Items.Contains(e))return;
         if(e.State==OfflineState.Completed && File.Exists(e.FilePath))return;
         e.State=OfflineState.Queued;e.Error="";e.Notify();Save();Changed?.Invoke();Pump();
     }
     public async Task DeleteAsync(OfflineEntry e)
     {
+        if(e.IsExternalClientCache)
+        {
+            var remux=BilibiliClientCacheScanner.TryFindRemuxCachePath(e);
+            if(remux!=null && File.Exists(remux))try{File.Delete(remux);}catch{}
+            throw new IOException("哔哩哔哩客户端离线缓存请在官方客户端中管理（原文件已保留）");
+        }
         Pause(e);if(_work.TryGetValue(e.Id,out var work))await work;
         // Paths are generated from a validated task ID, not an arbitrary path in the manifest.
         if(!Guid.TryParseExact(e.Id,"N",out _))throw new IOException("无效缓存记录");
@@ -245,7 +335,8 @@ public sealed class OfflineDownloadService
     {
         if(!_loaded)return;
         Directory.CreateDirectory(AppPaths.DataDir);
-        var temp=IndexPath+".tmp";File.WriteAllText(temp,JsonSerializer.Serialize(Items,_json));File.Move(temp,IndexPath,true);
+        var native=Items.Where(e=>!e.IsExternalClientCache).ToList();
+        var temp=IndexPath+".tmp";File.WriteAllText(temp,JsonSerializer.Serialize(native,_json));File.Move(temp,IndexPath,true);
     }
     public void Shutdown()
     {

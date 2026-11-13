@@ -294,6 +294,9 @@ public partial class PlayerWindow : FluentWindow
     /// <summary>是否显示彩色弹幕(全局设置)。关掉之后所有弹幕统一白色, 只看内容不受颜色干扰。</summary>
     private bool _danmakuColorful = true;
 
+    /// <summary>是否开启弹幕文字描边(全局设置, 默认不开启)。</summary>
+    private bool _danmakuOutline;
+
     // 弹幕条目类型见 Helpers/RawDanmaku(时间秒 / 文本 / 模式 / 颜色)
     private readonly List<RawDanmaku> _danmaku = new();
 
@@ -545,8 +548,9 @@ public partial class PlayerWindow : FluentWindow
         Loaded += OnLoaded;
         SizeChanged += OnWindowSizeChangedForInfoPanel;
         PreviewKeyDown += OnPreviewKeyDown;
-        // 鼠标侧键返回: 挂在窗口上, 也挂在视频区那层浮动覆盖窗口上(见 HookOverlayKeyboard)
+        // 鼠标侧键返回 + 非模态弹层点外部收起: 挂在窗口上, 也挂在视频区覆盖窗口上(见 HookOverlayKeyboard)
         PreviewMouseDown += OnPreviewMouseDown;
+        PreviewTouchDown += OnPreviewTouchDown;
         Svc.Toast.Shown += OnToast;
         Svc.Session.Changed += UpdateButtonState;
 
@@ -585,9 +589,14 @@ public partial class PlayerWindow : FluentWindow
         QualityPopup.Opened += (_, _) => Dispatcher.BeginInvoke(
             System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
                 RightAlignPopup(QualityPopup, BtnQuality)));
-        DanmakuAreaPopup.Opened += (_, _) => Dispatcher.BeginInvoke(
-            System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
-                RightAlignPopup(DanmakuAreaPopup, BtnDanmakuArea)));
+        DanmakuAreaPopup.Opened += (_, _) =>
+        {
+            _controlsHideTimer?.Stop();
+            Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+                    RightAlignPopup(DanmakuAreaPopup, BtnDanmakuArea)));
+        };
+        DanmakuAreaPopup.Closed += (_, _) => { if (!_closing) StartControlsHideCountdown(); };
         // ★ 两个弹层的"开着"状态本身就是判据(见 AnyPlayerPopupOpen), 不需要订阅 Closed。
         //   2026-10-13 第一版在这里订阅过 Closed 记时间窗, 实测证明 Closed 晚于视频区的
         //   Up(70ms), 时间窗一次都没生效过 —— 已删除。
@@ -597,6 +606,7 @@ public partial class PlayerWindow : FluentWindow
         // 弹幕设置(全局): 初始化运行时状态, 并订阅设置页的变更
         _danmakuOn = Svc.Settings.DanmakuEnabled;
         _danmakuColorful = Svc.Settings.DanmakuColorful;
+        _danmakuOutline = Svc.Settings.DanmakuOutline;
         _danmakuAreaRatio = Svc.Settings.DanmakuAreaPercent / 100.0;
         Svc.Settings.DanmakuSettingsChanged += OnDanmakuSettingsChanged;
         // 外观三项(不透明度/字号/速度)在此**首次**从设置里读出来。
@@ -886,6 +896,7 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void OnInfoScrollChanged(object sender, ScrollChangedEventArgs e)
     {
+        if (!IsWebVideoLayout && sender is ScrollViewer commentsScroll) PrefetchCommentPage(commentsScroll, e);
         if (_closing || _webDockSpacingPrepared || _webRendering || _vmemTracking || _relatedShown >= _relatedAll.Count) return;
         // 换片后 _relatedAll 是空的, 上面的闸门已经挡住; 这里再确认面板是显示的,
         // 免得在"简介 tab"下也补(相关视频属于简介 tab, 评论 tab 下整块是隐藏的)。
@@ -1085,9 +1096,12 @@ public partial class PlayerWindow : FluentWindow
     /// 与在线播放的区别: 不查视频信息/播放地址、不加载弹幕、不上报历史、不查点赞收藏状态 ——
     /// 本地文件没有这些上下文。所以这里直接构造一个 FromPath 的 Media 丢给播放器。
     /// </summary>
+    private CancellationTokenSource? _offlinePrepCts;
+
     public void PlayLocalFile(string path)
     {
         if (_closing || string.IsNullOrEmpty(path) || !File.Exists(path)) return;
+        ++_loadGen;
         _currentBvid = "";
         _isLocalPlayback = true;
         _isLive = false;
@@ -1095,6 +1109,22 @@ public partial class PlayerWindow : FluentWindow
         // 本地文件没有 bvid, 自然也没有相关视频
         ClearRelatedPanel();
         _ = ReplaceNativeInputAsync(() => LoadLocalFile(path));
+    }
+
+    /// <summary>
+    /// 播放离线缓存条目(含哔哩哔哩官方 Windows 客户端离线缓存)。
+    /// 若为官方客户端缓存的 .m4s 分片对, 在后台安全剥离混淆头并合流为本地 .mp4 后起播(不改动原文件)。
+    /// </summary>
+    public void PlayOfflineEntry(OfflineEntry entry)
+    {
+        if (_closing || entry == null || !entry.HasPlayableMedia) return;
+        var gen = ++_loadGen;
+        _currentBvid = entry.Bvid;
+        _isLocalPlayback = true;
+        _isLive = false;
+        ResetForNewMedia();
+        ClearRelatedPanel();
+        _ = LoadOfflineEntryAsync(entry, gen);
     }
 
     /// <summary>
@@ -1176,6 +1206,9 @@ public partial class PlayerWindow : FluentWindow
         //   不必重启。
         ApplyPreferredQuality();
         _danmakuLoadCancellation?.Cancel();
+        _offlinePrepCts?.Cancel();
+        _offlinePrepCts?.Dispose();
+        _offlinePrepCts = null;
         _danmaku.Clear();
         _danmakuRaw.Clear();
         // 相关视频同属"上一条视频"的界面内容: 换片瞬间就必须清掉, 不能等新片的
@@ -1200,13 +1233,18 @@ public partial class PlayerWindow : FluentWindow
         CancelRemuxPrefetch();
         _ownerMid = 0;
         _commentsLoaded = false;
+        _nextCommentPage = null;
+        _loadingCommentPage = _commentPageFailed = false;
+        if (BtnMoreComments != null) BtnMoreComments.Visibility = Visibility.Collapsed;
+        if (BtnRetryComments != null) BtnRetryComments.Visibility = Visibility.Collapsed;
+        if (CommentLoadingRing != null) CommentLoadingRing.Visibility = Visibility.Collapsed;
         // 下载状态属于"上一条视频"(见 UpdateActionCounts 里那个绿色终态)
         _cacheDownloaded = false;
         // 评论总数属于"上一条视频" —— 不清的话换了片子那句"共 N 条评论"还挂着旧数字,
         // 而排序入口的可见性正是跟着它走的。排序**方式**(_commentSort)不清: 那是用户习惯。
         _commentTotal = 0;
         // 本次实际排序回到用户偏好(_commentSort); 新视频重新试热门, 热门空再回退成时间
-        _effectiveCommentSort = _commentSort;
+        _loadedCommentSort = _effectiveCommentSort = _commentSort;
         _commentReturnRpid = 0;
         _videoBackdropGuardTicks = 0;
         // 音频自愈的"上次检查时刻"(_audioHealCheckAt)不清: 它是宽限期计时基准,
@@ -1389,8 +1427,8 @@ public partial class PlayerWindow : FluentWindow
         // ★ _rateBeforeFastForward 也登记在这里 —— 它决定"松手恢复到几倍速",
         //   不跟着换片复位的话, 新片子的第一次长按会恢复到上一片记下的速率。
         nameof(_isFastForwarding), nameof(_rateBeforeFastForward),
-        nameof(_commentTotal),
-        nameof(_effectiveCommentSort),
+        nameof(_commentTotal), nameof(_nextCommentPage), nameof(_loadingCommentPage), nameof(_commentPageFailed),
+        nameof(_effectiveCommentSort), nameof(_loadedCommentSort),
         nameof(_suppressSingleClick), nameof(_controlsHidden), nameof(_isFullscreen),
         // ---- 2026-10-31 补登记(此前 errors.txt 里一直被自检点名) ----
         nameof(_descExpanded),          // 简介折叠态: UpdateUiFromDetail 每片复位
@@ -1433,6 +1471,7 @@ public partial class PlayerWindow : FluentWindow
         nameof(_danmakuFilterRevision), // Monotonic async-work revision, invalidated on media change.
         nameof(_danmakuOn),          // 弹幕总开关是设置项
         nameof(_danmakuColorful),    // 彩色弹幕是设置项
+        nameof(_danmakuOutline),     // 弹幕描边是设置项
         nameof(_danmakuAreaRatio),   // 弹幕显示区域是设置项
         nameof(_laneHeight),         // 泳道高随字号走, 跟着设置走
         // ★ 外观三项(2026-10-12)同理是**用户偏好**: 换片时必须保持, 清了就等于"换个视频
@@ -1444,6 +1483,7 @@ public partial class PlayerWindow : FluentWindow
         nameof(_playerRegistered),   // 注册计数, 生命周期是窗口而非片源
         nameof(_seasonOpen),         // 合集面板的展开态: 用户开着面板连看几集是常态, 换片收起它很烦
         nameof(_isFillWindow),       // 「铺满窗口」是窗口级的显示模式(同 _isFullscreen), 换片不该把它弹回去
+        nameof(_commentRequestVersion),
         nameof(_commentSort),        // 评论排序是用户看评论的习惯(同 _seasonOpen): 选过一次就一直是那个顺序
         nameof(_isListenMode),       // 「听视频」是窗口级的播放模式(同 _isFullscreen): 换片不该把它弹回视频
         // hover 预览锁是"上一次操作的瞬时反馈"(750ms 自己过期, 与片源无关), 不属于任何一片
@@ -1565,29 +1605,77 @@ public partial class PlayerWindow : FluentWindow
     /// 等于无人观察。方法内已有 try/catch 兜底, 所以这里直接做成同步方法最诚实。
     /// </summary>
     private void LoadLocalFile(string path)
+        => LoadLocalFileWithMeta(path, Path.GetFileNameWithoutExtension(path), "本地文件", "离线缓存", "本地",
+            "这是离线缓存里的本地文件, 没有在线视频的简介与评论。");
+
+    private async Task LoadOfflineEntryAsync(OfflineEntry entry, int gen)
+    {
+        var displayTitle = string.IsNullOrWhiteSpace(entry.PartTitle) || entry.Title == entry.PartTitle
+            ? entry.Title
+            : $"{entry.Title} · {entry.PartTitle}";
+        var author = string.IsNullOrWhiteSpace(entry.Author) ? "离线缓存" : entry.Author;
+        var sourceDesc = entry.IsExternalClientCache ? "哔哩哔哩客户端缓存" : "离线缓存";
+        var qualityLabel = string.IsNullOrWhiteSpace(entry.QualityText) ? "本地" : entry.QualityText;
+        var summary = entry.IsExternalClientCache
+            ? $"来自哔哩哔哩 Windows 客户端离线缓存目录：\n{entry.ExternalDirectory}"
+            : "这是离线缓存里的本地文件, 没有在线视频的简介与评论。";
+
+        ApplyLocalMetadata(displayTitle, author, sourceDesc, qualityLabel, summary);
+        ShowLoading(entry.IsExternalClientCache ? "正在准备客户端离线视频…" : "正在打开本地文件…");
+        FailOverlay.Visibility = Visibility.Collapsed;
+
+        var cts = new CancellationTokenSource();
+        _offlinePrepCts = cts;
+        try
+        {
+            var playablePath = entry.IsExternalClientCache
+                ? await BilibiliClientCacheScanner.PreparePlayableMediaAsync(entry, cts.Token)
+                : entry.FilePath;
+            if (_closing || gen != _loadGen || cts.IsCancellationRequested) return;
+            await ReplaceNativeInputAsync(() =>
+            {
+                if (_closing || gen != _loadGen) return;
+                LoadLocalFileWithMeta(playablePath, displayTitle, author, sourceDesc, qualityLabel, summary);
+            });
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (!_closing && gen == _loadGen) ShowFail("打开离线缓存失败: " + ex.Message);
+        }
+        finally
+        {
+            if (ReferenceEquals(_offlinePrepCts, cts)) _offlinePrepCts = null;
+            cts.Dispose();
+        }
+    }
+
+    private void ApplyLocalMetadata(string name, string author, string subDesc, string qualityLabel, string desc)
+    {
+        TitleText.Text = name;
+        Title = name + " - BiliTouch";
+        VideoTitleText.Text = name;
+        ViewCountText.Text = "--";
+        DanmakuCountText.Text = "--";
+        PubDateText.Text = "--";
+        UpNameText.Text = author;
+        UpDescText.Text = subDesc;
+        DescText.Text = desc;
+        UpAvatarBox.Background = (Brush)FindResource("AccentSoftFillBrush");
+        UpAvatarFallback.Visibility = Visibility.Visible;
+        UpdateButtonState();
+        _qualities.Clear();
+        FillQualityMenu(0);
+        if (QualityText != null) QualityText.Text = qualityLabel;
+    }
+
+    private void LoadLocalFileWithMeta(string path, string name, string author, string subDesc, string qualityLabel, string desc)
     {
         ShowLoading("正在打开本地文件…");
         FailOverlay.Visibility = Visibility.Collapsed;
         try
         {
-            var name = Path.GetFileNameWithoutExtension(path);
-            TitleText.Text = name;
-            Title = name + " - BiliTouch";
-            VideoTitleText.Text = name;
-            ViewCountText.Text = "--";
-            DanmakuCountText.Text = "--";
-            PubDateText.Text = "--";
-            UpNameText.Text = "本地文件";
-            UpDescText.Text = "离线缓存";
-            DescText.Text = "这是离线缓存里的本地文件, 没有在线视频的简介与评论。";
-            UpAvatarBox.Background = (Brush)FindResource("AccentSoftFillBrush");
-            UpAvatarFallback.Visibility = Visibility.Visible;
-            UpdateButtonState();
-
-            // 本地文件没有清晰度可选, 清空菜单避免显示上一条视频的清晰度
-            _qualities.Clear();
-            FillQualityMenu(0);
-            if (QualityText != null) QualityText.Text = "本地";
+            ApplyLocalMetadata(name, author, subDesc, qualityLabel, desc);
 
             var media = new Media(_libVLC, path, FromType.FromPath);
             if (_closing) { media.Dispose(); return; }
@@ -2277,7 +2365,11 @@ public partial class PlayerWindow : FluentWindow
         if (detail.Pages.Count <= 1 || _currentCid <= 0) return "";
         foreach (var p in detail.Pages)
             if (p.Cid == _currentCid)
-                return $" - P{p.Page} {p.DisplayTitle}";
+            {
+                var part = p.Part?.Trim();
+                return string.IsNullOrEmpty(part) || string.Equals(part, detail.Title.Trim(), StringComparison.Ordinal)
+                    ? $" - P{p.Page}" : $" - P{p.Page} {part}";
+            }
         return "";
     }
 
@@ -4700,7 +4792,31 @@ public partial class PlayerWindow : FluentWindow
 
     private void OnDanmakuAreaClick(object sender, RoutedEventArgs e)
     {
+        if (DanmakuAreaPopup == null) return;
+        if (DanmakuAreaPopup.IsOpen)
+        {
+            CloseDanmakuAreaPopup();
+            return;
+        }
+        DanmakuAreaPopup.PlacementTarget = BtnDanmakuArea;
+        RightAlignPopup(DanmakuAreaPopup, BtnDanmakuArea);
         DanmakuAreaPopup.IsOpen = true;
+    }
+
+    private void CloseDanmakuAreaPopup()
+    {
+        if (DanmakuAreaPopup != null && DanmakuAreaPopup.IsOpen)
+            DanmakuAreaPopup.IsOpen = false;
+    }
+
+    private static bool IsDescendantOf(DependencyObject? node, DependencyObject? ancestor)
+    {
+        while (node != null)
+        {
+            if (ReferenceEquals(node, ancestor)) return true;
+            node = VisualTreeHelper.GetParent(node) ?? LogicalTreeHelper.GetParent(node);
+        }
+        return false;
     }
 
     /// <summary>调整弹幕显示区域占比(弹幕只在画面上方 ratio 比例内滚动)</summary>
@@ -4760,7 +4876,26 @@ public partial class PlayerWindow : FluentWindow
             speedLevel: level);
     }
 
-    /// <summary>把外观三项的滑杆/数值同步到当前设置(开窗与设置页改动后各调一次)</summary>
+    private void OnDanmakuOutlineRowClick(object sender, MouseButtonEventArgs e)
+    {
+        if (DanmakuOutlineCheck == null || IsDescendantOf(e.OriginalSource as DependencyObject, DanmakuOutlineCheck))
+            return;
+        DanmakuOutlineCheck.IsChecked = DanmakuOutlineCheck.IsChecked != true;
+        e.Handled = true;
+    }
+
+    private void OnDanmakuOutlineChanged(object sender, RoutedEventArgs e)
+    {
+        var enabled = DanmakuOutlineCheck?.IsChecked == true;
+        if (DanmakuOutlineStateText != null)
+            DanmakuOutlineStateText.Text = enabled ? "已开启" : "已关闭";
+        if (_syncingDanmakuLook) return;
+        Svc.Settings.UpdateDanmakuSettings(
+            Svc.Settings.DanmakuEnabled, Svc.Settings.DanmakuAreaPercent, Svc.Settings.DanmakuSmartFilter,
+            outline: enabled);
+    }
+
+    /// <summary>把外观三项及描边开关同步到当前设置(开窗与设置页改动后各调一次)</summary>
     private void UpdateDanmakuLookTexts()
     {
         var s = Svc.Settings;
@@ -4778,6 +4913,9 @@ public partial class PlayerWindow : FluentWindow
             if (DanmakuSpeedSlider != null) DanmakuSpeedSlider.Value = s.DanmakuSpeedLevel;
             if (DanmakuSpeedValue != null)
                 DanmakuSpeedValue.Text = Helpers.DanmakuMotion.SpeedLabel(s.DanmakuSpeedLevel);
+            if (DanmakuOutlineCheck != null) DanmakuOutlineCheck.IsChecked = s.DanmakuOutline;
+            if (DanmakuOutlineStateText != null)
+                DanmakuOutlineStateText.Text = s.DanmakuOutline ? "已开启" : "已关闭";
         }
         finally
         {
@@ -4948,6 +5086,13 @@ public partial class PlayerWindow : FluentWindow
             e.Handled = true;
             return;
         }
+        if (DanmakuAreaPopup?.IsOpen == true)
+        {
+            CloseDanmakuAreaPopup();
+            _videoGestureActive = false;
+            e.Handled = true;
+            return;
+        }
         // 跳过提示条上的点击(「撤回」按钮)同样不算视频区手势 ——
         // 它是覆盖层里除了控制栏之外唯一会吃掉左键的自绘元素, 不挡住就会"点撤回顺带切一次播放/暂停"。
         if (SkipNoticeBorder != null && SkipNoticeBorder.IsMouseOver) return;
@@ -5085,6 +5230,7 @@ public partial class PlayerWindow : FluentWindow
         // 控制栏 / 跳过提示条上的右键不算视频区手势(与左键同款理由)
         if (ControlBar != null && ControlBar.IsMouseOver) return;
         if (SkipNoticeBorder != null && SkipNoticeBorder.IsMouseOver) return;
+        if (DanmakuAreaPopup?.IsOpen == true) { CloseDanmakuAreaPopup(); _rightGestureActive = false; e.Handled = true; return; }
         // 弹层开着 ⇒ 这一下属于浮层, 不起步(地基, 见方法说明)
         if (AnyPlayerPopupOpen) { _rightGestureActive = false; return; }
         _rightGestureActive = true;
@@ -5242,6 +5388,7 @@ public partial class PlayerWindow : FluentWindow
         _controlsHidden = true;
         _controlsHideTimer?.Stop();
         CloseVolumePopup();                     // 控制栏一藏, 挂在它上面的音量弹层必须跟着收
+        CloseDanmakuAreaPopup();
         ControlBar.IsHitTestVisible = false;   // 隐形时不能再吃视频区的点击/滚轮
         VideoAreaRoot.Cursor = System.Windows.Input.Cursors.None;
         var fade = new System.Windows.Media.Animation.DoubleAnimation(1, 0,
@@ -5355,6 +5502,11 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void HandleBackRequest()
     {
+        if (DanmakuAreaPopup?.IsOpen == true)
+        {
+            CloseDanmakuAreaPopup();
+            return;
+        }
         if (_isFullscreen)
         {
             _isFullscreen = false;
@@ -5372,7 +5524,7 @@ public partial class PlayerWindow : FluentWindow
     }
 
     /// <summary>
-    /// 鼠标侧键(XButton1/XButton2) = 返回。
+    /// 鼠标侧键(XButton1/XButton2) = 返回; 同时把点击弹幕设置弹层外部时非模态收起。
     ///
     /// 为什么两个侧键都当返回: 本应用没有"前进"这种概念, 而各家的鼠标把拇指键映射成
     /// 哪个 XButton 并不统一(有的只给一个键, 有的是前/后两个), 只认 XButton1 的话
@@ -5381,12 +5533,30 @@ public partial class PlayerWindow : FluentWindow
     /// 为什么用 PreviewMouseDown: 底部的按钮/滑块会吃掉普通 MouseDown, 而隧道事件从
     /// 根往下走, 挂 Preview 就一定先经过我们这里。
     /// </summary>
+    private void DismissDanmakuAreaIfOutside(DependencyObject? source)
+    {
+        if (DanmakuAreaPopup?.IsOpen != true) return;
+        if (IsDescendantOf(source, BtnDanmakuArea)) return;
+        if (IsDescendantOf(source, VideoAreaRoot) && !IsDescendantOf(source, ControlBar)) return;
+        CloseDanmakuAreaPopup();
+    }
+
     private void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
         if (_closing) return;
-        if (e.ChangedButton != MouseButton.XButton1 && e.ChangedButton != MouseButton.XButton2) return;
-        e.Handled = true;
-        HandleBackRequest();
+        if (e.ChangedButton == MouseButton.XButton1 || e.ChangedButton == MouseButton.XButton2)
+        {
+            e.Handled = true;
+            HandleBackRequest();
+            return;
+        }
+        DismissDanmakuAreaIfOutside(e.OriginalSource as DependencyObject);
+    }
+
+    private void OnPreviewTouchDown(object? sender, TouchEventArgs e)
+    {
+        if (_closing) return;
+        DismissDanmakuAreaIfOutside(e.OriginalSource as DependencyObject);
     }
 
     private void SeekRelative(double seconds)
@@ -7147,6 +7317,7 @@ public partial class PlayerWindow : FluentWindow
             _overlayKeyboardWindow = fw;
             fw.PreviewKeyDown += OnPreviewKeyDown;
             fw.PreviewMouseDown += OnPreviewMouseDown;
+            fw.PreviewTouchDown += OnPreviewTouchDown;
             fw.Deactivated += OnTouchWindowDeactivated;
             // 滚轮也要挂上来: 鼠标压在视频画面上时事件属于这层浮动窗口(见 OnVideoAreaMouseWheel)
             fw.PreviewMouseWheel += OnVideoAreaMouseWheel;
@@ -7355,6 +7526,7 @@ public partial class PlayerWindow : FluentWindow
                 _ = Svc.HistorySync.ReportNowAsync(finalAid, finalCid, finalProgress);
 
             CancelVideoTouch();
+            CloseDanmakuAreaPopup();
             _closing = true;
 
             // 拖动尺寸监听订阅的是 CompositionTarget.Rendering —— 它是**静态**事件、不随窗口销毁,

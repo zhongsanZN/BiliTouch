@@ -33,6 +33,8 @@ public partial class FollowPage : UserControl
         InitializeComponent();
         ContactSelection.Install(ContactsScroll,item=>{if(DataContext is FollowViewModel vm){if(item is FollowUser user)_=vm.SelectUpAsync(user);else if(item is FollowViewModel)_=vm.SelectAllAsync();}});
         HookFeedSwipe();
+        ModuleGestures.Install(this, () => (DataContext as FollowViewModel)?.RefreshAsync() ?? Task.CompletedTask,
+            hintHost: FollowFeedBody, canPull: sv => ModuleGestures.IsDescendantOf(sv, FollowFeedHost));
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         // 屏蔽把动态流筛空后补下一页(否则会停在一片空白上)

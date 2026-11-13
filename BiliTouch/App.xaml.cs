@@ -17,7 +17,19 @@ public partial class App : Application
     /// 同步点(漏一个就会出现"关于页写 1.2.3、安装包文件名还是 1.2.2"这种不一致):
     ///   BiliTouch.csproj 的 &lt;Version&gt;、Publish\installer.iss 的 MyAppVersion、发布.ps1 的默认 $Version。
     /// </summary>
-    public const string AppVersion = "0.3.1";
+    private const string DefaultVersion = "0.3.2";
+    public static readonly string AppVersion = ResolveAppVersion();
+
+    private static string ResolveAppVersion()
+    {
+        var info = typeof(App).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+            .FirstOrDefault()?.InformationalVersion;
+        if (string.IsNullOrWhiteSpace(info)) return DefaultVersion;
+        var plus = info.IndexOf('+');
+        return (plus >= 0 ? info[..plus] : info).Trim();
+    }
 
     public static MainViewModel MainVm { get; } = new();
 

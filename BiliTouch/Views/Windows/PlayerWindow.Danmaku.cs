@@ -656,12 +656,7 @@ public partial class PlayerWindow
             Opacity = _danmakuOpacity,
             // RenderTransform 在这里预置好, 滚动弹幕直接拿它做位移动画
             RenderTransform = new TranslateTransform(0, 0),
-            Child = new TextBlock
-            {
-                Text = text,
-                Foreground = DanmakuBrush(color),
-                FontSize = _danmakuFontSize
-            }
+            Child = CreateDanmakuTextElement(text, DanmakuBrush(color), _danmakuFontSize, _danmakuOutline)
         };
 
         DanmakuCanvas.Children.Add(border);
@@ -711,6 +706,36 @@ public partial class PlayerWindow
             (byte)(color & 0xFF)));
         _danmakuBrushes[color] = brush;
         return brush;
+    }
+
+    private static FrameworkElement CreateDanmakuTextElement(string text, Brush foreground, double fontSize, bool outline)
+        => outline
+            ? new OutlinedDanmakuText(text, foreground, fontSize)
+            : new TextBlock { Text = text, Foreground = foreground, FontSize = fontSize };
+
+    private void ApplyDanmakuOutlineToFlying()
+    {
+        foreach (var flying in _flying)
+        {
+            if (flying.Element is not Border border) continue;
+            var replaced = false;
+            switch (border.Child)
+            {
+                case TextBlock tb when _danmakuOutline:
+                    border.Child = new OutlinedDanmakuText(tb.Text, tb.Foreground, tb.FontSize);
+                    replaced = true;
+                    break;
+                case OutlinedDanmakuText ot when !_danmakuOutline:
+                    border.Child = new TextBlock { Text = ot.Text, Foreground = ot.Foreground, FontSize = ot.FontSize };
+                    replaced = true;
+                    break;
+            }
+            if (replaced)
+            {
+                border.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                flying.Width = Math.Max(1, border.DesiredSize.Width);
+            }
+        }
     }
 
     private static Brush MakeFrozen(Color c)
@@ -977,20 +1002,22 @@ public partial class PlayerWindow
         if (_closing) return;
         var wasEnabled = _danmakuOn;
         var previousColorful = _danmakuColorful;
+        var previousOutline = _danmakuOutline;
         var previousArea = _danmakuAreaRatio;
         _danmakuOn = Svc.Settings.DanmakuEnabled;
         // 彩色弹幕开关: 它不影响"哪些弹幕该显示", 只影响颜色 —— 但已上屏的那些是带着
         // 旧颜色的, 所以下面照样要走一遍 RefilterDanmaku 把画布清掉重画。
         _danmakuColorful = Svc.Settings.DanmakuColorful;
+        _danmakuOutline = Svc.Settings.DanmakuOutline;
         UpdateDanmakuButton();
         _danmakuAreaRatio = Svc.Settings.DanmakuAreaPercent / 100.0;
         if (DanmakuAreaSlider != null) DanmakuAreaSlider.Value = Svc.Settings.DanmakuAreaPercent;
         if (DanmakuAreaValue != null) DanmakuAreaValue.Text = Svc.Settings.DanmakuAreaPercent + "%";
 
-        // 外观三项(不透明度/字号/速度)。每项的重算代价不同, 由 ApplyDanmakuLook 内部判断,
-        // 这里统一调一次即可 —— 播放器和设置页改的是同一批字段, 不该各写一套同步。
+        // 外观三项(不透明度/字号/速度)与描边开关
         ApplyDanmakuLook();
         UpdateDanmakuLookTexts();
+        if (previousOutline != _danmakuOutline && _danmakuOn) ApplyDanmakuOutlineToFlying();
 
         // 区域占比变了 => 可用泳道数变了, 必须重建泳道, 否则弹幕会溢出到区域外
         if (wasEnabled != _danmakuOn || previousColorful != _danmakuColorful ||

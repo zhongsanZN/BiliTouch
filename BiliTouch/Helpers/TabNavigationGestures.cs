@@ -191,6 +191,21 @@ internal sealed class TabNavigationGestures
         }
     }
 
+    internal void InvalidatePeers(int? index = null)
+    {
+        if (_armed || _wheelPreviewActive || _activeSettleComplete != null) return;
+        if (index is { } target)
+        {
+            if (_peerCache.Remove(target, out var old)) _peerHost?.Children.Remove(old);
+        }
+        else
+        {
+            _peerCache.Clear();
+            _peerHost?.Children.Clear();
+        }
+        QueuePeerWarmUp();
+    }
+
     private void CompleteActiveSettle()
     {
         if (_activeSettleComplete == null) return;
@@ -263,8 +278,9 @@ internal sealed class TabNavigationGestures
         try
         {
             var width = _content.ActualWidth; var height = _content.ActualHeight;
-            int pixelsW = (int)Math.Min(1600, Math.Ceiling(width));
-            int pixelsH = (int)Math.Min(1200, Math.Ceiling(height));
+            var dpi = VisualTreeHelper.GetDpi(_content);
+            int pixelsW = Math.Clamp((int)Math.Ceiling(width * dpi.DpiScaleX), 64, 4096);
+            int pixelsH = Math.Clamp((int)Math.Ceiling(height * dpi.DpiScaleY), 64, 4096);
             var bitmap = new RenderTargetBitmap(pixelsW, pixelsH, 96.0 * pixelsW / width, 96.0 * pixelsH / height, PixelFormats.Pbgra32);
             var visual = new DrawingVisual();
             using (var dc = visual.RenderOpen())

@@ -2,7 +2,7 @@
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  xmlns:controls="clr-namespace:BiliTouch.Views.Controls" xmlns:helpers="clr-namespace:BiliTouch.Helpers"
- Background="{DynamicResource AppBackgroundBrush}">
+ PreviewKeyDown="OnPagePreviewKeyDown" Background="{DynamicResource AppBackgroundBrush}">
  <UserControl.Resources>
   <Style x:Key="CommentReactionText" TargetType="TextBlock">
    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
@@ -41,7 +41,7 @@
           行为照官方: 双击 1:1 / 适应切换, 支持上一张下一张、点开原图、保存。
           ★ 只在真的点过图片后才占高度(Visibility=Collapsed 时不占位),
             不会把正常浏览时的版面顶下去。 -->
-     <Border x:Name="InlineImageHost" Margin="12,12,12,0" CornerRadius="10"
+     <Border x:Name="InlineImageHost" Focusable="True" Margin="12,12,12,0" CornerRadius="10"
              Background="{DynamicResource CardBackgroundBrush}"
              BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
              Visibility="Collapsed">
@@ -139,7 +139,8 @@
      <StackPanel>
       <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" Visibility="{Binding Status,Converter={StaticResource StrToVis}}"/>
       <TextBlock Text="{Binding Error}" TextWrapping="Wrap" Foreground="{DynamicResource DangerTextBrush}" Visibility="{Binding Error,Converter={StaticResource StrToVis}}"/>
-      <Button Content="重试加载评论" Click="OnRetry" Visibility="{Binding Error,Converter={StaticResource StrToVis}}" HorizontalAlignment="Left" Style="{StaticResource SubtleButtonStyle}"/>
+      <TextBlock Text="{Binding CommentLoadError}" TextWrapping="Wrap" Foreground="{DynamicResource DangerTextBrush}" Visibility="{Binding CommentLoadError,Converter={StaticResource StrToVis}}"/>
+      <Button Content="重试加载评论" Click="OnRetry" Visibility="{Binding CommentLoadError,Converter={StaticResource StrToVis}}" HorizontalAlignment="Left" Style="{StaticResource SubtleButtonStyle}"/>
       <StackPanel Orientation="Horizontal" Visibility="{Binding HasReplyTarget,Converter={StaticResource BoolToVis}}">
        <TextBlock Text="{Binding ComposerTitle}" Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="240"/>
        <Button Content="取消" Click="OnCancelReply" Style="{StaticResource SubtleButtonStyle}" Margin="8,0"/>

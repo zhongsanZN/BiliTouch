@@ -559,10 +559,26 @@ public partial class SettingsViewModel : ObservableObject
 
     public bool IsWebPlayerLayout
     {
-        get=>Svc.Settings.UseWebPlayerLayout;
-        set{if(value==Svc.Settings.UseWebPlayerLayout)return;Svc.Settings.SetWebPlayerLayout(value);OnPropertyChanged();OnPropertyChanged(nameof(IsSplitPlayerLayout));}
+        get => Svc.Settings.UseWebPlayerLayout;
+        set
+        {
+            if (!value || Svc.Settings.UseWebPlayerLayout) return;
+            Svc.Settings.SetWebPlayerLayout(true);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsSplitPlayerLayout));
+        }
     }
-    public bool IsSplitPlayerLayout {get=>!IsWebPlayerLayout;set{if(value)IsWebPlayerLayout=false;}}
+    public bool IsSplitPlayerLayout
+    {
+        get => !Svc.Settings.UseWebPlayerLayout;
+        set
+        {
+            if (!value || !Svc.Settings.UseWebPlayerLayout) return;
+            Svc.Settings.SetWebPlayerLayout(false);
+            OnPropertyChanged(nameof(IsWebPlayerLayout));
+            OnPropertyChanged();
+        }
+    }
 
     /// <summary>卡片页每行显示几列(0 = 自动)</summary>
     public int CardColumns
@@ -1188,6 +1204,20 @@ public partial class SettingsViewModel : ObservableObject
         OnPropertyChanged(nameof(DanmakuSpeedIs2));
         OnPropertyChanged(nameof(DanmakuSpeedIs3));
         OnPropertyChanged(nameof(DanmakuSpeedIs4));
+    }
+
+    /// <summary>弹幕文字描边(默认关)</summary>
+    public bool DanmakuOutline
+    {
+        get => Svc.Settings.DanmakuOutline;
+        set
+        {
+            if (value == Svc.Settings.DanmakuOutline) return;
+            Svc.Settings.UpdateDanmakuSettings(
+                Svc.Settings.DanmakuEnabled, Svc.Settings.DanmakuAreaPercent,
+                Svc.Settings.DanmakuSmartFilter, outline: value);
+            OnPropertyChanged();
+        }
     }
 
 

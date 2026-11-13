@@ -35,12 +35,12 @@ public sealed class LiveOverlayRenderer : IDisposable
     private const int LaneCount = 12;
 
     private readonly Canvas _canvas;
-    private readonly List<(TextBlock text, TranslateTransform move, long start, double width)> _items = new();
+    private readonly List<(FrameworkElement text, TranslateTransform move, long start, double width)> _items = new();
     private readonly Queue<(string message, uint color)> _pending = new();
     private readonly long[] _lanes = new long[LaneCount];
     private readonly DispatcherTimer _watchdog;
     private long _lastRenderTicks;
-    private bool _clockAttached, _disposed;
+    private bool _clockAttached, _disposed, _outline;
     private TimeSpan _lastRenderingTime = TimeSpan.MinValue;
     private double _fontSize = 20, _area = .35, _opacity = .8, _speed = 150;
 
@@ -57,13 +57,14 @@ public sealed class LiveOverlayRenderer : IDisposable
         canvas.Loaded += (_, _) => EnsureClock();
     }
 
-    /// <summary>应用弹幕外观(字号/区域/不透明度/速度档位)。会清空当前画面 —— 与旧行为一致。</summary>
-    public void Configure(double fontSize, double area, double opacity, int speedLevel)
+    /// <summary>应用弹幕外观(字号/区域/不透明度/速度档位/描边)。会清空当前画面 —— 与旧行为一致。</summary>
+    public void Configure(double fontSize, double area, double opacity, int speedLevel, bool outline = false)
     {
         Clear();
         _fontSize = Math.Clamp(fontSize, 12, 60);
         _area = Math.Clamp(area, .25, 1);
         _opacity = Math.Clamp(opacity, 0, 1);
+        _outline = outline;
         // 速度档位 → 每秒像素。DanmakuMotion.ScrollSeconds 是"横穿一屏要几秒",
         // 这里按 1200px 视作一屏宽折算成速度, 与点播弹幕手感一致。
         _speed = 1200 / DanmakuMotion.ScrollSeconds(speedLevel);
@@ -97,16 +98,21 @@ public sealed class LiveOverlayRenderer : IDisposable
         var lane = Array.FindIndex(_lanes, 0, lanes, released => released <= now);
         if (lane < 0) return;   // 满屏了, 这条丢掉(直播弹幕以"实时感"为先, 不排队补播)
 
-        var text = new TextBlock
-        {
-            Text = message.Length > 500 ? message[..500] : message,
-            FontSize = _fontSize,
-            Opacity = _opacity,
-            Foreground = new SolidColorBrush(Color.FromRgb((byte)(color >> 16), (byte)(color >> 8), (byte)color)),
-            IsHitTestVisible = false,
-            Effect = new System.Windows.Media.Effects.DropShadowEffect
-            { Color = Colors.Black, ShadowDepth = 1, BlurRadius = 2, Opacity = .9 }
-        };
+        var msg = message.Length > 500 ? message[..500] : message;
+        var brush = new SolidColorBrush(Color.FromRgb((byte)(color >> 16), (byte)(color >> 8), (byte)color));
+        brush.Freeze();
+        FrameworkElement text = _outline
+            ? new OutlinedDanmakuText(msg, brush, _fontSize) { Opacity = _opacity }
+            : new TextBlock
+            {
+                Text = msg,
+                FontSize = _fontSize,
+                Opacity = _opacity,
+                Foreground = brush,
+                IsHitTestVisible = false,
+                Effect = new System.Windows.Media.Effects.DropShadowEffect
+                { Color = Colors.Black, ShadowDepth = 1, BlurRadius = 2, Opacity = .9 }
+            };
         text.Measure(new Size(double.PositiveInfinity, lineHeight));
         var width = text.DesiredSize.Width;
 

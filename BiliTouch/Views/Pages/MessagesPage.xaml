@@ -3,20 +3,25 @@
  xmlns:controls="clr-namespace:BiliTouch.Views.Controls" xmlns:helpers="clr-namespace:BiliTouch.Helpers"
  Background="{DynamicResource AppBackgroundBrush}">
  <UserControl.Resources><helpers:MessageCardWidthConverter x:Key="MessageCardWidth"/></UserControl.Resources>
- <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-  <Grid MinHeight="112">
-   <helpers:SkinSurface Kind="Home"/>
-   <TextBlock Text="消息" Style="{StaticResource PageTitleStyle}" Margin="24,20,24,8" VerticalAlignment="Top"/>
-   <helpers:NavigationTabs x:Name="ModuleTabs" HorizontalAlignment="Left" VerticalAlignment="Bottom" Height="44" Margin="24,0,80,0"><StackPanel Orientation="Horizontal">
+ <Grid>
+  <Grid.RowDefinitions>
+   <RowDefinition Height="{x:Static helpers:PageHeaderMetrics.TitleRow}"/>
+   <RowDefinition Height="{x:Static helpers:PageHeaderMetrics.TabsRow}"/>
+   <RowDefinition Height="*"/>
+  </Grid.RowDefinitions>
+  <helpers:SkinSurface Kind="Home" Grid.RowSpan="2"/>
+  <TextBlock x:Name="ShellPageTitle" Grid.Row="0" Text="消息" Style="{StaticResource PageTitleStyle}" Margin="{x:Static helpers:PageHeaderMetrics.TitleMargin}" VerticalAlignment="Top"/>
+  <Grid Grid.Row="1">
+   <helpers:NavigationTabs x:Name="ModuleTabs" HorizontalAlignment="Left" Margin="{x:Static helpers:PageHeaderMetrics.TabsMargin}"><StackPanel Orientation="Horizontal">
     <RadioButton Content="{Binding Unread.PrivateTitle}" GroupName="MessageChannel" Style="{StaticResource UnderlineTabStyle}" IsChecked="{Binding PrivateTab,Mode=TwoWay}"/>
     <RadioButton Content="{Binding Unread.ReplyTitle}" GroupName="MessageChannel" Style="{StaticResource UnderlineTabStyle}" IsChecked="{Binding ReplyTab,Mode=TwoWay}"/>
     <RadioButton Content="{Binding Unread.LikeTitle}" GroupName="MessageChannel" Style="{StaticResource UnderlineTabStyle}" IsChecked="{Binding LikeTab,Mode=TwoWay}"/>
     <RadioButton Content="新增粉丝" GroupName="MessageChannel" Style="{StaticResource UnderlineTabStyle}" IsChecked="{Binding FansTab,Mode=TwoWay}"/>
    </StackPanel></helpers:NavigationTabs>
-   <Button HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,24,8" Style="{StaticResource IconButtonStyle}" Command="{Binding RefreshCommand}" ToolTip="刷新"><helpers:SkinGlyph Kind="Refresh" IconSize="20" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15"/></helpers:SkinGlyph></Button>
+   <Button HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,0,24,0" Style="{StaticResource IconButtonStyle}" Command="{Binding RefreshCommand}" ToolTip="刷新"><helpers:SkinGlyph Kind="Refresh" IconSize="20" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="15"/></helpers:SkinGlyph></Button>
   </Grid>
-  <Grid x:Name="ModuleContent" Grid.Row="1">
-   <StackPanel Panel.ZIndex="2" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="20,8" MaxWidth="620" Visibility="{Binding Error,Converter={StaticResource StrToVis}}"><TextBlock Text="{Binding Error}" TextWrapping="Wrap"/><Button Content="重试" Style="{StaticResource SubtleButtonStyle}" Command="{Binding RefreshCommand}" Margin="0,16,0,0"/></StackPanel>
+  <Grid x:Name="ModuleContent" Grid.Row="2">
+   <controls:FeedStatusOverlay Panel.ZIndex="2" VerticalAlignment="Top" Margin="20,8" ErrorText="{Binding Error}" RetryCommand="{Binding RefreshCommand}"/>
    <Grid Visibility="{Binding IsPrivateChannel,Converter={StaticResource BoolToVis}}"><Grid.ColumnDefinitions><ColumnDefinition Width="252"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
     <ScrollViewer x:Name="SessionScroll" Grid.Column="0" Margin="12,4,0,20" VerticalScrollBarVisibility="Auto">
      <StackPanel Margin="8,0,8,0"><controls:LoadingRing HorizontalAlignment="Center" Margin="0,12" Visibility="{Binding Loading,Converter={StaticResource BoolToVis}}"/>
@@ -76,11 +81,10 @@
         </Grid>
        </Border>
       </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
-      <TextBlock Text="暂时没有这类消息" HorizontalAlignment="Center" Margin="0,50" Visibility="{Binding NotificationsEmpty,Converter={StaticResource BoolToVis}}"/>
       <Button Content="加载更多" Command="{Binding LoadMoreNotificationsCommand}" Style="{StaticResource SubtleButtonStyle}" HorizontalAlignment="Center" Visibility="{Binding NotificationMore,Converter={StaticResource BoolToVis}}"/>
      </StackPanel>
     </ScrollViewer>
-    <controls:LoadingRing HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding NotificationLoading,Converter={StaticResource BoolToVis}}"/>
+    <controls:FeedStatusOverlay IsLoading="{Binding NotificationLoading}" IsEmpty="{Binding NotificationsEmpty}" EmptyText="暂时没有这类消息"/>
    </Grid>
   </Grid>
  </Grid>

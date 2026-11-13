@@ -341,8 +341,12 @@
                                                     <TextBlock Grid.Column="2" x:Name="SpeedValue" Text="适中"
                                                                Style="{StaticResource DanmakuRowValueStyle}"/>
                                                 </Grid>
-                                                <CheckBox x:Name="ColorSetting" Content="彩色弹幕" Margin="0,12,0,0"
+                                                <CheckBox x:Name="ColorSetting" Style="{StaticResource LabeledCheckBoxStyle}" Focusable="False"
+                                                          Content="彩色弹幕" Margin="0,12,0,0"
                                                           Foreground="#E6FFFFFF" Checked="ColorSettingChanged" Unchecked="ColorSettingChanged"/>
+                                                <CheckBox x:Name="OutlineSetting" Style="{StaticResource LabeledCheckBoxStyle}" Focusable="False"
+                                                          Content="弹幕描边" Margin="0,8,0,0"
+                                                          Foreground="#E6FFFFFF" Checked="OutlineSettingChanged" Unchecked="OutlineSettingChanged"/>
                                                 <TextBlock Text="屏蔽词沿用设置页中的弹幕规则" FontSize="11"
                                                            Foreground="#80FFFFFF" Margin="0,10,0,0" TextWrapping="Wrap"/>
                                             </StackPanel>

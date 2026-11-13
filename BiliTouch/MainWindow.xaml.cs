@@ -37,6 +37,7 @@ public partial class MainWindow : FluentWindow
     private readonly Dictionary<PageKey, FrameworkElement> _pages = new();
 
     private DispatcherTimer? _toastTimer;
+    private DispatcherTimer? _idleTrimTimer;
     private PrecisionTouchpadInput? _precisionTouchpad;
 
     public MainWindow()
@@ -44,7 +45,9 @@ public partial class MainWindow : FluentWindow
         InitializeComponent();
         RefreshSidebarTheme();
         Svc.Theme.ThemeChanged+=RefreshSidebarTheme;
-        Closed+=(_,_)=> { _precisionTouchpad?.Dispose(); FinishHorizontalWheel(false); Svc.Theme.ThemeChanged-=RefreshSidebarTheme; _vm.PageChanged -= OnPageChanged; };
+        Closed+=(_,_)=> { _idleTrimTimer?.Stop(); _precisionTouchpad?.Dispose(); FinishHorizontalWheel(false); Svc.Theme.ThemeChanged-=RefreshSidebarTheme; _vm.PageChanged -= OnPageChanged; };
+        Deactivated += OnDeactivatedTrim;
+        Activated += (_, _) => _idleTrimTimer?.Stop();
         SourceInitialized += (_, _) =>
         {
             if (PresentationSource.FromVisual(this) is HwndSource source)
@@ -103,7 +106,7 @@ public partial class MainWindow : FluentWindow
 
     internal PrecisionTouchpadInput.Target? ResolvePrecisionTouchpadTarget(Point screenPoint)
     {
-        if (PartitionPanel.Visibility == Visibility.Visible) return null;
+        if (EmbeddedHost.IsVisible || PartitionPanel.IsVisible) return null;
         Action begin = () => FinishHorizontalWheel(false);
         if (CurrentModuleGestures is { } module && module.ContainsSwipePoint(screenPoint))
             return new(begin, module.PreviewHorizontalWheel, module.SettlePrecisionTouchpadPreview, _vm.Current.ToString());
@@ -118,7 +121,7 @@ public partial class MainWindow : FluentWindow
 
     protected override void OnHorizontalWheel(int delta)
     {
-        if (_precisionTouchpad?.SuppressHorizontalWheel == true) return;
+        if (EmbeddedHost.IsVisible || PartitionPanel.IsVisible || _precisionTouchpad?.SuppressHorizontalWheel == true) return;
         if (delta == 0) return;
         if (_wheelPreview == null)
         {
@@ -249,12 +252,33 @@ public partial class MainWindow : FluentWindow
     /// ShutdownMode 保持 OnMainWindowClose 不变: 关闭键的语义由这里决定,
     /// 而"真的退出"那条路走 Application.Shutdown(), 两条线互不干扰。
     /// </summary>
+    private void OnDeactivatedTrim(object? sender, EventArgs e)
+    {
+        _idleTrimTimer ??= new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(5),
+        };
+        _idleTrimTimer.Tick -= OnIdleTrimTick;
+        _idleTrimTimer.Tick += OnIdleTrimTick;
+        _idleTrimTimer.Stop();
+        _idleTrimTimer.Start();
+    }
+
+    private void OnIdleTrimTick(object? sender, EventArgs e)
+    {
+        _idleTrimTimer?.Stop();
+        if (IsActive) return;
+        if (!IsVisible && WindowState != WindowState.Minimized) return;
+        MemoryTrim.RequestIdleRelease();
+    }
+
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
         if (!App.IsExiting && Svc.Settings.CloseToTray && TrayService.Instance.IsAvailable)
         {
             e.Cancel = true;
             Hide();
+            MemoryTrim.RequestIdleRelease();
             // 第一次收起时给个托盘气泡, 让用户知道程序没被关掉
             TrayService.Instance.NotifyMinimizedToTray();
             return;
@@ -296,6 +320,8 @@ public partial class MainWindow : FluentWindow
 
     public void ShowEmbeddedPage(FrameworkElement page, string title)
     {
+        _precisionTouchpad?.Cancel();
+        FinishHorizontalWheel(false);
         if(EmbeddedHost.Visibility==Visibility.Visible && EmbeddedContent.Content is FrameworkElement previous)
         {
             if(_embeddedHistory.Count>=16)
@@ -313,14 +339,15 @@ public partial class MainWindow : FluentWindow
         PageHost.Visibility = Visibility.Collapsed;
         EmbeddedHost.Visibility = Visibility.Visible;
 
-        // 淡入 + 轻微上浮, 和切换导航页的入场观感保持一致
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        EmbeddedHost.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200)) { EasingFunction = ease });
-        page.RenderTransform = new TranslateTransform(0, 12);
-        ((TranslateTransform)page.RenderTransform).BeginAnimation(
-            TranslateTransform.YProperty,
-            new DoubleAnimation(12, 0, TimeSpan.FromMilliseconds(240)) { EasingFunction = ease });
+        // 详情页立即可见。位移只作用在宿主上，保留页面本身的变换和返回状态。
+        var slide = new TranslateTransform();
+        EmbeddedContent.RenderTransform = slide;
+        slide.BeginAnimation(TranslateTransform.YProperty,
+            new DoubleAnimation(8, 0, TimeSpan.FromMilliseconds(160))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.Stop
+            });
 
         // 触发源可能在别的窗口上(例如在播放器里点了 UP 主头像)。
         // 那样页面虽然已经内嵌到主窗口, 用户却看不到 —— 所以这里主动把主窗口提到前面。
@@ -337,9 +364,6 @@ public partial class MainWindow : FluentWindow
     {
         _embeddedHistory.Clear();
         if (EmbeddedHost.Visibility != Visibility.Visible) return;
-        // 先清掉淡入动画: 不然下次显示时 Opacity 的动画值还挂着, 会跳过入场动画直接跳满
-        EmbeddedHost.BeginAnimation(OpacityProperty, null);
-        EmbeddedHost.Opacity = 0;
         EmbeddedHost.Visibility = Visibility.Collapsed;
         // 释放页面对象: 下次点进来重新 new 一个, 顺带重新拉一次数据(而不是显示上次的旧资料)
         EmbeddedContent.Content = null;
@@ -348,6 +372,7 @@ public partial class MainWindow : FluentWindow
 
     private void GoBackEmbedded()
     {
+        EmbeddedContent.RenderTransform = Transform.Identity;
         if(_embeddedHistory.TryPop(out var previous))
         {
             EmbeddedContent.Content=null;

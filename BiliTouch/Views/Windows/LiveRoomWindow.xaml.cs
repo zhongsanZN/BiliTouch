@@ -579,11 +579,12 @@ public partial class LiveRoomWindow : FluentWindow
         if (IsClosing) return;
         var s = Svc.Settings; _syncingOverlay = true;
         AreaSetting.Value = s.DanmakuAreaPercent; OpacitySetting.Value = s.DanmakuOpacityPercent;
-        FontSetting.Value = s.DanmakuFontScalePercent; SpeedSetting.Value = s.DanmakuSpeedLevel; ColorSetting.IsChecked = s.DanmakuColorful;
+        FontSetting.Value = s.DanmakuFontScalePercent; SpeedSetting.Value = s.DanmakuSpeedLevel;
+        ColorSetting.IsChecked = s.DanmakuColorful; OutlineSetting.IsChecked = s.DanmakuOutline;
         AreaValue.Text = s.DanmakuAreaPercent + "%"; OpacityValue.Text = s.DanmakuOpacityPercent + "%";
         FontValue.Text = s.DanmakuFontScalePercent + "%"; SpeedValue.Text = DanmakuMotion.SpeedLabel(s.DanmakuSpeedLevel);
         Model.OverlayEnabled = s.DanmakuEnabled; OverlayOff.Visibility = Model.OverlayEnabled ? Visibility.Collapsed : Visibility.Visible;
-        _overlay.Configure(DanmakuMotion.FontSizeFromPercent(s.DanmakuFontScalePercent, 20), s.DanmakuAreaPercent / 100d, s.DanmakuOpacityPercent / 100d, s.DanmakuSpeedLevel);
+        _overlay.Configure(DanmakuMotion.FontSizeFromPercent(s.DanmakuFontScalePercent, 20), s.DanmakuAreaPercent / 100d, s.DanmakuOpacityPercent / 100d, s.DanmakuSpeedLevel, s.DanmakuOutline);
         _keywordFilter = DanmakuKeywordFilter.Build(s.DanmakuBlockKeywords); _syncingOverlay = false;
     }
     private void OverlaySettingsClick(object sender, RoutedEventArgs e)
@@ -594,12 +595,15 @@ public partial class LiveRoomWindow : FluentWindow
     }
     private void OverlaySettingChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => SaveOverlaySettings();
     private void ColorSettingChanged(object sender, RoutedEventArgs e) => SaveOverlaySettings();
+    private void OutlineSettingChanged(object sender, RoutedEventArgs e) => SaveOverlaySettings();
     private void SaveOverlaySettings()
     {
-        if (_syncingOverlay || _overlay == null || AreaSetting == null || FontSetting == null || SpeedSetting == null || ColorSetting == null || OpacitySetting == null) return;
+        if (_syncingOverlay || _overlay == null || AreaSetting == null || FontSetting == null || SpeedSetting == null || ColorSetting == null || OutlineSetting == null || OpacitySetting == null) return;
         var s = Svc.Settings;
         s.UpdateDanmakuSettings(s.DanmakuEnabled, (int)AreaSetting.Value, s.DanmakuSmartFilter,
-            colorful: ColorSetting.IsChecked == true, opacityPercent: (int)OpacitySetting.Value, fontScalePercent: (int)FontSetting.Value, speedLevel: (int)SpeedSetting.Value);
+            colorful: ColorSetting.IsChecked == true, opacityPercent: (int)OpacitySetting.Value,
+            fontScalePercent: (int)FontSetting.Value, speedLevel: (int)SpeedSetting.Value,
+            outline: OutlineSetting.IsChecked == true);
     }
 
     // ------------------------------------------------------------ 侧栏 / 铺满 / 全屏

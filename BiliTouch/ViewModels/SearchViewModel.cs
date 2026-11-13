@@ -141,8 +141,15 @@ public class SearchViewModel : ObservableObject
             Error = "";
             Blocked = false;
             HasMore = false;
-            if (_lastKeyword != null) _ = SearchAsync();
-            else OnPropertyChanged(nameof(IsIdle));
+            Searching = false;
+            LoadingMore = false;
+            if (_lastKeyword != null && !string.IsNullOrWhiteSpace(Keyword))
+                _ = SearchAsync();
+            else
+            {
+                _lastKeyword = null;
+                OnPropertyChanged(nameof(IsIdle));
+            }
         }
     }
 

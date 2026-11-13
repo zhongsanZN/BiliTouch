@@ -231,6 +231,9 @@ public class SettingsStore
     /// </summary>
     public int DanmakuSpeedLevel { get; set; } = 2;
 
+    /// <summary>弹幕文字描边(默认不开启)。为文字加一圈深色轮廓, 高亮画面下更清晰。</summary>
+    public bool DanmakuOutline { get; set; } = false;
+
     // ------------------------------------------------------------ 列表屏蔽(FilterService)
 
     /// <summary>按标题屏蔽的关键词(包含匹配, 空格/逗号分隔)。与 AppSettings 同名属性是读写契约。</summary>
@@ -611,6 +614,7 @@ public class SettingsStore
         DanmakuFontScalePercent = Math.Clamp(s.DanmakuFontScalePercent, 50, 300);
         DanmakuSpeedLevel = Math.Clamp(s.DanmakuSpeedLevel,
             Helpers.DanmakuMotion.MinSpeedLevel, Helpers.DanmakuMotion.MaxSpeedLevel);
+        DanmakuOutline = s.DanmakuOutline;
 
         // 列表屏蔽: 老配置没有这些字段 ⇒ 空串 / 空列表 = 不屏蔽, 正是期望的默认。
         // ★ 仍要清洗: 配置可能被手改坏(空项、重复、超长、负 mid),
@@ -849,6 +853,7 @@ public class SettingsStore
         DanmakuOpacityPercent = DanmakuOpacityPercent,
         DanmakuFontScalePercent = DanmakuFontScalePercent,
         DanmakuSpeedLevel = DanmakuSpeedLevel,
+        DanmakuOutline = DanmakuOutline,
         FilterTitleKeyword = FilterTitleKeyword,
         FilterUpKeyword = FilterUpKeyword,
         FilterBlockedUps = FilterBlockedUps,
@@ -1217,7 +1222,8 @@ public class SettingsStore
         string? blockKeywords = null, bool? colorful = null,
         bool? filterScroll = null, bool? filterFixed = null,
         bool? filterColorful = null, bool? filterAdvanced = null,
-        int? opacityPercent = null, int? fontScalePercent = null, int? speedLevel = null)
+        int? opacityPercent = null, int? fontScalePercent = null, int? speedLevel = null,
+        bool? outline = null)
     {
         var nextKeywords = blockKeywords ?? DanmakuBlockKeywords;
         var nextColorful = colorful ?? DanmakuColorful;
@@ -1231,6 +1237,7 @@ public class SettingsStore
         var nextFont = Math.Clamp(fontScalePercent ?? DanmakuFontScalePercent, 50, 300);
         var nextSpeed = Math.Clamp(speedLevel ?? DanmakuSpeedLevel,
             Helpers.DanmakuMotion.MinSpeedLevel, Helpers.DanmakuMotion.MaxSpeedLevel);
+        var nextOutline = outline ?? DanmakuOutline;
         var changed = enabled != DanmakuEnabled
             || areaPercent != DanmakuAreaPercent
             || smartFilter != DanmakuSmartFilter
@@ -1242,6 +1249,7 @@ public class SettingsStore
             || nextOpacity != DanmakuOpacityPercent
             || nextFont != DanmakuFontScalePercent
             || nextSpeed != DanmakuSpeedLevel
+            || nextOutline != DanmakuOutline
             || !string.Equals(nextKeywords, DanmakuBlockKeywords, StringComparison.Ordinal);
         DanmakuEnabled = enabled;
         DanmakuAreaPercent = Math.Clamp(areaPercent, 25, 100);
@@ -1254,6 +1262,7 @@ public class SettingsStore
         DanmakuOpacityPercent = nextOpacity;
         DanmakuFontScalePercent = nextFont;
         DanmakuSpeedLevel = nextSpeed;
+        DanmakuOutline = nextOutline;
         DanmakuBlockKeywords = nextKeywords;
         Save();
         if (changed) DanmakuSettingsChanged?.Invoke();

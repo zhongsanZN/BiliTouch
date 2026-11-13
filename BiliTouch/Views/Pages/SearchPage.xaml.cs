@@ -61,7 +61,7 @@ public partial class SearchPage : UserControl
     public SearchPage()
     {
         InitializeComponent();
-        ModuleGestures = new TabNavigationGestures(this, ResultArea, SearchKindTabs);
+        ModuleGestures = new TabNavigationGestures(this, ResultArea, SearchKindTabs, CreatePeerPreview);
         SearchCard.SizeChanged+=(_,_) => (Window.GetWindow(this) as BiliTouch.MainWindow)?.RepaintHeader();
 
         // 历史增删(自己搜一次 / 点掉一条 / 清空)都会改变展开高度, 也可能让历史变空。
@@ -72,6 +72,7 @@ public partial class SearchPage : UserControl
         DataContextChanged += (_, e) =>
         {
             ResetCard();
+            ModuleGestures.InvalidatePeers();
             if (e.OldValue is SearchViewModel oldVm)
                 oldVm.Suggestions.CollectionChanged -= OnSuggestionsChanged;
             // 搜索结果也纳入全局屏蔽。以前只挂了首页/收藏/历史, 在搜索页怎么屏蔽都不生效。
@@ -444,6 +445,57 @@ public partial class SearchPage : UserControl
     // ------------------------------------------------------------ 动画小工具
 
     /// <summary>聚焦描边淡入淡出。From 取当前值, 淡出途中再聚焦也不会跳。</summary>
+    private UIElement CreatePeerPreview(int targetIndex)
+    {
+        var label = targetIndex switch { 0 => "视频", 1 => "直播间", 2 => "番剧", 3 => "用户", _ => "结果" };
+        var keyword = (Vm?.Keyword ?? "").Trim();
+        var stack = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        if (keyword.Length > 0)
+        {
+            stack.Children.Add(new BiliTouch.Views.Controls.LoadingRing
+            {
+                Width = 24,
+                Height = 24,
+                HorizontalAlignment = HorizontalAlignment.Center
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = $"切换到「{label}」搜索“{keyword}”…",
+                Margin = new Thickness(0, 12, 0, 0),
+                FontSize = 13,
+                Foreground = TryFindResource("TextSecondaryBrush") as Brush
+            });
+        }
+        else
+        {
+            stack.Children.Add(new TextBlock
+            {
+                Text = $"「{label}」搜索",
+                FontSize = 15,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = TryFindResource("TextPrimaryBrush") as Brush
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = "在上方输入关键词按回车开始搜索",
+                Margin = new Thickness(0, 8, 0, 0),
+                FontSize = 13,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = TryFindResource("TextSecondaryBrush") as Brush
+            });
+        }
+        return new Grid
+        {
+            Background = TryFindResource("AppBackgroundBrush") as Brush,
+            Children = { stack }
+        };
+    }
+
     private void FadeRing(bool on)
         => SearchInputRing.BeginAnimation(OpacityProperty,
             new DoubleAnimation(SearchInputRing.Opacity, on ? SearchRingOpacity : 0,

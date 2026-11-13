@@ -32,7 +32,7 @@
                        Style="{StaticResource MetaTextStyle}" />
         </StackPanel>
 
-        <Grid Grid.Row="1" Margin="36,14,36,0">
+        <Grid x:Name="RegionBody" Grid.Row="1" Margin="36,14,36,0">
             <!-- 加载中 -->
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center"
                         Visibility="{Binding Loading, Converter={StaticResource BoolToVis}}">

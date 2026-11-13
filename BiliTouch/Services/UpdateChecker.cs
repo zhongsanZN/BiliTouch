@@ -274,8 +274,9 @@ public static class UpdateChecker
         using var doc = await JsonDocument.ParseAsync(stream);
         var root = doc.RootElement;
 
-        var latest = ParseVersion(root.TryGetProperty("tag_name", out var tagEl) ? tagEl.GetString() : null);
-        if (latest == null || latest <= ParseVersion(App.AppVersion)) return null;
+        var tag = root.TryGetProperty("tag_name", out var tagEl) ? tagEl.GetString() : null;
+        var latest = ParseVersion(tag);
+        if (latest == null || !IsNewerVersion(tag, App.AppVersion)) return null;
 
         var asset = FindInstallerAsset(root, latest);
         return new LatestRelease
@@ -375,22 +376,79 @@ public static class UpdateChecker
     /// tag → 版本号(统一归一成四段, Revision ≥ 0)。容忍 "v"/"V" 前缀;
     /// "-fixN" 后缀映射为 Revision=N(修补版必须比原版新); 其他 "-beta" 这类后缀忽略。解析不出返回 null。
     /// </summary>
-    public static Version? ParseVersion(string? tag)
+    public static Version? ParseVersion(string? tag) => ParseVersionTag(tag)?.Version;
+
+    /// <summary>比较两个 tag（支持 -test / -beta / -rc 等预发布后缀；同主版本号时正式版与 -fixN 均高于预发布版）。</summary>
+    public static bool IsNewerVersion(string? latestTag, string? currentTag)
+    {
+        var latest = ParseVersionTag(latestTag);
+        var current = ParseVersionTag(currentTag);
+        if (latest == null || current == null) return false;
+        return CompareVersionTag(latest.Value, current.Value) > 0;
+    }
+
+    internal static int CompareVersionTags(string? leftTag, string? rightTag)
+    {
+        var left = ParseVersionTag(leftTag);
+        var right = ParseVersionTag(rightTag);
+        if (left == null && right == null) return 0;
+        if (left == null) return -1;
+        if (right == null) return 1;
+        return CompareVersionTag(left.Value, right.Value);
+    }
+
+    private readonly record struct ParsedTag(Version Version, string? Prerelease);
+
+    private static ParsedTag? ParseVersionTag(string? tag)
     {
         if (string.IsNullOrWhiteSpace(tag)) return null;
-        var s = tag.Trim();
-        if (s.StartsWith("v", StringComparison.OrdinalIgnoreCase)) s = s[1..];
+        var s = tag.Trim().TrimStart('v', 'V');
+        var plus = s.IndexOf('+');
+        if (plus >= 0) s = s[..plus];
         var fix = 0;
+        string? prerelease = null;
         var dash = s.IndexOf('-');
         if (dash >= 0)
         {
-            var m = FixSuffixPattern.Match(s[(dash + 1)..]);
+            var suffix = s[(dash + 1)..].Trim();
+            var m = FixSuffixPattern.Match(suffix);
             if (m.Success) int.TryParse(m.Groups["n"].Value, out fix);
+            else if (suffix.Length > 0) prerelease = suffix;
             s = s[..dash];
         }
         if (!Version.TryParse(s, out var v)) return null;
         var rev = fix > 0 ? fix : Math.Max(v.Revision, 0);
-        return new Version(v.Major, v.Minor, Math.Max(v.Build, 0), rev);
+        return new ParsedTag(new Version(v.Major, v.Minor, Math.Max(v.Build, 0), rev), prerelease);
+    }
+
+    private static int CompareVersionTag(ParsedTag left, ParsedTag right)
+    {
+        var cmp = left.Version.CompareTo(right.Version);
+        if (cmp != 0) return cmp;
+        if (left.Prerelease == null && right.Prerelease == null) return 0;
+        if (left.Prerelease == null) return 1;
+        if (right.Prerelease == null) return -1;
+        return ComparePrerelease(left.Prerelease, right.Prerelease);
+    }
+
+    private static int ComparePrerelease(string left, string right)
+    {
+        var aParts = left.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        var bParts = right.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        var count = Math.Max(aParts.Length, bParts.Length);
+        for (var i = 0; i < count; i++)
+        {
+            if (i >= aParts.Length) return -1;
+            if (i >= bParts.Length) return 1;
+            var aNum = int.TryParse(aParts[i], out var ai);
+            var bNum = int.TryParse(bParts[i], out var bi);
+            int c;
+            if (aNum && bNum) c = ai.CompareTo(bi);
+            else if (aNum != bNum) c = aNum ? -1 : 1;
+            else c = string.Compare(aParts[i], bParts[i], StringComparison.OrdinalIgnoreCase);
+            if (c != 0) return c;
+        }
+        return 0;
     }
 
     /// <summary>用户可见/文件名用的版本串：0.2.17 或 0.2.17-fix1(与发布脚本的命名一致)。</summary>

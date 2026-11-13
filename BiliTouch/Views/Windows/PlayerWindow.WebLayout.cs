@@ -149,10 +149,13 @@ public partial class PlayerWindow
         }));
     }
 
-    private void ApplyAlternateLayoutPreference()
+    private bool ShouldUseWebPlayerLayout =>
+        Svc.Settings.UseWebPlayerLayout && !_isFullscreen && !_isFillWindow && !_isLive && !_isListenMode;
+
+    private void ApplyAlternateLayoutPreference(bool allowPreLoad = false)
     {
-        if (!_webInitialized || _closing || _webChangingLayout || !IsLoaded) return;
-        bool use = Svc.Settings.UseWebPlayerLayout && !_isFullscreen && !_isFillWindow && !_isLive && !_isListenMode;
+        if (!_webInitialized || _closing || _webChangingLayout || (!allowPreLoad && !IsLoaded)) return;
+        bool use = ShouldUseWebPlayerLayout;
         if (use == _webLayoutMounted) return;
         _webChangingLayout = true;
         try { if (use) MountWebLayout(); else UnmountWebLayout(); }
@@ -169,6 +172,7 @@ public partial class PlayerWindow
     private void ResetWebPageAnimations()
     {
         _infoSwipeArmed = _infoDraggingPage = _infoPageAnimating = _infoHorizontalDecided = false;
+        RestoreInfoScrollPanning();
         PageHost.BeginAnimation(HeightProperty, null); PageHost.Height = double.NaN;
         foreach (var page in new FrameworkElement[] { IntroPanel, WebRecommendationsPanel, CommentsPanel })
         { page.BeginAnimation(OpacityProperty, null); page.Opacity = 1; page.RenderTransform = Transform.Identity; }
@@ -361,6 +365,7 @@ public partial class PlayerWindow
     private void OnWebLeftScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (!ReferenceEquals(e.OriginalSource, WebLeftScroll) || !_webLayoutMounted) return;
+        PrefetchCommentPage(WebLeftScroll, e);
         if (e.ViewportWidthChange != 0 || e.ViewportHeightChange != 0)
             UpdateWebMeasurements();
         else if (e.VerticalChange != 0 && WebVideoPlaceholder.Height > 0)
