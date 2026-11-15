@@ -57,6 +57,8 @@ internal static class FeatureTests
         RunBiliDesk172AdoptionTests(check);
         RunSettingsPlayerLayoutTests(check);
         RunSplitLayoutTouchTests(check);
+        RunWebCommentVirtualizationTests(check);
+        RunArticleAndOpusTests(check);
     }
 
     private static void RunDanmakuOutlineTests(Action<bool, string> check)
@@ -690,5 +692,216 @@ internal static class FeatureTests
         enc.Frames.Add(BitmapFrame.Create(bmp));
         using var fs = File.Create(path);
         enc.Save(fs);
+    }
+
+    private static void RunWebCommentVirtualizationTests(Action<bool, string> check)
+    {
+        var items = new System.Collections.ObjectModel.ObservableCollection<CommentItem>();
+        for (int i = 0; i < 120; i++)
+            items.Add(new CommentItem { Rpid = i + 1, UserName = $"U{i}", Content = $"评论内容 #{i}" });
+
+        var factory = new FrameworkElementFactory(typeof(VirtualizingCommentPanel));
+        var tpl = new DataTemplate(typeof(CommentItem));
+        var box = new FrameworkElementFactory(typeof(Border));
+        box.SetValue(FrameworkElement.HeightProperty, 90.0);
+        tpl.VisualTree = box;
+
+        var list = new ListBox
+        {
+            ItemsSource = items,
+            ItemsPanel = new ItemsPanelTemplate(factory),
+            ItemTemplate = tpl,
+            BorderThickness = new Thickness(0),
+        };
+        ScrollViewer.SetVerticalScrollBarVisibility(list, ScrollBarVisibility.Disabled);
+
+        // Simulate WebLayout's UiScale(1.25) inside outer ScrollViewer
+        var scaleHost = new Border
+        {
+            LayoutTransform = new ScaleTransform(1.25, 1.25),
+            Child = list,
+        };
+        var rootStack = new StackPanel();
+        rootStack.Children.Add(new Border { Height = 900 });
+        rootStack.Children.Add(scaleHost);
+
+        var scroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = rootStack,
+        };
+
+        var win = new Window
+        {
+            Width = 900,
+            Height = 700,
+            ShowInTaskbar = false,
+            Content = scroll,
+        };
+        win.Show();
+        try
+        {
+            Pump(150);
+            scroll.ScrollToVerticalOffset(5000);
+            Pump(180);
+            list.UpdateLayout();
+
+            // At offset 5000: in scaled panel local coords (1.25x), viewport spans y ~ [(5000-900)/1.25, (5700-900)/1.25] = [3280, 3840]
+            // Each item is ~90px tall, so index ~36..42 MUST all be realized (especially top visible index 36/37)!
+            int visibleTopIdx = 37;
+            var topContainer = list.ItemContainerGenerator.ContainerFromIndex(visibleTopIdx) as FrameworkElement;
+            check(topContainer != null && topContainer.Visibility == Visibility.Visible && topContainer.ActualHeight > 50,
+                $"WebLayout scaled VirtualizingCommentPanel keeps top visible container #{visibleTopIdx} realized at deep scroll offset");
+
+            // Check that ALL indices across the visible band (36..42) are realized with no top missing hole
+            var missing = new System.Collections.Generic.List<int>();
+            for (int idx = 36; idx <= 42; idx++)
+            {
+                if (list.ItemContainerGenerator.ContainerFromIndex(idx) == null)
+                    missing.Add(idx);
+            }
+            check(missing.Count == 0,
+                $"WebLayout scaled VirtualizingCommentPanel has no missing top containers in visible range 36..42 (missing: [{string.Join(",", missing)}])");
+        }
+        finally
+        {
+            win.Close();
+        }
+    }
+
+    private static void RunArticleAndOpusTests(Action<bool, string> check)
+    {
+        // 1. DynamicParser: DYNAMIC_TYPE_ARTICLE + MAJOR_TYPE_OPUS with pics & comment_type=11 => ImageText (NOT Article)
+        var opusImageJson = """
+        {
+          "id_str": "9900112233",
+          "type": "DYNAMIC_TYPE_ARTICLE",
+          "basic": { "comment_id_str": "556677", "comment_type": 11, "jump_url": "//www.bilibili.com/opus/9900112233" },
+          "modules": {
+            "module_author": { "mid": 1001, "name": "画师A", "pub_action": "投稿了动态" },
+            "module_dynamic": {
+              "major": {
+                "type": "MAJOR_TYPE_OPUS",
+                "opus": {
+                  "title": "",
+                  "jump_url": "//www.bilibili.com/opus/9900112233",
+                  "summary": { "text": "发两张新图看看" },
+                  "pics": [
+                    { "url": "//i0.hdslb.com/bfs/new_dyn/1.png", "width": 1000, "height": 800 },
+                    { "url": "//i0.hdslb.com/bfs/new_dyn/2.png", "width": 1000, "height": 800 }
+                  ]
+                }
+              }
+            }
+          }
+        }
+        """;
+        using (var d1 = JsonDocument.Parse(opusImageJson))
+        {
+            var item = DynamicParser.Parse(d1.RootElement);
+            check(item != null && item.Kind == DynamicKind.ImageText,
+                "DYNAMIC_TYPE_ARTICLE + MAJOR_TYPE_OPUS image post (comment_type=11) classifies as ImageText");
+            check(item != null && item.Pictures.Count == 2 && item.OpusId == "9900112233",
+                "Opus image post preserves pictures and OpusId");
+        }
+
+        // 2. DynamicParser: true article with MAJOR_TYPE_OPUS + /read/cv + comment_type=12 stays Article
+        var opusArticleJson = """
+        {
+          "id_str": "8800112233",
+          "type": "DYNAMIC_TYPE_ARTICLE",
+          "basic": { "comment_id_str": "778899", "comment_type": 12, "rid_str": "778899" },
+          "modules": {
+            "module_author": { "mid": 1002, "name": "专栏UP", "pub_action": "发表了专栏文章" },
+            "module_dynamic": {
+              "major": {
+                "type": "MAJOR_TYPE_OPUS",
+                "opus": {
+                  "title": "深度评测长文",
+                  "jump_url": "//www.bilibili.com/read/cv778899",
+                  "summary": { "text": "这里是摘要..." },
+                  "pics": [ { "url": "//i0.hdslb.com/bfs/article/cover.jpg", "width": 1200, "height": 675 } ]
+                }
+              }
+            }
+          }
+        }
+        """;
+        using (var d2 = JsonDocument.Parse(opusArticleJson))
+        {
+            var art = DynamicParser.Parse(d2.RootElement);
+            check(art != null && art.Kind == DynamicKind.Article && art.ArticleId == "778899" && art.ArticleTitle == "深度评测长文",
+                "True Opus-backed cv article stays DynamicKind.Article and extracts ArticleId/Title");
+        }
+
+        // 3. ArticleParser: HTML -> ordered structured blocks
+        var htmlDetail = new ArticleDetail { ArticleId = "123" };
+        ArticleParser.ParseHtmlIntoBlocks(
+            "<h2>小标题</h2><p>第一段 <strong>加粗</strong> <a href=\"https://www.bilibili.com/video/BV1xx411c7mD\">看视频</a></p><figure><img data-src=\"//i0.hdslb.com/img1.jpg\" /><figcaption>图注一</figcaption></figure><blockquote>引用一句</blockquote><pre><code>int a = 42;</code></pre><hr/>",
+            htmlDetail);
+        check(htmlDetail.Blocks.Count == 6
+            && htmlDetail.Blocks[0].Kind == ArticleBlockKind.Heading
+            && htmlDetail.Blocks[1].Kind == ArticleBlockKind.Paragraph
+            && htmlDetail.Blocks[2].Kind == ArticleBlockKind.Image
+            && htmlDetail.Blocks[3].Kind == ArticleBlockKind.Quote
+            && htmlDetail.Blocks[4].Kind == ArticleBlockKind.Code
+            && htmlDetail.Blocks[5].Kind == ArticleBlockKind.Divider,
+            "ArticleParser parses classic HTML into ordered Heading/Paragraph/Image/Quote/Code/Divider blocks");
+        check(htmlDetail.AllImages.Count == 1 && htmlDetail.AllImages[0].Url == "https://i0.hdslb.com/img1.jpg"
+            && htmlDetail.Blocks[2].ImageCaption == "图注一"
+            && htmlDetail.Blocks[1].Runs.Any(r => r.Bold && r.Text == "加粗")
+            && htmlDetail.Blocks[1].Runs.Any(r => r.ReferencedBvid == "BV1xx411c7mD"),
+            "ArticleParser preserves inline bold/BV links and image captions");
+
+        // 4. ArticleParser: Opus opus/detail JSON -> ordered blocks incl. List, Code, VideoCard
+        var opusDetailJson = """
+        {
+          "id_str": "66554433",
+          "basic": { "comment_id_str": "778899", "comment_type": 12, "rid_str": "778899" },
+          "modules": [
+            { "module_type": "MODULE_TYPE_TITLE", "module_title": { "text": "Opus 文章标题" } },
+            { "module_type": "MODULE_TYPE_AUTHOR", "module_author": { "mid": 99, "name": "作者君" } },
+            {
+              "module_type": "MODULE_TYPE_CONTENT",
+              "module_content": {
+                "paragraphs": [
+                  { "para_type": 1, "text": { "nodes": [ { "type": "TEXT_NODE_TYPE_WORD", "word": { "words": "正文第一段", "font_size": 17 } } ] } },
+                  { "para_type": 2, "pic": { "pics": [ { "url": "//i0.hdslb.com/p2.png", "width": 800, "height": 600 } ] } },
+                  { "para_type": 5, "list": { "style": 1, "items": [ { "nodes": [ { "type": "TEXT_NODE_TYPE_WORD", "word": { "words": "条目标题" } } ] } ] } },
+                  { "para_type": 6, "link_card": { "card": { "ugc": { "title": "推荐视频", "jump_url": "//www.bilibili.com/video/BV1Ab411q7XY", "duration": "05:20" } } } },
+                  { "para_type": 7, "code": { "lang": "csharp", "content": "Console.WriteLine(1);" } }
+                ]
+              }
+            }
+          ]
+        }
+        """;
+        using (var d3 = JsonDocument.Parse(opusDetailJson))
+        {
+            var opusDetail = ArticleParser.ParseOpusItem(d3.RootElement, "66554433");
+            check(opusDetail != null && opusDetail.Title == "Opus 文章标题" && opusDetail.ArticleId == "778899"
+                && opusDetail.Blocks.Count == 5
+                && opusDetail.Blocks[1].Kind == ArticleBlockKind.Image
+                && opusDetail.Blocks[2].Kind == ArticleBlockKind.ListItem && opusDetail.Blocks[2].ListMarker == "1."
+                && opusDetail.Blocks[3].Kind == ArticleBlockKind.VideoCard && opusDetail.Blocks[3].Video?.Bvid == "BV1Ab411q7XY"
+                && opusDetail.Blocks[4].Kind == ArticleBlockKind.Code && opusDetail.Blocks[4].CodeLanguage == "csharp",
+                "ArticleParser parses Opus detail modules array (Title/Author/Paragraph/Pic/List/VideoCard/Code)");
+        }
+
+        // 5. UrlParser + Article Search item parsing
+        check(BiliTouch.Utils.UrlParser.ExtractArticleId("https://www.bilibili.com/read/cv123456?from=search") == "123456",
+            "UrlParser.ExtractArticleId extracts cv number");
+        check(BiliTouch.Utils.UrlParser.ExtractOpusId("//www.bilibili.com/opus/987654321") == "987654321",
+            "UrlParser.ExtractOpusId extracts opus id");
+
+        var searchJson = """
+        { "id": 554433, "title": "<em class=\"keyword\">测试</em>专栏", "desc": "简介", "mid": 42, "author": "测试UP", "category_name": "科技", "view": 1200, "like": 34, "reply": 5, "image_urls": ["//i0.hdslb.com/s.jpg"] }
+        """;
+        using (var d4 = JsonDocument.Parse(searchJson))
+        {
+            var artSum = ApiClient.ParseArticleSearchItem(d4.RootElement);
+            check(artSum != null && artSum.ArticleId == "554433" && artSum.Title == "测试专栏" && artSum.AuthorMid == 42 && artSum.Cover == "https://i0.hdslb.com/s.jpg",
+                "ApiClient.ParseArticleSearchItem strips HTML highlights and extracts article metadata");
+        }
     }
 }

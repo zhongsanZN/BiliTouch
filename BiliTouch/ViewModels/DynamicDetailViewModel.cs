@@ -34,6 +34,8 @@ public sealed class DynamicDetailViewModel : ObservableObject
     public bool CanSend => !Sending && Svc.Session.HasLogin && (Reposting || !string.IsNullOrWhiteSpace(Draft));
     public bool HasReplyTarget => _reply!=null || Reposting;
     private long _root;
+    public event Action<string>? CaptchaRequested;
+    public event Action<CommentItem>? CommentPosted;
     public DynamicDetailViewModel(DynamicItem item,bool repost=false) { Item=item;Reposting=repost; }
     public Task InitializeAsync() => _initialization ??= InitializeCoreAsync();
 
@@ -148,14 +150,59 @@ public sealed class DynamicDetailViewModel : ObservableObject
         Sending=true;Error="";
         var repost=Reposting;
         var text=Draft;
+        var replyTarget = _reply;
+        var rootRpid = _root;
         try
         {
-            var r=repost ? await Svc.Api.RepostDynamicAsync(Item.Id,text) :
-                long.TryParse(Item.CommentOid,out var oid) ? await Svc.Api.PostCommentAsync(oid,text,_root,_reply?.Rpid ?? 0,Item.CommentType) : (false,"这条动态暂不能评论");
-            if(!r.Item1) {Error=r.Item2 ?? "发送失败，请重试";return;}
-            Draft="";ComposeReply(null);
-            if(!repost) await LoadCommentsAsync(true);
-            Status=repost?"转发成功":"评论已发送";
+            if (repost)
+            {
+                var r = await Svc.Api.RepostDynamicAsync(Item.Id, text);
+                if (!r.ok) { Error = r.err ?? "转发失败，请重试"; return; }
+                Draft = ""; ComposeReply(null);
+                Status = "转发成功";
+                return;
+            }
+
+            if (!long.TryParse(Item.CommentOid, out var oid) || oid <= 0)
+            {
+                Error = "这条动态暂不能评论";
+                return;
+            }
+
+            var res = await Svc.Api.PostCommentDetailedAsync(oid, text, rootRpid, replyTarget?.Rpid ?? 0, Item.CommentType);
+            if (!res.Ok)
+            {
+                Error = res.Err ?? "发送失败，请重试";
+                if (res.NeedCaptcha && !string.IsNullOrEmpty(res.CaptchaUrl))
+                    CaptchaRequested?.Invoke(res.CaptchaUrl);
+                return;
+            }
+
+            Draft = "";
+            ComposeReply(null);
+            await LoadCommentsAsync(true);
+            var echoed = res.Reply;
+            if (echoed != null)
+            {
+                if (rootRpid > 0 && Comments.FirstOrDefault(c => c.Rpid == rootRpid) is { } rootComment)
+                {
+                    if (rootComment.Replies.All(x => x.Rpid != echoed.Rpid))
+                    {
+                        rootComment.Replies.Add(echoed);
+                        if (rootComment.ReplyCount < rootComment.Replies.Count)
+                            rootComment.ReplyCount = rootComment.Replies.Count;
+                        rootComment.NotifyRepliesChanged();
+                    }
+                    CommentPosted?.Invoke(rootComment);
+                }
+                else if (_commentIds.Add(echoed.Rpid))
+                {
+                    var insertAt = Comments.TakeWhile(c => c.IsPinned).Count();
+                    Comments.Insert(insertAt, echoed);
+                    CommentPosted?.Invoke(echoed);
+                }
+            }
+            Status = !string.IsNullOrWhiteSpace(res.SuccessToast) ? res.SuccessToast : "评论已发送";
         }
         catch(Exception ex) {Error="发送失败，请重试："+ex.Message;}
         finally {Sending=false;}

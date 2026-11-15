@@ -81,7 +81,7 @@ public partial class MainWindow : FluentWindow
     private void OnSidebarTheme(object sender,RoutedEventArgs e)
     { ThemeTransition.ToggleLightDark(this,_sidebarThemeOrigin);_sidebarThemeOrigin=null; }
     private void OnStarPartyWebsite(object sender,RoutedEventArgs e)
-    { e.Handled=true; Svc.Navigate?.OpenWebViewWindow("https://xteamparty.com/","星创组 · 吉星派对同人站"); }
+    { e.Handled=true; Svc.Navigate?.OpenStarParty(); }
     private void OnSidebarMessages(object sender,RoutedEventArgs e)=>_vm.Navigate(PageKey.Messages);
     private void RefreshSidebarTheme()
     {

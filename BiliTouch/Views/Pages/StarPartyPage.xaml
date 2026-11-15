@@ -1,0 +1,385 @@
+<UserControl x:Class="BiliTouch.Views.Pages.StarPartyPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
+             xmlns:helpers="clr-namespace:BiliTouch.Helpers"
+             Background="Transparent">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 顶部导航条与操作 -->
+        <Border Grid.Row="0" Padding="20,10,20,8"
+                BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,0,1">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <RadioButton x:Name="TabOverview" Content="精选首页" GroupName="XteamTabs"
+                                 Style="{StaticResource UnderlineTabStyle}" IsChecked="True"
+                                 Padding="10,6" Margin="0,0,6,0" Checked="OnSectionChecked" />
+                    <RadioButton x:Name="TabWorks" Content="自研作品" GroupName="XteamTabs"
+                                 Style="{StaticResource UnderlineTabStyle}"
+                                 Padding="10,6" Margin="0,0,6,0" Checked="OnSectionChecked" />
+                    <RadioButton x:Name="TabPicks" Content="社区同人" GroupName="XteamTabs"
+                                 Style="{StaticResource UnderlineTabStyle}"
+                                 Padding="10,6" Margin="0,0,6,0" Checked="OnSectionChecked" />
+                    <RadioButton x:Name="TabOst" Content="星引擎 OST" GroupName="XteamTabs"
+                                 Style="{StaticResource UnderlineTabStyle}"
+                                 Padding="10,6" Margin="0,0,6,0" Checked="OnSectionChecked" />
+                    <RadioButton x:Name="TabLinks" Content="友链与关于" GroupName="XteamTabs"
+                                 Style="{StaticResource UnderlineTabStyle}"
+                                 Padding="10,6" Checked="OnSectionChecked" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="BtnRefresh" Content="刷新" Style="{StaticResource SubtleButtonStyle}"
+                            Click="OnRefreshClick" Margin="0,0,8,0" MinHeight="32" Padding="12,4" />
+                    <Button Content="网页原站 ↗" Style="{StaticResource SubtleButtonStyle}"
+                            Click="OnOpenOriginalSiteClick" MinHeight="32" Padding="12,4"
+                            ToolTip="部分 Godot Web Demo 可在浏览器内核中直接试玩" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 主体滚动内容 -->
+        <ScrollViewer x:Name="MainScroll" Grid.Row="1"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <Grid Margin="20,16,20,24">
+                <!-- 加载 / 错误态 -->
+                <StackPanel x:Name="LoadingPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,60,0,0">
+                    <controls:LoadingRing Width="28" Height="28" HorizontalAlignment="Center" />
+                    <TextBlock Text="正在获取星创组最新同人数据…" Margin="0,12,0,0" FontSize="13"
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                </StackPanel>
+
+                <StackPanel x:Name="ErrorPanel" Visibility="Collapsed" HorizontalAlignment="Center" Margin="0,60,0,0">
+                    <TextBlock x:Name="ErrorText" FontSize="13" TextWrapping="Wrap" MaxWidth="420"
+                               TextAlignment="Center" Foreground="{DynamicResource DangerTextBrush}" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,14,0,0">
+                        <Button Content="重试加载" Style="{StaticResource AccentButtonStyle}" Click="OnRefreshClick" Margin="0,0,8,0" />
+                        <Button Content="改为网页打开" Style="{StaticResource SubtleButtonStyle}" Click="OnOpenOriginalSiteClick" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- 1. 精选首页 -->
+                <StackPanel x:Name="OverviewView" Visibility="Collapsed">
+                    <Border Padding="20" CornerRadius="12"
+                            Background="{DynamicResource CardBackgroundBrush}"
+                            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <StackPanel>
+                                <Border Background="{DynamicResource AccentSoftFillBrush}"
+                                        HorizontalAlignment="Left" CornerRadius="10" Padding="10,4" Margin="0,0,0,10">
+                                    <TextBlock x:Name="HeroBadgeText" FontSize="11" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource AccentTextBrush}" />
+                                </Border>
+                                <TextBlock x:Name="HeroTitleText" FontSize="24" FontWeight="Bold" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                                <TextBlock x:Name="HeroSubText" FontSize="13" Margin="0,6,0,0" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                                <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                                    <Button Content="探索自研作品 →" Style="{StaticResource AccentButtonStyle}"
+                                            Click="OnJumpWorksClick" Margin="0,0,10,0" />
+                                    <Button Content="发现社区同人" Style="{StaticResource SubtleButtonStyle}"
+                                            Click="OnJumpPicksClick" Margin="0,0,10,0" />
+                                    <Button Content="收听星引擎 OST" Style="{StaticResource SubtleButtonStyle}"
+                                            Click="OnJumpOstClick" />
+                                </StackPanel>
+                            </StackPanel>
+                            <ItemsControl x:Name="StatsList" Grid.Row="1" Margin="0,18,0,0">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <UniformGrid Columns="4" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,8,0" Padding="12,10" CornerRadius="8"
+                                                Background="{DynamicResource SubtleFillBrush}"
+                                                BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+                                            <StackPanel>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Value}" FontSize="20" FontWeight="Bold"
+                                                               Foreground="{DynamicResource AccentTextBrush}" />
+                                                    <TextBlock Text="{Binding Unit}" FontSize="12" Margin="3,0,0,2"
+                                                               VerticalAlignment="Bottom"
+                                                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding Label}" FontSize="11" Margin="0,3,0,0"
+                                                           Foreground="{DynamicResource TextTertiaryBrush}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Text="星创组自研企划" FontSize="16" FontWeight="SemiBold" Margin="0,20,0,10"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+                    <ItemsControl x:Name="OverviewWorksList" />
+
+                    <TextBlock Text="社区同人推荐" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,10"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+                    <ItemsControl x:Name="OverviewPicksList" />
+                </StackPanel>
+
+                <!-- 2. 自研作品 -->
+                <StackPanel x:Name="WorksView" Visibility="Collapsed">
+                    <TextBlock Text="星创组 (Xteam) 自主创作与维护的《吉星派对 Astral Party》同人小游戏合集。"
+                               FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14" TextWrapping="Wrap" />
+                    <ItemsControl x:Name="WorksList" />
+                </StackPanel>
+
+                <!-- 3. 社区同人 -->
+                <StackPanel x:Name="PicksView" Visibility="Collapsed">
+                    <DockPanel Margin="0,0,0,14">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                            <RadioButton x:Name="FilterPickAll" Content="全部" GroupName="PickFilter" IsChecked="True"
+                                         Style="{StaticResource PillTabStyle}" Margin="0,0,6,0" Checked="OnPickFilterChecked" />
+                            <RadioButton x:Name="FilterPickGame" Content="同人游戏" GroupName="PickFilter"
+                                         Style="{StaticResource PillTabStyle}" Margin="0,0,6,0" Checked="OnPickFilterChecked" />
+                            <RadioButton x:Name="FilterPickMod" Content="同人模组" GroupName="PickFilter"
+                                         Style="{StaticResource PillTabStyle}" Checked="OnPickFilterChecked" />
+                        </StackPanel>
+                        <TextBlock Text="社区同好与创作者打造的《吉星派对》同人游戏与同人模组索引"
+                                   FontSize="13" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </DockPanel>
+                    <ItemsControl x:Name="PicksList" />
+                </StackPanel>
+
+                <!-- 4. OST 原声音乐 -->
+                <StackPanel x:Name="OstView" Visibility="Collapsed">
+                    <TextBlock Text="星引擎 / 吉星派对 原声音乐曲库（支持应用内直接试听 OGG / MP3）"
+                               FontSize="13" Foreground="{DynamicResource TextSecondaryBrush}" Margin="0,0,0,14" TextWrapping="Wrap" />
+                    <ItemsControl x:Name="OstPacksList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,14" Padding="16" CornerRadius="10"
+                                        Background="{DynamicResource CardBackgroundBrush}"
+                                        BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                                        <ItemsControl ItemsSource="{Binding Tracks}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Button Style="{StaticResource SubtleButtonStyle}"
+                                                            Margin="0,0,8,8" Padding="12,8" MinHeight="36"
+                                                            Click="OnTrackClick" Tag="{Binding}">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="▶" FontSize="10" VerticalAlignment="Center"
+                                                                       Foreground="{DynamicResource AccentTextBrush}" Margin="0,0,8,0" />
+                                                            <TextBlock Text="{Binding Title}" FontSize="12"
+                                                                       Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- 5. 友链与关于 -->
+                <StackPanel x:Name="LinksView" Visibility="Collapsed">
+                    <TextBlock Text="友情链接与伙伴站点" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+                    <ItemsControl x:Name="LinksList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,10" Padding="14" CornerRadius="10" Cursor="Hand"
+                                        Background="{DynamicResource CardBackgroundBrush}"
+                                        BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+                                        MouseLeftButtonUp="OnLinkCardClick" Tag="{Binding}">
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Right" Text="打开 ↗" FontSize="12" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource AccentTextBrush}" Margin="12,0,0,0" />
+                                        <StackPanel>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="★ " Foreground="{DynamicResource AccentTextBrush}" />
+                                                <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                <TextBlock Text="{Binding Hint}" FontSize="11" Margin="10,0,0,0" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource TextTertiaryBrush}" />
+                                            </StackPanel>
+                                            <TextBlock Text="{Binding Description}" FontSize="12" Margin="0,5,0,0" TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Text="关于星创组" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,10"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+                    <ItemsControl x:Name="AboutList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,10" Padding="16" CornerRadius="10"
+                                        Background="{DynamicResource CardBackgroundBrush}"
+                                        BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Heading}" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8"
+                                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                                        <ItemsControl ItemsSource="{Binding Paragraphs}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding}" FontSize="13" TextWrapping="Wrap" Margin="0,0,0,6"
+                                                               LineHeight="20" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <ItemsControl ItemsSource="{Binding Bullets}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding StringFormat='• {0}'}" FontSize="12.5" TextWrapping="Wrap"
+                                                               Margin="4,0,0,4" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+
+        <!-- 作品原生详情遮罩层 -->
+        <Grid x:Name="DetailOverlay" Grid.Row="1" Visibility="Collapsed"
+              Background="{DynamicResource WindowBackgroundBrush}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="20,14,20,24">
+                    <Button x:Name="BtnDetailBack" Content="← 返回作品列表" HorizontalAlignment="Left"
+                            Style="{StaticResource SubtleButtonStyle}" Click="OnCloseDetailClick" Margin="0,0,0,12" />
+                    <controls:LoadingRing x:Name="DetailLoading" Width="26" Height="26" Visibility="Collapsed" Margin="0,20" />
+                    <Border x:Name="DetailCard" Visibility="Collapsed" Padding="20" CornerRadius="12"
+                            Background="{DynamicResource CardBackgroundBrush}"
+                            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Border Width="168" Height="168" CornerRadius="10" HorizontalAlignment="Left"
+                                        Background="{DynamicResource PlaceholderBrush}">
+                                    <Border.Clip>
+                                        <RectangleGeometry RadiusX="10" RadiusY="10" Rect="0,0,168,168" />
+                                    </Border.Clip>
+                                    <Image x:Name="DetailCoverImage" Stretch="UniformToFill" />
+                                </Border>
+                                <StackPanel Grid.Column="1" Margin="16,0,0,0">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                        <Border x:Name="DetailStatusPill" CornerRadius="8" Padding="8,3"
+                                                Background="{DynamicResource AccentSoftFillBrush}" Margin="0,0,8,0">
+                                            <TextBlock x:Name="DetailStatusText" FontSize="11" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource AccentTextBrush}" />
+                                        </Border>
+                                        <TextBlock x:Name="DetailDateText" FontSize="11" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextTertiaryBrush}" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="DetailTitleText" FontSize="22" FontWeight="Bold" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextPrimaryBrush}" />
+                                    <TextBlock x:Name="DetailSubtitleText" FontSize="13" Margin="0,4,0,10" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Button x:Name="BtnDetailAuthor" Style="{StaticResource SubtleButtonStyle}"
+                                            HorizontalAlignment="Left" Margin="0,0,0,12" Padding="10,4"
+                                            Click="OnDetailAuthorClick" />
+                                    <WrapPanel x:Name="DetailActionsPanel" />
+                                </StackPanel>
+                            </Grid>
+
+                            <ItemsControl x:Name="DetailParagraphsList" Margin="0,18,0,0">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="13.5" LineHeight="22" TextWrapping="Wrap"
+                                                   Margin="0,0,0,10" Foreground="{DynamicResource TextPrimaryBrush}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock x:Name="DetailGalleryHeader" Text="实机与演示截图（点击查看大图）"
+                                       FontSize="14" FontWeight="SemiBold" Margin="0,12,0,10"
+                                       Foreground="{DynamicResource TextPrimaryBrush}" Visibility="Collapsed" />
+                            <ItemsControl x:Name="DetailScreenshotsList">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Width="220" Height="124" Margin="0,0,10,10" CornerRadius="8" Cursor="Hand"
+                                                Background="{DynamicResource PlaceholderBrush}"
+                                                helpers:Cover.Source="{Binding}"
+                                                MouseLeftButtonUp="OnDetailScreenshotClick" Tag="{Binding}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- 内置大图灯箱 -->
+        <controls:InlineImageGallery x:Name="ScreenshotGallery" Grid.RowSpan="2" Visibility="Collapsed" />
+
+        <!-- 底部原生 OST 迷你播放器 -->
+        <Border x:Name="AudioPlayerBar" Grid.Row="2" Visibility="Collapsed"
+                Padding="20,10" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0"
+                Background="{DynamicResource CardBackgroundBrush}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="220" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="BtnAudioToggle" Grid.Column="0" Content="❚❚" Width="34" Height="34" Padding="0"
+                        Style="{StaticResource AccentButtonStyle}" Click="OnAudioToggleClick" Margin="0,0,12,0" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
+                    <TextBlock x:Name="AudioTrackTitle" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+                    <TextBlock x:Name="AudioPackName" FontSize="11" TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                </StackPanel>
+                <Slider x:Name="AudioProgressSlider" Grid.Column="2" VerticalAlignment="Center"
+                        Minimum="0" Maximum="100" Value="0"
+                        PreviewMouseLeftButtonUp="OnAudioSeekEnd" />
+                <TextBlock x:Name="AudioTimeText" Grid.Column="3" VerticalAlignment="Center" Margin="12,0,10,0"
+                           FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" Text="00:00 / 00:00" />
+                <Button Grid.Column="4" Content="✕" Style="{StaticResource SubtleButtonStyle}" Padding="8,4"
+                        Click="OnAudioStopClick" ToolTip="停止播放" />
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

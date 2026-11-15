@@ -146,12 +146,16 @@
        <Button Content="取消" Click="OnCancelReply" Style="{StaticResource SubtleButtonStyle}" Margin="8,0"/>
       </StackPanel>
       <Grid>
-       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
        <Grid Margin="0,0,8,0">
         <TextBox x:Name="Composer" Style="{StaticResource FluentTextBoxStyle}" Text="{Binding Draft,UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="44" MaxHeight="88" MaxLength="1000" VerticalScrollBarVisibility="Auto" IsEnabled="{Binding CanEdit}" PreviewKeyDown="OnComposerKey" ToolTip="Ctrl+Enter 发送"/>
         <TextBlock Text="说点什么…" Margin="12,0" VerticalAlignment="Center" IsHitTestVisible="False" Foreground="{DynamicResource TextTertiaryBrush}" Visibility="{Binding Draft,Converter={StaticResource InvStrToVis}}"/>
        </Grid>
-       <Button Grid.Column="1" Content="发送" Click="OnSend" IsEnabled="{Binding CanSend}" Style="{StaticResource AccentButtonStyle}" MinHeight="44" Padding="16,6" VerticalAlignment="Bottom"/>
+       <Button x:Name="EmoteToggleButton" Grid.Column="1" Content="表情" Click="OnEmoteClick" IsEnabled="{Binding CanEdit}" Style="{StaticResource SubtleButtonStyle}" MinHeight="44" Padding="12,6" Margin="0,0,6,0" VerticalAlignment="Bottom" ToolTip="插入小黄脸 / 收藏集表情 / 颜文字"/>
+       <Button Grid.Column="2" Content="发送" Click="OnSend" IsEnabled="{Binding CanSend}" Style="{StaticResource AccentButtonStyle}" MinHeight="44" Padding="16,6" VerticalAlignment="Bottom"/>
+       <Popup x:Name="DetailEmotePopup" PlacementTarget="{Binding ElementName=EmoteToggleButton}" Placement="Top" VerticalOffset="-8" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
+        <controls:EmotePickerPanel x:Name="DetailEmotePicker" />
+       </Popup>
       </Grid>
      </StackPanel>
     </Border>

@@ -39,6 +39,7 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
         if (ReferenceEquals(next, _scroll)) return;
         if (_scroll != null) _scroll.ScrollChanged -= OnScroll;
         _scroll = next;
+        _firstIndex = _lastIndex = -1;
         if (_scroll != null) _scroll.ScrollChanged += OnScroll;
         InvalidateMeasure();
     }
@@ -49,6 +50,7 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
         {
             _scroll.ScrollChanged -= OnScroll;
             _scroll = null;
+            _firstIndex = _lastIndex = -1;
         }
     }
 
@@ -77,6 +79,35 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
         return 0;
     }
 
+    private (double Top, double Bottom) VisibleBoundsInPanel()
+    {
+        var scrollOffset = _scroll != null ? _scroll.VerticalOffset : 0;
+        var viewport = _scroll != null ? _scroll.ViewportHeight : 800;
+        if (!double.IsFinite(viewport) || viewport <= 0) viewport = 800;
+
+        // 网页布局中 WebCommentsScaleRoot 的 LayoutTransform 在 ScrollViewer 内部缩放评论区；
+        // 把视口上下边界从 ScrollViewer.Content 坐标系直接映射到本面板局部坐标系，
+        // 避免缩放 != 100% 时按比例累积偏移导致上方可见评论被误回收而消失。
+        if (_scroll?.Content is UIElement content && IsDescendantOf(content))
+        {
+            try
+            {
+                var xform = content.TransformToDescendant(this);
+                var p0 = xform.Transform(new Point(0, scrollOffset));
+                var p1 = xform.Transform(new Point(0, scrollOffset + viewport));
+                var top = Math.Max(0, Math.Min(p0.Y, p1.Y));
+                var bottom = Math.Max(top, Math.Max(p0.Y, p1.Y));
+                if (double.IsFinite(top) && double.IsFinite(bottom))
+                    return (top, bottom);
+            }
+            catch { }
+        }
+
+        var origin = OriginY();
+        var fallbackTop = Math.Max(0, scrollOffset - origin);
+        return (fallbackTop, fallbackTop + viewport);
+    }
+
     private double GetHeight(int index) => _heights.TryGetValue(index, out var h) && h > 0 ? h : DefaultItemHeight;
 
     private double GetTop(int targetIndex)
@@ -90,13 +121,7 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
     private (int First, int Last) VisibleRange(int count)
     {
         if (count <= 0) return (-1, -1);
-        var origin = OriginY();
-        var scrollOffset = _scroll != null ? _scroll.VerticalOffset : 0;
-        var viewport = _scroll != null ? _scroll.ViewportHeight : 800;
-        if (!double.IsFinite(viewport) || viewport <= 0) viewport = 800;
-
-        var viewTop = Math.Max(0, scrollOffset - origin);
-        var viewBottom = viewTop + viewport;
+        var (viewTop, viewBottom) = VisibleBoundsInPanel();
 
         // 上下各保留约 700px 的缓冲带（约 6~7 条评论），保证轻度滚动绝不出现未测空白
         var bufferTop = Math.Max(0, viewTop - 700);
@@ -122,7 +147,7 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
             currentTop = currentBottom;
         }
 
-        if (first < 0) return (count - 1, count - 1);
+        if (first < 0) return (Math.Max(0, count - 10), count - 1);
         if (last < first) last = Math.Min(count - 1, first + 10);
         last = Math.Min(count - 1, last);
 
@@ -145,7 +170,7 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
         var width = double.IsFinite(availableSize.Width) && availableSize.Width > 0
             ? availableSize.Width
             : (_scroll?.ViewportWidth > 0 ? _scroll.ViewportWidth : (_lastWidth > 0 ? _lastWidth : 400));
-        if (width != _lastWidth) _heights.Clear();
+        if (_lastWidth > 0 && Math.Abs(width - _lastWidth) > 0.5) _heights.Clear();
         _lastWidth = width;
 
         var (first, last) = VisibleRange(count);
@@ -191,12 +216,19 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
         return new Size(width, totalHeight);
     }
 
+    private int ResolveContainerIndex(IItemContainerGenerator generator, UIElement child, int childPosition)
+    {
+        if (generator is ItemContainerGenerator concrete)
+            return concrete.IndexFromContainer(child);
+        return generator.IndexFromGeneratorPosition(new GeneratorPosition(childPosition, 0));
+    }
+
     private void CleanOutside(int first, int last)
     {
         var generator = ItemContainerGenerator;
         for (int i = InternalChildren.Count - 1; i >= 0; i--)
         {
-            var index = generator.IndexFromGeneratorPosition(new GeneratorPosition(i, 0));
+            var index = ResolveContainerIndex(generator, InternalChildren[i], i);
             if (index < 0)
             {
                 RemoveInternalChildRange(i, 1);
@@ -205,10 +237,13 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
             if (index >= first && index <= last) continue;
 
             var pos = generator.GeneratorPositionFromIndex(index);
-            if (generator is IRecyclingItemContainerGenerator recycling)
-                recycling.Recycle(pos, 1);
-            else
-                generator.Remove(pos, 1);
+            if (pos.Index >= 0 && pos.Offset == 0)
+            {
+                if (generator is IRecyclingItemContainerGenerator recycling)
+                    recycling.Recycle(pos, 1);
+                else
+                    generator.Remove(pos, 1);
+            }
 
             RemoveInternalChildRange(i, 1);
         }
@@ -224,7 +259,7 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
         for (int i = 0; i < InternalChildren.Count; i++)
         {
             var child = InternalChildren[i];
-            var index = generator.IndexFromGeneratorPosition(new GeneratorPosition(i, 0));
+            var index = ResolveContainerIndex(generator, child, i);
             if (index < 0) continue;
 
             if (index != nextIndex) top = GetTop(index);
@@ -248,9 +283,20 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
         else if (args.Action is NotifyCollectionChangedAction.Remove or NotifyCollectionChangedAction.Replace or NotifyCollectionChangedAction.Move)
         {
             _heights.Clear();
-            var at = Math.Max(0, args.Action == NotifyCollectionChangedAction.Move ? args.OldPosition.Index : args.Position.Index);
-            var count = Math.Min(args.ItemUICount, InternalChildren.Count - at);
-            if (count > 0) RemoveInternalChildRange(at, count);
+            if (ItemContainerGenerator is ItemContainerGenerator concrete)
+            {
+                for (int i = InternalChildren.Count - 1; i >= 0; i--)
+                {
+                    if (concrete.IndexFromContainer(InternalChildren[i]) < 0)
+                        RemoveInternalChildRange(i, 1);
+                }
+            }
+            else
+            {
+                var at = Math.Max(0, args.Action == NotifyCollectionChangedAction.Move ? args.OldPosition.Index : args.Position.Index);
+                var count = Math.Min(args.ItemUICount, InternalChildren.Count - at);
+                if (count > 0) RemoveInternalChildRange(at, count);
+            }
         }
         InvalidateMeasure();
     }

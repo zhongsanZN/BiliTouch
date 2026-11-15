@@ -105,10 +105,26 @@
             </Grid>
         </Border>
 
-        <!-- ======== 视频列表区 ======== -->
+        <!-- ======== 视频 / 专栏内容区 ======== -->
         <Grid Grid.Row="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Orientation="Horizontal" Margin="36,14,36,4">
+                <RadioButton GroupName="UserSpaceTab" Content="投稿视频"
+                             IsChecked="{Binding ShowVideos, Mode=OneWay}"
+                             Checked="OnTabVideos"
+                             Style="{StaticResource SegmentTabStyle}" Margin="0,0,6,0" />
+                <RadioButton GroupName="UserSpaceTab" Content="专栏"
+                             IsChecked="{Binding ShowArticles, Mode=OneWay}"
+                             Checked="OnTabArticles"
+                             Style="{StaticResource SegmentTabStyle}" />
+            </StackPanel>
+
             <!-- 首次加载的居中大菊花(仅无内容时显示, 避免与错误提示同屏) -->
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+            <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center"
                         Visibility="{Binding Loading, Converter={StaticResource BoolToVis}}">
                 <controls:LoadingRing Width="30" Height="30" HorizontalAlignment="Center" />
                 <TextBlock Text="加载中…" Style="{StaticResource MetaTextStyle}"
@@ -116,7 +132,7 @@
             </StackPanel>
 
             <!-- 错误提示(重试) -->
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+            <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center"
                         Visibility="{Binding Error, Converter={StaticResource StrToVis}}">
                 <TextBlock Text="&#xE7BA;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                            FontSize="30" Foreground="{DynamicResource AccentTextBrush}"
@@ -128,11 +144,12 @@
                         Command="{Binding RefreshCommand}" />
             </StackPanel>
 
-            <ScrollViewer x:Name="ListScroll" VerticalScrollBarVisibility="Auto"
+            <ScrollViewer Grid.Row="1" x:Name="ListScroll" VerticalScrollBarVisibility="Auto"
                           ScrollChanged="Scroll_OnScrollChanged">
-                <StackPanel Margin="36,16,36,24">
+                <StackPanel Margin="36,10,36,24">
                     <!-- 视频网格 -->
-                    <ItemsControl ItemsSource="{Binding Videos}">
+                    <ItemsControl ItemsSource="{Binding Videos}"
+                                  Visibility="{Binding ShowVideos, Converter={StaticResource BoolToVis}}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <helpers:CardWallPanel helpers:CardWall.Enable="True" />
@@ -141,6 +158,50 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <controls:VideoCard />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- 专栏列表 -->
+                    <ItemsControl ItemsSource="{Binding Articles}"
+                                  Visibility="{Binding ShowArticles, Converter={StaticResource BoolToVis}}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,10" Padding="14" CornerRadius="10" Cursor="Hand"
+                                        Background="{DynamicResource CardBackgroundBrush}"
+                                        BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+                                        MouseLeftButtonUp="OnArticleClick">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Width="140" Height="88" CornerRadius="6" ClipToBounds="True" Margin="0,0,14,0"
+                                                Background="{DynamicResource PlaceholderBrush}"
+                                                Visibility="{Binding HasCover, Converter={StaticResource BoolToVis}}">
+                                            <Image helpers:Cover.ImageDecodeWidth="360" helpers:Cover.ImageSource="{Binding Cover}"
+                                                   Stretch="UniformToFill" />
+                                        </Border>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis" MaxHeight="24"
+                                                       Foreground="{DynamicResource TextPrimaryBrush}" />
+                                            <TextBlock Text="{Binding Summary}" FontSize="12.5" Margin="0,5,0,0"
+                                                       TextWrapping="Wrap" MaxHeight="36" TextTrimming="CharacterEllipsis"
+                                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                                       Visibility="{Binding Summary, Converter={StaticResource StrToVis}}" />
+                                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                                <TextBlock Text="{Binding MetaLine}" FontSize="12"
+                                                           Foreground="{DynamicResource TextTertiaryBrush}"
+                                                           Visibility="{Binding MetaLine, Converter={StaticResource StrToVis}}" />
+                                                <TextBlock Text=" · " FontSize="12" Foreground="{DynamicResource TextTertiaryBrush}"
+                                                           Visibility="{Binding MetaLine, Converter={StaticResource StrToVis}}" />
+                                                <TextBlock Text="{Binding StatLine}" FontSize="12"
+                                                           Foreground="{DynamicResource TextTertiaryBrush}" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

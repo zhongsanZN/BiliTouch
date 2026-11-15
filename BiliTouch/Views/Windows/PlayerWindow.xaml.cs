@@ -56,6 +56,8 @@ public partial class PlayerWindow : FluentWindow
     private string _currentBvid = "";
     /// <summary>当前播的是离线缓存里的本地文件(没有 aid/cid, 也没有在线互动)</summary>
     private bool _isLocalPlayback;
+    private OfflineEntry? _currentOfflineEntry;
+    private string _currentLocalPath = "";
 
     /// <summary>
     /// 当前播的是**直播间**。和本地文件一样没有 aid/cid, 所以互动/评论/进度上报都不做;
@@ -719,7 +721,7 @@ public partial class PlayerWindow : FluentWindow
     public void PlayVideo(string bvid)
     {
         if (_closing || string.IsNullOrEmpty(bvid)) return;
-        if (bvid == _currentBvid && _mp.IsPlaying) return;
+        if (!_isLocalPlayback && !_isLive && bvid == _currentBvid && _mp.IsPlaying) return;
         _currentBvid = bvid;
         _isLocalPlayback = false;
         _isLive = false;
@@ -1106,6 +1108,7 @@ public partial class PlayerWindow : FluentWindow
         _isLocalPlayback = true;
         _isLive = false;
         ResetForNewMedia();
+        _currentLocalPath = path;
         // 本地文件没有 bvid, 自然也没有相关视频
         ClearRelatedPanel();
         _ = ReplaceNativeInputAsync(() => LoadLocalFile(path));
@@ -1119,10 +1122,12 @@ public partial class PlayerWindow : FluentWindow
     {
         if (_closing || entry == null || !entry.HasPlayableMedia) return;
         var gen = ++_loadGen;
-        _currentBvid = entry.Bvid;
+        // 离线缓存走本地播放链路, 不能把在线 bvid 写进 _currentBvid, 否则 OnLoaded 会触发 LoadVideoAsync 拉在线流
+        _currentBvid = "";
         _isLocalPlayback = true;
         _isLive = false;
         ResetForNewMedia();
+        _currentOfflineEntry = entry;
         ClearRelatedPanel();
         _ = LoadOfflineEntryAsync(entry, gen);
     }
@@ -1209,6 +1214,8 @@ public partial class PlayerWindow : FluentWindow
         _offlinePrepCts?.Cancel();
         _offlinePrepCts?.Dispose();
         _offlinePrepCts = null;
+        _currentOfflineEntry = null;
+        _currentLocalPath = "";
         _danmaku.Clear();
         _danmakuRaw.Clear();
         // 相关视频同属"上一条视频"的界面内容: 换片瞬间就必须清掉, 不能等新片的
@@ -1397,7 +1404,7 @@ public partial class PlayerWindow : FluentWindow
         // 播放源标识
         nameof(_isLocalPlayback), nameof(_isLive), nameof(_liveRoomId), nameof(_currentCid),
         nameof(_aid), nameof(_ownerMid), nameof(_ownerName), nameof(_ownerFace),
-        nameof(_videoTitle), nameof(_currentQn), nameof(_currentBvid),
+        nameof(_videoTitle), nameof(_currentQn), nameof(_currentBvid), nameof(_currentLocalPath),
         nameof(_coverUrl),           // 封面属于"这一片"(聆听态的画面锚点)
         // 「听视频」的音轨地址与恢复进度: 换片后要重新取, 留着上一条的会播错东西
         nameof(_listenAudioUrl), nameof(_listenResumeMs), nameof(_listenWaveTick),
@@ -1713,7 +1720,7 @@ public partial class PlayerWindow : FluentWindow
         // ★ 不重复启动: 新窗口第一次打开时 PlayerService 已经先调过 PlayVideo(→LoadVideoAsync),
         //   Loaded 事件随后才到。没有这个闸门就会跑两遍详情/取流/测速, 甚至
         //   "先远端起播、下完再切本地"二次重启(2026-10-30 起播慢的隐藏原因之一)。
-        if (!_loadRunning && !string.IsNullOrEmpty(_currentBvid)) await LoadVideoAsync();
+        if (!_loadRunning && !_isLocalPlayback && !_isLive && !string.IsNullOrEmpty(_currentBvid)) await LoadVideoAsync();
     }
 
     // ------------------------------------------------------------ 加载流程
@@ -1757,25 +1764,32 @@ public partial class PlayerWindow : FluentWindow
             _aid = detail.Aid;
             _ownerMid = detail.OwnerMid;
             _ownerName = detail.Owner;
-            UpdateUiFromDetail(detail);
-            // 合集数据在详情里就已经解析好了(见 ApiClient.GetVideoAsync), 这里零额外请求。
-            // 放在 UpdateUiFromDetail 之后: 它要用刚设好的 _currentCid/_aid 来定位"当前是第几集"。
-            ApplySeason(detail.Season);
-            // 分P 同理, 零额外请求。放在 ApplySeason 之后: 两者抢的是同一块信息栏, 后写的赢。
-            ApplyPages(detail.Pages);
+            _coverUrl = detail.Pic ?? "";
 
             if (_currentCid <= 0)
             {
+                RunOrDeferAfterSeamlessEntry(() =>
+                {
+                    if (_closing || gen != _loadGen) return;
+                    UpdateUiFromDetail(detail);
+                    ApplySeason(detail.Season);
+                    ApplyPages(detail.Pages);
+                });
                 ShowFail("无法获取视频 cid, 播放中止");
                 return;
             }
 
-            // ★ 评论区 Tab 是**窗口级状态**: 换片不会自动回到「简介」。
-            //   它已经处于选中态时 Checked 事件不会再触发, 新视频的评论就永远不加载 ——
-            //   用户看到的就是"停在评论区、一片空白, 必须先点简介再点回来"(2026-10-30)。
-            //   这里补一次(与取流并行, 不占起播时间)。
+            // During active shared-element entry (~250ms), keep network/decode pipeline running at full speed
+            // while deferring heavy right-rail visual tree binds until the entry surface lands.
+            RunOrDeferAfterSeamlessEntry(() =>
+            {
+                if (_closing || gen != _loadGen) return;
+                UpdateUiFromDetail(detail);
+                ApplySeason(detail.Season);
+                ApplyPages(detail.Pages);
+                _ = LoadCommentsAsync();
+            });
             WriteLibVLCDebug($"\n[Load] 详情就绪 aid={_aid} cid={_currentCid} tabComments={TabComments?.IsChecked}\n");
-            _ = LoadCommentsAsync(); // Preload the hidden original-layout comment tab as soon as the aid is known.
             // 弹幕预加载权重要高, 不能等起播: 起播之后画面已经在动, 用户第一反应就是"弹幕怎么还没出来",
             // 而弹幕接口是**按 6 分钟一段并发拉取**的, 冷启动实测比取流还慢。这里与下面的 GetPlayUrlAsync
             // 并行发出, 不 await、不阻塞起播; 带上详情里的时长(多P 取当前那一 P 的), 免得多发十几个空段请求。
@@ -4811,6 +4825,7 @@ public partial class PlayerWindow : FluentWindow
 
     private static bool IsDescendantOf(DependencyObject? node, DependencyObject? ancestor)
     {
+        if (ancestor == null) return false;
         while (node != null)
         {
             if (ReferenceEquals(node, ancestor)) return true;
@@ -4818,6 +4833,16 @@ public partial class PlayerWindow : FluentWindow
         }
         return false;
     }
+
+    private bool IsInPopup(DependencyObject? source, Popup? popup)
+        => source != null && popup != null &&
+           (ReferenceEquals(source, popup) || (popup.Child != null && IsDescendantOf(source, popup.Child)));
+
+    private bool IsInAnyPlayerPopup(DependencyObject? source)
+        => IsInPopup(source, DanmakuAreaPopup)
+           || IsInPopup(source, SpeedPopup)
+           || IsInPopup(source, QualityPopup)
+           || IsInPopup(source, VolumePopup);
 
     /// <summary>调整弹幕显示区域占比(弹幕只在画面上方 ratio 比例内滚动)</summary>
     private void OnDanmakuAreaChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -4881,6 +4906,22 @@ public partial class PlayerWindow : FluentWindow
         if (DanmakuOutlineCheck == null || IsDescendantOf(e.OriginalSource as DependencyObject, DanmakuOutlineCheck))
             return;
         DanmakuOutlineCheck.IsChecked = DanmakuOutlineCheck.IsChecked != true;
+        e.Handled = true;
+    }
+
+    private void OnDanmakuOutlineRowTouchDown(object? sender, TouchEventArgs e)
+    {
+        if (DanmakuOutlineCheck == null || IsDescendantOf(e.OriginalSource as DependencyObject, DanmakuOutlineCheck))
+            return;
+        e.Handled = true;
+    }
+
+    private void OnDanmakuOutlineRowTouchUp(object? sender, TouchEventArgs e)
+    {
+        if (DanmakuOutlineCheck == null || IsDescendantOf(e.OriginalSource as DependencyObject, DanmakuOutlineCheck))
+            return;
+        DanmakuOutlineCheck.IsChecked = DanmakuOutlineCheck.IsChecked != true;
+        TouchSupport.CancelPendingTap();
         e.Handled = true;
     }
 
@@ -5077,8 +5118,11 @@ public partial class PlayerWindow : FluentWindow
         if (_mp == null) return;
         // 点视频区会把焦点交给那层浮动覆盖窗口/原生视频窗口, 顺手把键盘焦点收回 WPF 树
         RestoreKeyboardFocus();
-        // 点击控制栏(播放/清晰度/弹幕区域等)不作为视频区手势, 否则会误触发"单击暂停"
-        if (ControlBar != null && ControlBar.IsMouseOver) return;
+        // 点击控制栏或播放器设置弹层(播放/清晰度/倍速/音量/弹幕设置等)不作为视频区手势,
+        // 否则既误触发暂停/长按快进, 也会把当前弹层误关掉。
+        var source = e.OriginalSource as DependencyObject;
+        if (IsInAnyPlayerPopup(source)) { _videoGestureActive = false; return; }
+        if (ControlBar != null && (ControlBar.IsMouseOver || IsDescendantOf(source, ControlBar))) return;
         if (VolumePopup.IsOpen)
         {
             CloseVolumePopup();
@@ -5227,8 +5271,10 @@ public partial class PlayerWindow : FluentWindow
         if (IsOnResizeEdge()) return;
         if (_mp == null) return;
         RestoreKeyboardFocus();
-        // 控制栏 / 跳过提示条上的右键不算视频区手势(与左键同款理由)
-        if (ControlBar != null && ControlBar.IsMouseOver) return;
+        // 控制栏 / 播放器设置弹层 / 跳过提示条上的右键不算视频区手势(与左键同款理由)
+        var source = e.OriginalSource as DependencyObject;
+        if (IsInAnyPlayerPopup(source)) { _rightGestureActive = false; return; }
+        if (ControlBar != null && (ControlBar.IsMouseOver || IsDescendantOf(source, ControlBar))) return;
         if (SkipNoticeBorder != null && SkipNoticeBorder.IsMouseOver) return;
         if (DanmakuAreaPopup?.IsOpen == true) { CloseDanmakuAreaPopup(); _rightGestureActive = false; e.Handled = true; return; }
         // 弹层开着 ⇒ 这一下属于浮层, 不起步(地基, 见方法说明)
@@ -5423,7 +5469,7 @@ public partial class PlayerWindow : FluentWindow
 
     private void OnCacheClick(object sender, RoutedEventArgs e)
     {
-        if (_closing || string.IsNullOrEmpty(_currentBvid)) return;
+        if (_closing || _isLocalPlayback || _isLive || string.IsNullOrEmpty(_currentBvid)) return;
         // 与卡片右键"下载视频"同一条链路: 弹独立的下载进度对话框。
         // ★ 下载是**一次性**动作(不像点赞可来回切), 所以这里等结果、成功后把按钮染成绿色
         //   并换成"已下载" —— 设计稿 v4 第 07 节把下载归为"拿走"这一组, 色相是绿。
@@ -5536,6 +5582,7 @@ public partial class PlayerWindow : FluentWindow
     private void DismissDanmakuAreaIfOutside(DependencyObject? source)
     {
         if (DanmakuAreaPopup?.IsOpen != true) return;
+        if (IsInPopup(source, DanmakuAreaPopup)) return;
         if (IsDescendantOf(source, BtnDanmakuArea)) return;
         if (IsDescendantOf(source, VideoAreaRoot) && !IsDescendantOf(source, ControlBar)) return;
         CloseDanmakuAreaPopup();
@@ -6356,8 +6403,13 @@ public partial class PlayerWindow : FluentWindow
     private void OnRetryClick(object sender, RoutedEventArgs e)
     {
         FailOverlay.Visibility = Visibility.Collapsed;
-        // 直播失败要重连直播, 不能落回点播那条路(那时 _currentBvid 是空的)
+        // 直播失败要重连直播, 离线/本地失败要重试离线/本地播放, 不能落回在线点播
         if (_isLive) _ = LoadLiveAsync(_liveRoomId);
+        else if (_isLocalPlayback)
+        {
+            if (_currentOfflineEntry != null) _ = LoadOfflineEntryAsync(_currentOfflineEntry, ++_loadGen);
+            else if (!string.IsNullOrEmpty(_currentLocalPath)) _ = ReplaceNativeInputAsync(() => LoadLocalFile(_currentLocalPath));
+        }
         else _ = LoadVideoAsync();
     }
 

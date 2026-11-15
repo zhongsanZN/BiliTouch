@@ -1449,6 +1449,8 @@
                                                     </Grid>
 
                                                     <Grid Margin="0,14,0,0" Background="Transparent" Cursor="Hand"
+                                                          TouchDown="OnDanmakuOutlineRowTouchDown"
+                                                          TouchUp="OnDanmakuOutlineRowTouchUp"
                                                           MouseLeftButtonUp="OnDanmakuOutlineRowClick">
                                                         <Grid.ColumnDefinitions>
                                                             <ColumnDefinition Width="70" />
@@ -2603,6 +2605,7 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <!-- Height 由代码控制(普通 66 / 展开 200, 带动画); XAML 只给初值 -->
                             <TextBox x:Name="CommentDraft" Grid.Column="0"
@@ -2612,12 +2615,24 @@
                                      VerticalScrollBarVisibility="Auto"
                                      TextChanged="OnCommentDraftChanged"
                                      PreviewKeyDown="OnCommentDraftPreviewKeyDown" />
-                            <Button x:Name="PostCommentButton" Grid.Column="1" Content="发表"
-                                    Margin="8,0,0,0" Padding="16,8"
+                            <Button x:Name="CommentEmoteButton" Grid.Column="1" Content="表情"
+                                    Margin="8,0,0,0" Padding="10,8"
+                                    VerticalAlignment="Bottom"
+                                    Style="{StaticResource SubtleButtonStyle}"
+                                    Click="OnCommentEmoteClick"
+                                    ToolTip="插入小黄脸 / 收藏集表情 / 颜文字" />
+                            <Button x:Name="PostCommentButton" Grid.Column="2" Content="发表"
+                                    Margin="6,0,0,0" Padding="16,8"
                                     VerticalAlignment="Bottom"
                                     Style="{StaticResource AccentButtonStyle}"
                                     Click="OnPostCommentClick"
                                     ToolTip="发表评论 (Enter)" />
+                            <Popup x:Name="CommentEmotePopup"
+                                   PlacementTarget="{Binding ElementName=CommentEmoteButton}"
+                                   Placement="Top" VerticalOffset="-8"
+                                   StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
+                                <controls:EmotePickerPanel x:Name="CommentEmotePicker" />
+                            </Popup>
                         </Grid>
                         <TextBlock x:Name="CommentPostHint" Style="{StaticResource MetaTextStyle}"
                                    Margin="0,6,0,0" TextWrapping="Wrap" />

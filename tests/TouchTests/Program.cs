@@ -98,6 +98,7 @@ internal static class Program
             else if(args.Contains("--web-controls-unread")) WebControlsUnreadTests.Run(Check);
             else if(args.Contains("--release023-live")) Release023Tests.Live(Check,Artifacts);
             else if(args.Contains("--release023")) Release023Tests.Run(Check,Artifacts);
+            else if(args.Contains("--release033")) Release033Tests.Run(Check,Artifacts);
             else if(args.Contains("--release022-live")) Release022Tests.Live(Check,Artifacts);
             else if(args.Contains("--release022")) Release022Tests.Run(Check,Artifacts);
             else if(args.Contains("--release021")) Release021Tests.Run(Check,Artifacts);

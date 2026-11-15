@@ -27,8 +27,37 @@ public class UserSpaceViewModel : ObservableObject
     private int _page = 1;
     private bool _hasMore = true;
     private bool _loadingMore;
+    private int _articlePage = 1;
+    private bool _articleHasMore = true;
+    private bool _articlesLoaded;
+    private bool _showArticles;
 
     public ObservableCollection<VideoItem> Videos { get; } = new();
+    public ObservableCollection<ArticleSummary> Articles { get; } = new();
+
+    public bool ShowArticles
+    {
+        get => _showArticles;
+        set
+        {
+            if (SetProperty(ref _showArticles, value))
+            {
+                OnPropertyChanged(nameof(ShowVideos));
+                HasMore = value ? _articleHasMore : _hasMore;
+                Error = "";
+                if (value && !_articlesLoaded && _mid > 0)
+                    _ = LoadArticlesFirstAsync();
+            }
+        }
+    }
+
+    public bool ShowVideos => !_showArticles;
+
+    private async Task LoadArticlesFirstAsync()
+    {
+        Loading = true;
+        await LoadArticlesAsync(reset: true);
+    }
 
     public long Mid { get => _mid; private set => SetProperty(ref _mid, value); }
     public string Name { get => _name; private set => SetProperty(ref _name, value); }
@@ -110,17 +139,17 @@ public class UserSpaceViewModel : ObservableObject
         if (_initializing) return;
         _initializing = true;
         // 只有首次(无内容)才显示居中大菊花, 已有内容时静默刷新
-        var firstLoad = Videos.Count == 0 && string.IsNullOrEmpty(Name);
+        var firstLoad = (ShowArticles ? Articles.Count == 0 : Videos.Count == 0) && string.IsNullOrEmpty(Name);
         if (firstLoad) Loading = true;
         Error = "";
         try
         {
             // 信息与列表并行加载, 互不阻塞; 关注状态顺带查一次(未登录静默跳过)
             var infoTask = Svc.Api.GetSpaceInfoAsync(_mid);
-            var videosTask = LoadVideosAsync(reset: true);
+            var listTask = ShowArticles ? LoadArticlesAsync(reset: true) : LoadVideosAsync(reset: true);
             _ = RefreshFollowStateAsync();
             var (infoOk, _, info) = await infoTask;
-            await videosTask;
+            await listTask;
 
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
@@ -167,23 +196,56 @@ public class UserSpaceViewModel : ObservableObject
                 if (reset) Videos.Clear();
                 foreach (var it in items) Videos.Add(it);
                 _hasMore = items.Count >= 30;
+                if (!ShowArticles) HasMore = _hasMore;
                 _page++;
-                if (Videos.Count == 0) Error = err ?? "该 UP 主暂无投稿视频";
+                if (Videos.Count == 0 && !ShowArticles) Error = err ?? "该 UP 主暂无投稿视频";
             }
             else
             {
-                Error = err ?? "加载失败";
+                if (!ShowArticles) Error = err ?? "加载失败";
+            }
+        });
+    }
+
+    public async Task LoadArticlesAsync(bool reset)
+    {
+        if (_mid <= 0) return;
+        if (reset) _articlePage = 1;
+
+        var (ok, err, items, hasMore, _) = await Svc.Api.GetSpaceArticlesAsync(_mid, _articlePage, 20);
+        await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            Loading = false;
+            _articlesLoaded = true;
+            if (ok)
+            {
+                if (reset) Articles.Clear();
+                var seen = new System.Collections.Generic.HashSet<string>(Articles.Select(a => a.ArticleId));
+                foreach (var it in items)
+                {
+                    if (seen.Add(it.ArticleId)) Articles.Add(it);
+                }
+                _articleHasMore = hasMore;
+                if (ShowArticles) HasMore = _articleHasMore;
+                _articlePage++;
+                if (Articles.Count == 0 && ShowArticles) Error = "该 UP 主暂无发布专栏";
+            }
+            else if (ShowArticles)
+            {
+                Error = err ?? "专栏加载失败";
             }
         });
     }
 
     public async Task LoadMoreAsync()
     {
-        if (LoadingMore || Loading || !_hasMore) return;
+        var currentHasMore = ShowArticles ? _articleHasMore : _hasMore;
+        if (LoadingMore || Loading || !currentHasMore) return;
         LoadingMore = true;
         try
         {
-            await LoadVideosAsync(reset: false);
+            if (ShowArticles) await LoadArticlesAsync(reset: false);
+            else await LoadVideosAsync(reset: false);
         }
         finally
         {

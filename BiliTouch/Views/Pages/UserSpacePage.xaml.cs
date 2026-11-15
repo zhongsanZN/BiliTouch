@@ -84,4 +84,23 @@ public partial class UserSpacePage : UserControl
         if (DataContext is not UserSpaceViewModel vm) return;
         await MediaActions.SaveImageAsync(vm.Face, vm.Name + "_头像");
     }
+
+    private void OnTabVideos(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is UserSpaceViewModel vm) vm.ShowArticles = false;
+    }
+
+    private void OnTabArticles(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is UserSpaceViewModel vm) vm.ShowArticles = true;
+    }
+
+    private void OnArticleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: BiliTouch.Models.ArticleSummary art })
+        {
+            Svc.Navigate?.OpenArticle(art.ArticleId, art.OpusId, art.Title);
+            e.Handled = true;
+        }
+    }
 }

@@ -258,6 +258,9 @@ public partial class MessagesPage : UserControl
   if(uri.Scheme!="https" && uri.Scheme!="http")return;
   var bvid=BiliTouch.Utils.UrlParser.ExtractBvid(url);
   if(!string.IsNullOrEmpty(bvid)){Svc.Navigate?.OpenVideoPlayer(bvid);return;}
+  var cvId=BiliTouch.Utils.UrlParser.ExtractArticleId(url);
+  var opusId=BiliTouch.Utils.UrlParser.ExtractOpusId(url);
+  if(!string.IsNullOrEmpty(cvId)||!string.IsNullOrEmpty(opusId)){Svc.Navigate?.OpenArticle(cvId,opusId);return;}
   Svc.Navigate?.OpenWebViewWindow(url,"私信链接");
  }
  private async void OnThreadScroll(object sender,ScrollChangedEventArgs e)

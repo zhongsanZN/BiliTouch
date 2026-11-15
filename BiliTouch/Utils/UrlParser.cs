@@ -8,6 +8,8 @@ public static class UrlParser
 {
     private static readonly Regex BvidRegex = new(@"/(BV[0-9A-Za-z]{10})", RegexOptions.Compiled);
     private static readonly Regex UidRegex = new(@"/space/(\d+)", RegexOptions.Compiled);
+    private static readonly Regex CvRegex = new(@"/read/cv(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex OpusRegex = new(@"/opus/(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
     /// 把"可能是完整 URL、也可能是不带协议的裸路径"的串解析成 <see cref="Uri"/>。
@@ -45,6 +47,22 @@ public static class UrlParser
     {
         if (!TryParseUri(urlOrUri, out var uri)) return null;
         var m = UidRegex.Match(uri.AbsolutePath);
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
+    /// <summary>提取专栏 cv 号(www.bilibili.com/read/cv123456)</summary>
+    public static string? ExtractArticleId(string urlOrUri)
+    {
+        if (!TryParseUri(urlOrUri, out var uri)) return null;
+        var m = CvRegex.Match(uri.AbsolutePath);
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
+    /// <summary>提取图文动态 Opus 号(www.bilibili.com/opus/123456)</summary>
+    public static string? ExtractOpusId(string urlOrUri)
+    {
+        if (!TryParseUri(urlOrUri, out var uri)) return null;
+        var m = OpusRegex.Match(uri.AbsolutePath);
         return m.Success ? m.Groups[1].Value : null;
     }
 

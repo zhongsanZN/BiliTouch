@@ -1034,6 +1034,7 @@ public partial class PlayerWindow
     /// <summary>收起输入面板: 淡出后 Visibility=Collapsed。草稿**不清**(只是收起, 不是放弃)</summary>
     private void CloseComposer()
     {
+        if (CommentEmotePopup != null) CommentEmotePopup.IsOpen = false;
         if (!_composerOpen || CommentComposerPanel == null || CommentFabIcon == null) return;
         _composerOpen = false;
         CommentFabIcon.Text = "\uE70F";   // Edit: 笔
@@ -1082,16 +1083,44 @@ public partial class PlayerWindow
         _ = PostCommentAsync();
     }
 
+    private bool _commentEmoteWired;
+    private void OnCommentEmoteClick(object sender, RoutedEventArgs e)
+    {
+        if (_closing || CommentEmotePopup == null || CommentEmotePicker == null) return;
+        if (!_commentEmoteWired)
+        {
+            _commentEmoteWired = true;
+            CommentEmotePicker.EmoteSelected += entry =>
+            {
+                if (_closing || CommentDraft == null) return;
+                InsertTextAtCaret(CommentDraft, entry.Text);
+                CommentEmotePopup.IsOpen = false;
+                CommentDraft.Focus();
+            };
+        }
+        CommentEmotePopup.IsOpen = !CommentEmotePopup.IsOpen;
+        if (CommentEmotePopup.IsOpen)
+            _ = CommentEmotePicker.EnsureLoadedAsync();
+    }
+
+    private static void InsertTextAtCaret(TextBox box, string token)
+    {
+        if (string.IsNullOrEmpty(token)) return;
+        var current = box.Text ?? "";
+        var start = Math.Clamp(box.SelectionStart, 0, current.Length);
+        var len = Math.Clamp(box.SelectionLength, 0, current.Length - start);
+        var maxAllowed = box.MaxLength > 0 ? box.MaxLength : int.MaxValue;
+        var next = current.Remove(start, len).Insert(start, token);
+        if (next.Length > maxAllowed) return;
+        box.Text = next;
+        box.CaretIndex = Math.Min(next.Length, start + token.Length);
+    }
+
     private void OnPostCommentClick(object sender, RoutedEventArgs e) => _ = PostCommentAsync();
 
     /// <summary>
-    /// 发表。**同一个输入框两种语义**(用户规则: 在列表页评论 = 自己开新楼层; 在详情页评论 = 回复这层楼):
-    /// 有回复目标(_replyTarget) 就带 root/parent 发成楼中楼回复, 否则发普通评论。
-    ///
-    /// 失败**不清空输入框** —— 网络抖一下就把用户写的字抹掉, 是最让人恼火的那种"智能"。
-    ///
-    /// 成功后重新拉一次列表, 而不是本地插一条假的: 服务端返回的 rpid / 楼层 / 是否要审核
-    /// 都不是本地能猜的, 拼一条出来看着即时, 一旦用户去点赞就会发现那条根本不存在。
+    /// 发表/回复评论。通过 `/x/v2/reply/add` 返回的 `data.reply`（含真实 rpid/ctime/emote）
+    /// 与表情缓存补全，发送成功后立刻将真实评论插入当前列表中，让“按热度”排序下也立刻看到完整反馈。
     /// </summary>
     private async Task PostCommentAsync()
     {
@@ -1114,19 +1143,27 @@ public partial class PlayerWindow
         UpdatePostCommentButton();
         try
         {
-            var (ok, err) = await Svc.Api.PostCommentAsync(_aid, text, rootRpid, parentRpid);
+            var res = await Svc.Api.PostCommentDetailedAsync(_aid, text, rootRpid, parentRpid);
             if (_closing) return;
-            if (!ok)
+            if (!res.Ok)
             {
-                Svc.Toast.Show(err ?? (isReply ? "回复发送失败" : "评论发表失败"));
+                var errMsg = res.Err ?? (isReply ? "回复发送失败" : "评论发表失败");
+                Svc.Toast.Show(errMsg);
+                if (CommentPostHint != null) CommentPostHint.Text = errMsg;
+                if (res.NeedCaptcha && !string.IsNullOrEmpty(res.CaptchaUrl))
+                    Svc.Navigate?.OpenWebViewWindow(res.CaptchaUrl, "评论人机验证");
                 return;
             }
 
             CommentDraft.Clear();
             ClearReplyTarget();     // 发完退回"发表"模式, 免得下一条手滑又回给同一个人
-            Svc.Toast.Show(isReply ? "回复已发布" : "评论已发表");
+            if (CommentEmotePopup != null) CommentEmotePopup.IsOpen = false;
+            var okToast = !string.IsNullOrWhiteSpace(res.SuccessToast)
+                ? res.SuccessToast
+                : (isReply ? "回复已发布" : "评论已发表");
+            Svc.Toast.Show(okToast);
+            if (CommentPostHint != null) CommentPostHint.Text = "";
             // 发完把面板收起来: 输入使命完成, 别挡着用户看列表。
-            // ★ 展开高度一并归位: 内容已清空, 大框没有存在的意义(下次写长评再点展开)。
             if (_composerExpanded)
             {
                 _composerExpanded = false;
@@ -1134,18 +1171,42 @@ public partial class PlayerWindow
             }
             CloseComposer();
 
+            var echoed = res.Reply;
             if (isReply && root != null)
-                await ReloadThreadRepliesAsync(root);   // 回复: 只重拉这条线程
+            {
+                await ReloadThreadRepliesAsync(root);
+                if (echoed != null && root.Replies.All(r => r.Rpid != echoed.Rpid))
+                {
+                    root.Replies.Add(echoed);
+                    if (root.ReplyCount < root.Replies.Count) root.ReplyCount = root.Replies.Count;
+                    root.SyncPreviewReplies();
+                    root.NotifyRepliesChanged();
+                }
+            }
             else
-                await LoadCommentsAsync(force: true);   // 评论: 重拉整页列表
+            {
+                await LoadCommentsAsync(force: true);
+                if (echoed != null && !_closing &&
+                    CommentList.ItemsSource is ObservableCollection<CommentItem> list)
+                {
+                    if (list.All(c => c.Rpid != echoed.Rpid))
+                    {
+                        var insertAt = list.TakeWhile(c => c.IsPinned).Count();
+                        list.Insert(insertAt, echoed);
+                    }
+                    _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+                    {
+                        if (!_closing && CommentList.ItemContainerGenerator.ContainerFromItem(echoed) is FrameworkElement fe)
+                            fe.BringIntoView();
+                    }));
+                }
+            }
 
             if (!_closing && CommentHint != null)
             {
-                // 说实话: 列表是"按热度"排的、回复还要过审排队 ——
-                // 不说这句, 用户会以为内容没发出去(或发了但被吞了)。
-                CommentHint.Text = isReply
-                    ? "回复已发布 · 服务端要过审排队, 可能不会立刻出现在回复列表里"
-                    : "评论已发表 · 列表按热度排序, 刚发的可能不在前几条";
+                CommentHint.Text = echoed != null
+                    ? (isReply ? $"{okToast} · 已置入当前楼中楼末尾" : $"{okToast} · 已显示在列表顶部（实际排名随服务端刷新更新）")
+                    : okToast;
             }
         }
         catch (Exception ex)

@@ -61,6 +61,13 @@ public partial class ApiClient
     private string? _buvid3;
     private string? _buvid4;
 
+    internal const string DynamicFeatures = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,forwardListHidden,decorationCard";
+
+    private readonly object _emoteCacheGate = new();
+    private List<EmotePackage>? _cachedEmotePackages;
+    private Dictionary<string, CommentEmote> _cachedEmoteLookup = new(StringComparer.Ordinal);
+    private string? _emoteCacheAccountKey;
+
     /// <summary>上一次 GetJsonAsync 解析 JSON 失败时的原始响应体(见 -2 分支)。</summary>
     private string? _lastNonJsonBody;
 
@@ -1560,37 +1567,53 @@ public partial class ApiClient
         try
         {
             await EnsureBuvidAsync();
-            var ps = new Dictionary<string, string>();
+            var ps = new Dictionary<string, string>
+            {
+                ["type"] = "all",
+                ["timezone_offset"] = "-480",
+                ["platform"] = "web",
+                ["web_location"] = "333.1365",
+                ["features"] = DynamicFeatures
+            };
             if (!string.IsNullOrEmpty(offset)) ps["offset"] = offset;
             // The official dynamic-home UP selector uses feed/all + host_mid, not
             // feed/space. This path also lets Bilibili update that UP's read state.
             if (hostMid > 0)
             {
                 ps["host_mid"] = hostMid.ToString();
-                ps["platform"] = "web";
                 if (string.IsNullOrEmpty(offset)) ps["page"] = "1";
             }
-            // ★★★ 2026-11-04 修"动态正文不显示, 点进详情再出来才显示, 切走再回来又没了":
-            //
-            //   实测(探针 --dump-feed, 见 artifacts/feed-all*.json):
-            //     默认 feed/all           → 20 条里只有 6 条带正文, 剩下 14 条 desc=null
-            //     + features=itemOpusStyle → **同一条**从"desc=null"变成"major.opus.summary.text"
-            //                                (125 字正文全在), 条数与顺序完全不变
-            //
-            //   根因: 新版图文动态的正文挂在 `major.opus.summary` 里, 而默认响应**不下发 opus**,
-            //   只给老的 `major.draw`(纯图)。于是正文是空的 —— 不是解析器读错字段, 是服务端没给。
-            //   点进详情走的是 detail 接口(它默认带 opus) → 正文出现;
-            //   切走再回来会重新拉列表 → 又变回 draw → 正文再次消失。
-            //   用户报的"有些文字不显示, 点进去能看到, 退出来就显示了, 切走再回来又不显示",
-            //   与这三步一一对应。
-            //
-            //   features 是逗号分隔的能力位。itemOpusStyle 只影响"用哪种结构描述图文",
-            //   不改变条数/排序, 也不影响视频动态 —— 所以可以无条件带上。
-            ps["features"] = "itemOpusStyle";
 
             var (code, msg, data) = await GetJsonAsync(
                 "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all", ps,
                 sign: false, referer: "https://t.bilibili.com/");
+            if (code == -352)
+            {
+                (code, msg, data) = await GetJsonAsync(
+                    "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/all", ps,
+                    sign: true, referer: "https://t.bilibili.com/");
+            }
+            if ((code != 0 || data == null) && hostMid > 0)
+            {
+                var spacePs = new Dictionary<string, string>
+                {
+                    ["host_mid"] = hostMid.ToString(),
+                    ["timezone_offset"] = "-480",
+                    ["platform"] = "web",
+                    ["web_location"] = "333.999",
+                    ["features"] = DynamicFeatures
+                };
+                if (!string.IsNullOrEmpty(offset)) spacePs["offset"] = offset;
+                var spaceRes = await GetJsonAsync(
+                    "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space", spacePs,
+                    sign: true, referer: $"https://space.bilibili.com/{hostMid}/dynamic");
+                if (spaceRes.code == 0 && spaceRes.data != null)
+                {
+                    code = spaceRes.code;
+                    msg = spaceRes.msg;
+                    data = spaceRes.data;
+                }
+            }
             if (code != 0 || data == null)
                 return (false, code == -101 ? "请先登录后查看动态" : (msg ?? "动态加载失败"), null, null, false);
 
@@ -2914,6 +2937,7 @@ public partial class ApiClient
             ContentKind.Live => "live_room",
             ContentKind.Bangumi => "media_bangumi",
             ContentKind.User => "bili_user",
+            ContentKind.Article => "article",
             _ => "video"
         };
         // 视频每页 20 条、直播每页 40 条(实测)。番剧实测每页 20 条(2026-11)。
@@ -2966,12 +2990,7 @@ public partial class ApiClient
                     // ★ 番剧结果不在 Items 里, 所以"本页取到几条"必须按 kind 分流,
                     //   否则番剧永远是 0 ⇒ HasMore 恒 false ⇒ 只给第一页就再也没了。
                     // ★ media_ft 合并后条数会变多, 所以这段必须放在它**之后**算(见上面那段注释)。
-                    var got = kind switch
-                    {
-                        ContentKind.Bangumi => result.BangumiItems.Count,
-                        ContentKind.User => result.UserItems.Count,
-                        _ => result.Items.Count
-                    };
+                    var got = CountSearchResults(result, kind);
                     result.HasMore = got > 0 &&
                                      (numResults <= 0 ? got >= pageSize
                                                       : page * pageSize < numResults);
@@ -2980,13 +2999,7 @@ public partial class ApiClient
                     // ★ 判空同样分流: 番剧结果在 BangumiItems 里, 用 Items.Count 判会永远是 0
                     //   ⇒ 明明搜到了番剧却报"没有找到相关番剧"。
                     if (got == 0)
-                        result.Error = kind switch
-                        {
-                            ContentKind.Live => "没有找到相关直播间",
-                            ContentKind.Bangumi => "没有找到相关番剧",
-                            ContentKind.User => "没有找到相关用户",
-                            _ => "没有找到相关视频"
-                        };
+                        result.Error = EmptySearchError(kind);
                     result.Ok = true;
                     return result;
                 }
@@ -3010,16 +3023,11 @@ public partial class ApiClient
                         if (c2 == 0 && d2 != null && d2.Value.TryGetProperty("result", out var list2))
                         {
                             AppendSearchItems(result, list2, kind);
+                            var got2 = CountSearchResults(result, kind);
                             result.Ok = true;
                             result.HasMore = list2.GetArrayLength() >= pageSize;
-                            if (kind == ContentKind.Bangumi ? result.BangumiItems.Count == 0
-                                                             : result.Items.Count == 0)
-                                result.Error = kind switch
-                                {
-                                    ContentKind.Live => "没有找到相关直播间",
-                                    ContentKind.Bangumi => "没有找到相关番剧",
-                                    _ => "没有找到相关视频"
-                                };
+                            if (got2 == 0)
+                                result.Error = EmptySearchError(kind);
                             return result;
                         }
                     }
@@ -3034,17 +3042,12 @@ public partial class ApiClient
                         vfbList.ValueKind == JsonValueKind.Array)
                     {
                         AppendSearchItems(result, vfbList, kind);
-                        var vgot = kind == ContentKind.Bangumi ? result.BangumiItems.Count : result.Items.Count;
+                        var vgot = CountSearchResults(result, kind);
                         result.Ok = vgot > 0;
                         // 与主路径同规则: 页大小是固定的, 拿本页条数与它比才知道还有没有下一页
                         result.HasMore = vgot > 0 && vgot >= pageSize;
                         if (vgot == 0)
-                            result.Error = kind switch
-                            {
-                                ContentKind.Live => "没有找到相关直播间",
-                                ContentKind.Bangumi => "没有找到相关番剧",
-                                _ => "没有找到相关视频"
-                            };
+                            result.Error = EmptySearchError(kind);
                         return result;
                     }
                     result.Blocked = true;
@@ -3062,16 +3065,9 @@ public partial class ApiClient
                 result.Ok = true;
                 // ★ 条数要按 media_ft 合并**之后**算 —— 上面那次合并可能刚补进来一堆纪录片,
                 //   这时再说"没找到"就是错的。
-                var gotFallback = kind == ContentKind.Bangumi
-                    ? result.BangumiItems.Count
-                    : result.Items.Count;
+                var gotFallback = CountSearchResults(result, kind);
                 result.HasMore = gotFallback > 0 && gotFallback >= pageSize;
-                result.Error = gotFallback == 0 ? (kind switch
-                {
-                    ContentKind.Live => "没有找到相关直播间",
-                    ContentKind.Bangumi => "没有找到相关番剧",
-                    _ => "没有找到相关视频"
-                }) : "";
+                result.Error = gotFallback == 0 ? EmptySearchError(kind) : "";
                 return result;
             }
 
@@ -3104,7 +3100,7 @@ public partial class ApiClient
                     fbList.ValueKind == JsonValueKind.Array)
                 {
                     AppendSearchItems(result, fbList, kind);
-                    var got = kind == ContentKind.Bangumi ? result.BangumiItems.Count : result.Items.Count;
+                    var got = CountSearchResults(result, kind);
                     result.Ok = got > 0;
                     // 与主路径同规则: 页大小固定, 拿本页条数与它比(裸端点也回 numResults)
                     var fbNum = fbData.Value.TryGetProperty("numResults", out var fbNr) &&
@@ -3112,12 +3108,7 @@ public partial class ApiClient
                     result.HasMore = got > 0 &&
                                      (fbNum <= 0 ? got >= pageSize : page * pageSize < fbNum);
                     if (got == 0)
-                        result.Error = kind switch
-                        {
-                            ContentKind.Live => "没有找到相关直播间",
-                            ContentKind.Bangumi => "没有找到相关番剧",
-                            _ => "没有找到相关视频"
-                        };
+                        result.Error = EmptySearchError(kind);
                     return result;
                 }
                 result.Blocked = true;
@@ -3259,7 +3250,24 @@ public partial class ApiClient
         catch { /* media_ft 只是补充, 失败静默 */ }
     }
 
-    /// <summary>把一段 result 数组按 kind 解析进结果集(视频/直播/番剧三套字段)</summary>
+    private static int CountSearchResults(SearchData result, ContentKind kind) => kind switch
+    {
+        ContentKind.Bangumi => result.BangumiItems.Count,
+        ContentKind.User => result.UserItems.Count,
+        ContentKind.Article => result.ArticleItems.Count,
+        _ => result.Items.Count,
+    };
+
+    private static string EmptySearchError(ContentKind kind) => kind switch
+    {
+        ContentKind.Live => "没有找到相关直播间",
+        ContentKind.Bangumi => "没有找到相关番剧",
+        ContentKind.User => "没有找到相关用户",
+        ContentKind.Article => "没有找到相关专栏文章",
+        _ => "没有找到相关视频",
+    };
+
+    /// <summary>把一段 result 数组按 kind 解析进结果集(视频/直播/番剧/用户/专栏)</summary>
     private static void AppendSearchItems(SearchData result, JsonElement list, ContentKind kind)
     {
         foreach (var e in list.EnumerateArray())
@@ -3277,6 +3285,12 @@ public partial class ApiClient
                 // ★ 用户走**另一个集合**: 点开是个人主页(mid), 不是播放器。
                 var u = ParseUserSearchItem(e);
                 if (u != null) result.UserItems.Add(u);
+                continue;
+            }
+            if (kind == ContentKind.Article)
+            {
+                var art = ParseArticleSearchItem(e);
+                if (art != null) result.ArticleItems.Add(art);
                 continue;
             }
             var item = kind == ContentKind.Live ? ParseLiveSearchItem(e) : ParseSearchItem(e);
@@ -3585,10 +3599,19 @@ public partial class ApiClient
     public async Task<(bool ok, string? err)> PostCommentAsync(
         long aid, string message, long rootRpid = 0, long parentRpid = 0, int replyType = 1)
     {
-        if (aid <= 0) return (false, "没拿到视频 aid, 暂时不能评论");
-        if (string.IsNullOrWhiteSpace(message)) return (false, "评论内容不能为空");
-        // B 站单条评论上限 1000 字。界面里也卡了 MaxLength, 这里再兜一次 ——
-        // 超长会被服务端整条拒掉, 用户辛辛苦苦写的字就白费了。
+        var result = await PostCommentDetailedAsync(aid, message, rootRpid, parentRpid, replyType);
+        return (result.Ok, result.Err);
+    }
+
+    /// <summary>
+    /// 发表/回复评论并返回完整结果（含 rpid、success_toast、need_captcha 与 data.reply 实回条目），
+    /// 让调用方可以直接把新发评论插入列表顶部并渲染收藏集表情，避免按热度排序下“发完看不到反馈”。
+    /// </summary>
+    public async Task<PostCommentResult> PostCommentDetailedAsync(
+        long aid, string message, long rootRpid = 0, long parentRpid = 0, int replyType = 1)
+    {
+        if (aid <= 0) return new PostCommentResult { Err = "没拿到视频 aid, 暂时不能评论" };
+        if (string.IsNullOrWhiteSpace(message)) return new PostCommentResult { Err = "评论内容不能为空" };
         if (message.Length > 1000) message = message[..1000];
 
         var form = new Dictionary<string, string>
@@ -3605,26 +3628,256 @@ public partial class ApiClient
             form["parent"] = (parentRpid > 0 ? parentRpid : rootRpid).ToString();
         }
 
-        var (code, msg) = await PostFormCodeAsync(
-            "https://api.bilibili.com/x/v2/reply/add", form,
-            referer: "https://www.bilibili.com/");
-        if (code == 0) return (true, null);
+        var referer = replyType == 1 ? "https://www.bilibili.com/" : "https://t.bilibili.com/";
+        var (code, msg, data) = await PostFormJsonAsync(
+            "https://api.bilibili.com/x/v2/reply/add", form, referer: referer);
 
-        // 这几个码给用户看得懂的话, 其余原样透出服务端的 message
+        var res = ParsePostCommentResponse(code, msg, data, message, rootRpid, parentRpid);
+        if (res.Ok)
+        {
+            if (res.Reply == null && res.Rpid > 0)
+            {
+                var cur = SessionManager.Instance.Current;
+                long.TryParse(cur.DedeUserID, out var myMid);
+                res.Reply = new CommentItem
+                {
+                    Rpid = res.Rpid,
+                    ParentRpid = parentRpid > 0 ? parentRpid : rootRpid,
+                    Mid = myMid,
+                    UserName = "我",
+                    UserFace = "",
+                    Content = message,
+                    Ctime = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    RcTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm")
+                };
+            }
+            if (res.Reply != null)
+                PopulateKnownEmotes(res.Reply);
+        }
+        return res;
+    }
+
+    internal static PostCommentResult ParsePostCommentResponse(
+        int code, string? msg, JsonElement? data, string fallbackMessage = "",
+        long rootRpid = 0, long parentRpid = 0)
+    {
+        if (code == 0)
+        {
+            long rpid = 0;
+            string toast = "";
+            bool needCaptcha = false;
+            string captchaUrl = "";
+            CommentItem? reply = null;
+
+            if (data.HasValue && data.Value.ValueKind == JsonValueKind.Object)
+            {
+                var d = data.Value;
+                rpid = GetLongLoose(d, "rpid");
+                if (rpid <= 0) rpid = GetLongLoose(d, "rpid_str");
+                toast = GetStr(d, "success_toast");
+                needCaptcha = d.TryGetProperty("need_captcha", out var nc) &&
+                              (nc.ValueKind == JsonValueKind.True || nc.ToString() == "1");
+                captchaUrl = UrlUtil.Normalize(GetStr(d, "url"));
+
+                if (d.TryGetProperty("reply", out var replyEl) && replyEl.ValueKind == JsonValueKind.Object)
+                {
+                    reply = ParseComment(replyEl, withReplies: false);
+                    if (reply.Rpid <= 0 && rpid > 0) reply.Rpid = rpid;
+                    if (string.IsNullOrEmpty(reply.Content) && !string.IsNullOrEmpty(fallbackMessage))
+                        reply.Content = fallbackMessage;
+                    if (parentRpid > 0 && reply.ParentRpid <= 0) reply.ParentRpid = parentRpid;
+                }
+            }
+
+            if (needCaptcha && !string.IsNullOrEmpty(captchaUrl))
+            {
+                return new PostCommentResult
+                {
+                    Ok = false,
+                    NeedCaptcha = true,
+                    CaptchaUrl = captchaUrl,
+                    Rpid = rpid,
+                    Err = "评论触发人机验证，请完成验证后重新发表"
+                };
+            }
+
+            return new PostCommentResult
+            {
+                Ok = true,
+                Rpid = rpid,
+                SuccessToast = toast,
+                Reply = reply
+            };
+        }
+
         var friendly = code switch
         {
             -101 => "请先登录后再发表评论",
             -111 => "登录状态已失效, 请重新登录",
+            -352 => "评论触发风控拦截, 请稍后再试或检查账号状态",
             -400 => "评论内容不合规, 已拒绝发布",
             -403 => "当前账号没有评论权限",
             -412 => "操作太频繁, 请稍后再试",
             -509 => "操作太频繁, 请稍后再试",
-            // 实测(空正文探针): 服务端用 12066 表示"内容为空" ——
-            // 客户端已经 Trim 过, 正常不会走到这里, 留着是为了不把裸数字抛给用户
+            12002 => "该内容评论区已关闭",
+            12025 => "评论字数超出限制",
+            12035 => "当前已被对方拉黑, 无法发表评论",
+            12051 => "请勿重复发送相同评论",
             12066 => "评论内容不能为空",
-            _ => msg
+            _ => msg ?? $"评论发送失败 (code {code})"
         };
-        return (false, friendly);
+        return new PostCommentResult { Ok = false, Err = friendly };
+    }
+
+    /// <summary>
+    /// 获取当前账号可用的评论表情包（含普通小黄脸、会员表情、已解锁的收藏集/装扮表情、颜文字）。
+    /// 优先调用 `/x/emote/user/panel/web?business=reply`（携带登录态才会返回用户已拥有的收藏集表情），
+    /// 未登录或失败时自动回退 `/x/emote/setting/panel`。
+    /// </summary>
+    public async Task<(bool ok, string? err, List<EmotePackage> packages)> GetReplyEmotePanelAsync(
+        string business = "reply", bool forceRefresh = false)
+    {
+        var accountKey = SessionManager.Instance.Current.DedeUserID ?? "";
+        lock (_emoteCacheGate)
+        {
+            if (!forceRefresh && _cachedEmotePackages != null && _emoteCacheAccountKey == accountKey)
+                return (true, null, _cachedEmotePackages);
+        }
+
+        var ps = new Dictionary<string, string> { ["business"] = business };
+        var (code, msg, data) = await GetJsonAsync(
+            "https://api.bilibili.com/x/emote/user/panel/web", ps,
+            sign: false, referer: "https://www.bilibili.com/");
+
+        if (code != 0 || data == null)
+        {
+            (code, msg, data) = await GetJsonAsync(
+                "https://api.bilibili.com/x/emote/setting/panel", ps,
+                sign: false, referer: "https://www.bilibili.com/");
+        }
+
+        if (code != 0 || data == null)
+            return (false, msg ?? "获取表情面板失败", new List<EmotePackage>());
+
+        var (packages, lookup) = ParseEmotePanelJson(data.Value);
+        lock (_emoteCacheGate)
+        {
+            _cachedEmotePackages = packages;
+            _cachedEmoteLookup = lookup;
+            _emoteCacheAccountKey = accountKey;
+        }
+        return (true, null, packages);
+    }
+
+    internal static (List<EmotePackage> packages, Dictionary<string, CommentEmote> lookup) ParseEmotePanelJson(JsonElement data)
+    {
+        var packages = new List<EmotePackage>();
+        var lookup = new Dictionary<string, CommentEmote>(StringComparer.Ordinal);
+        var seenPkgIds = new HashSet<long>();
+
+        void ReadPackageArray(JsonElement arr, bool forceLocked)
+        {
+            if (arr.ValueKind != JsonValueKind.Array) return;
+            foreach (var p in arr.EnumerateArray())
+            {
+                if (p.ValueKind != JsonValueKind.Object) continue;
+                var id = GetLongLoose(p, "id");
+                if (id > 0 && !seenPkgIds.Add(id)) continue;
+
+                var type = GetIntSafe(p, "type");
+                var unlocked = !forceLocked;
+                if (p.TryGetProperty("flags", out var flags) && flags.ValueKind == JsonValueKind.Object)
+                {
+                    if (flags.TryGetProperty("no_access", out var na) &&
+                        (na.ValueKind == JsonValueKind.True || na.ToString() == "1"))
+                        unlocked = false;
+                    if (flags.TryGetProperty("unlocked", out var ul))
+                        unlocked = ul.ValueKind == JsonValueKind.True || ul.ToString() == "1";
+                }
+
+                var pkg = new EmotePackage
+                {
+                    Id = id,
+                    Text = GetStr(p, "text"),
+                    Url = UrlUtil.Normalize(GetStr(p, "url")),
+                    Type = type,
+                    Unlocked = unlocked
+                };
+
+                if (p.TryGetProperty("emote", out var emotes) && emotes.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var em in emotes.EnumerateArray())
+                    {
+                        if (em.ValueKind != JsonValueKind.Object) continue;
+                        var text = GetStr(em, "text");
+                        if (string.IsNullOrEmpty(text)) continue;
+
+                        var url = UrlUtil.Normalize(GetStr(em, "url"));
+                        if (url.Length == 0) url = UrlUtil.Normalize(GetStr(em, "webp_url"));
+                        var gifUrl = UrlUtil.Normalize(GetStr(em, "gif_url"));
+                        var size = 1;
+                        if (em.TryGetProperty("meta", out var meta) && meta.ValueKind == JsonValueKind.Object)
+                        {
+                            var s = GetIntSafe(meta, "size");
+                            if (s > 1) size = s;
+                        }
+                        if (type == 3 && size < 2) size = 2;
+
+                        var entry = new EmoteEntry
+                        {
+                            Id = GetLongLoose(em, "id"),
+                            PackageId = id,
+                            Text = text,
+                            Url = url,
+                            GifUrl = gifUrl,
+                            Size = size,
+                            Type = GetIntSafe(em, "type") > 0 ? GetIntSafe(em, "type") : type,
+                            Unlocked = unlocked
+                        };
+                        pkg.Emotes.Add(entry);
+
+                        if (url.Length > 0 && !lookup.ContainsKey(text))
+                            lookup[text] = new CommentEmote { Url = url, Size = size };
+                    }
+                }
+
+                if (pkg.Emotes.Count > 0)
+                    packages.Add(pkg);
+            }
+        }
+
+        if (data.TryGetProperty("packages", out var pkgs)) ReadPackageArray(pkgs, forceLocked: false);
+        if (data.TryGetProperty("setting", out var setting) && setting.ValueKind == JsonValueKind.Object
+            && setting.TryGetProperty("packages", out var settingPkgs))
+            ReadPackageArray(settingPkgs, forceLocked: false);
+        if (data.TryGetProperty("all_packages", out var allPkgs)) ReadPackageArray(allPkgs, forceLocked: true);
+
+        return (packages, lookup);
+    }
+
+    /// <summary>用已缓存的表情包字典补全评论实体里缺失的表情图片映射（例如 /x/v2/reply/add 回显未下发 emote 时）</summary>
+    public void PopulateKnownEmotes(CommentItem? item)
+    {
+        if (item == null || string.IsNullOrEmpty(item.Content)) return;
+        Dictionary<string, CommentEmote> snapshot;
+        lock (_emoteCacheGate)
+        {
+            if (_cachedEmoteLookup.Count == 0) return;
+            snapshot = new Dictionary<string, CommentEmote>(_cachedEmoteLookup, StringComparer.Ordinal);
+        }
+
+        var idx = 0;
+        while (idx < item.Content.Length)
+        {
+            var open = item.Content.IndexOf('[', idx);
+            if (open < 0) break;
+            var close = item.Content.IndexOf(']', open + 1);
+            if (close < 0) break;
+            var token = item.Content[open..(close + 1)];
+            if (!item.Emotes.ContainsKey(token) && snapshot.TryGetValue(token, out var emote))
+                item.Emotes[token] = emote;
+            idx = close + 1;
+        }
     }
 
     /// <summary>

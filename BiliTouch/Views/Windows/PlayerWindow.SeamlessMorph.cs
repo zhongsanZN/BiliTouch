@@ -51,6 +51,7 @@ public partial class PlayerWindow
         public Window? EntryWindow;
         public bool EntryPresented;
         public Action? PendingPresentation;
+        public readonly List<Action> PostEntryUiActions = new();
     }
 
     private readonly SeamlessMorphState _seamless = new();
@@ -59,6 +60,30 @@ public partial class PlayerWindow
     internal bool IsSeamlessEntryActive => _seamless.EntryWindow != null && _seamless.IsRunning && !_seamless.IsReverse;
     internal double SeamlessMorphProgress => _seamless.Progress;
     internal Rect SeamlessCurrentRect => _seamless.CurrentRect;
+
+    internal void RunOrDeferAfterSeamlessEntry(Action action)
+    {
+        if (action == null || _closing) return;
+        if (!IsSeamlessEntryActive)
+        {
+            action();
+            return;
+        }
+        _seamless.PostEntryUiActions.Add(action);
+    }
+
+    private void FlushPostEntryUiActions(bool execute)
+    {
+        if (_seamless.PostEntryUiActions.Count == 0) return;
+        var batch = _seamless.PostEntryUiActions.ToArray();
+        _seamless.PostEntryUiActions.Clear();
+        if (!execute || _closing) return;
+        foreach (var action in batch)
+        {
+            if (_closing) break;
+            action();
+        }
+    }
 
     private void EnsureSeamlessTransformsMounted()
     {
@@ -71,6 +96,13 @@ public partial class PlayerWindow
         SeamlessHeroCard.RenderTransform = group;
         SeamlessHeroCard.RenderTransformOrigin = new Point(0, 0);
         SeamlessHeroCard.Clip = _seamless.HeroClip;
+        // Disable integer pixel rounding and cache the hero card surface so every
+        // composition frame transforms smoothly without re-rasterizing artwork.
+        SeamlessMorphOverlay.UseLayoutRounding = false;
+        SeamlessMorphOverlay.SnapsToDevicePixels = false;
+        SeamlessHeroCard.UseLayoutRounding = false;
+        SeamlessHeroCard.SnapsToDevicePixels = false;
+        SeamlessHeroCard.CacheMode ??= new BitmapCache(1.0);
 
         if (InfoPanel.RenderTransform == null || ReferenceEquals(InfoPanel.RenderTransform, Transform.Identity))
             InfoPanel.RenderTransform = _seamless.InfoPanelShift;
@@ -446,8 +478,11 @@ public partial class PlayerWindow
 
         var radius = SpringMotion.InterpolateRadius(_seamless.StartRadius, _seamless.EndRadius, p);
         var invScale = Math.Max(0.05, Math.Min(sx, sy));
-        _seamless.HeroClip.Rect = new Rect(0, 0, baseW, baseH);
-        _seamless.HeroClip.RadiusX = _seamless.HeroClip.RadiusY = radius / invScale;
+        var nextClipRadius = radius / invScale;
+        if (Math.Abs(_seamless.HeroClip.Rect.Width - baseW) > 0.01 || Math.Abs(_seamless.HeroClip.Rect.Height - baseH) > 0.01)
+            _seamless.HeroClip.Rect = new Rect(0, 0, baseW, baseH);
+        if (Math.Abs(_seamless.HeroClip.RadiusX - nextClipRadius) > 0.015)
+            _seamless.HeroClip.RadiusX = _seamless.HeroClip.RadiusY = nextClipRadius;
 
         if (_seamless.EntryWindow != null)
         {
@@ -572,10 +607,15 @@ public partial class PlayerWindow
         if (!wasClosing && !_closing)
         {
             RestorePlayerChromeAfterSeamless();
+            FlushPostEntryUiActions(execute: true);
             Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
             {
                 if (!_closing) DwmInterop.SetTransitionsDisabled(this, false);
             }));
+        }
+        else
+        {
+            FlushPostEntryUiActions(execute: false);
         }
     }
 

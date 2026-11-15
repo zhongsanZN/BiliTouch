@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using BiliTouch.Models;
 
 namespace BiliTouch.Services;
@@ -53,6 +54,7 @@ public static class DynamicParser
                 item.AuthorFace = UrlUtil.Normalize(Str(au, "face"));
                 item.PubTs = Long(au, "pub_ts");
                 item.PubTimeText = Str(au, "pub_time");
+                item.PubAction = Str(au, "pub_action");
             }
             if (item.AuthorName.Length == 0 && e.TryGetProperty("author", out var au2) &&
                 au2.ValueKind == JsonValueKind.Object)
@@ -67,6 +69,7 @@ public static class DynamicParser
 
             // ---------- 正文 + 图片 ----------
             ReadTextAndPictures(e, item);
+            item.Kind = NormalizeOpusOrArticleKind(e, item);
 
             // ---------- 按类型补内容 ----------
             switch (item.Kind)
@@ -197,6 +200,15 @@ public static class DynamicParser
                 if (major.TryGetProperty("opus", out var opus) && opus.ValueKind == JsonValueKind.Object)
                 {
                     item.ContentTitle = Str(opus, "title");
+                    var jump = Str(opus, "jump_url");
+                    if (jump.Length > 0)
+                    {
+                        item.OpusJumpUrl = UrlUtil.Normalize(jump);
+                        var opusMatch = Regex.Match(jump, @"/opus/(\d+)", RegexOptions.IgnoreCase);
+                        if (opusMatch.Success) item.OpusId = opusMatch.Groups[1].Value;
+                        var cvMatch = Regex.Match(jump, @"/read/cv(\d+)", RegexOptions.IgnoreCase);
+                        if (cvMatch.Success) item.ArticleId = cvMatch.Groups[1].Value;
+                    }
                     if (opus.TryGetProperty("pics", out var opics) && opics.ValueKind == JsonValueKind.Array)
                     foreach (var p in opics.EnumerateArray())
                     {
@@ -630,21 +642,83 @@ public static class DynamicParser
 
     // ------------------------------------------------------------ 专栏
 
-    private static void ReadArticle(JsonElement e, DynamicItem item)
+    private static DynamicKind NormalizeOpusOrArticleKind(JsonElement e, DynamicItem item)
     {
+        var rawTypeStr = Str(e, "type");
+        if (item.Kind != DynamicKind.Article && rawTypeStr != "DYNAMIC_TYPE_OPUS")
+            return item.Kind;
+
+        bool hasMajorArticle = false;
+        bool hasMajorOpus = false;
         if (e.TryGetProperty("modules", out var mods) && mods.ValueKind == JsonValueKind.Object &&
             mods.TryGetProperty("module_dynamic", out var md) && md.ValueKind == JsonValueKind.Object &&
-            md.TryGetProperty("major", out var major) && major.ValueKind == JsonValueKind.Object &&
-            major.TryGetProperty("article", out var art) && art.ValueKind == JsonValueKind.Object)
+            md.TryGetProperty("major", out var major) && major.ValueKind == JsonValueKind.Object)
         {
-            item.ArticleTitle = Str(art, "title");
-            item.ArticleCover = UrlUtil.Normalize(
-                art.TryGetProperty("covers", out var cvs) && cvs.ValueKind == JsonValueKind.Array &&
-                cvs.GetArrayLength() > 0 ? cvs[0].GetString() ?? "" : Str(art, "cover"));
-            item.ArticleId = Scalar(art, "id");
+            hasMajorArticle = major.TryGetProperty("article", out var art) && art.ValueKind == JsonValueKind.Object;
+            hasMajorOpus = major.TryGetProperty("opus", out var opus) && opus.ValueKind == JsonValueKind.Object;
         }
+
+        // B 站部分带图 Opus 动态会被标成 DYNAMIC_TYPE_ARTICLE + MAJOR_TYPE_OPUS,
+        // 但既没有 major.article / cv 号, comment_type 也是图文相簿(11)而不是专栏(12)。
+        // 这里将其纠偏为普通图文动态, 保留传统纯 DYNAMIC_TYPE_ARTICLE 为专栏。
+        bool jumpsToCv = item.ArticleId.Length > 0 ||
+            Regex.IsMatch(item.OpusJumpUrl, @"/read/cv\d+", RegexOptions.IgnoreCase);
+        bool pubActionSaysArticle = item.PubAction.Contains("专栏", StringComparison.Ordinal) ||
+            item.PubAction.Contains("文章", StringComparison.Ordinal);
+
+        if (rawTypeStr == "DYNAMIC_TYPE_OPUS")
+        {
+            if (hasMajorArticle || jumpsToCv || item.CommentType == 12 || pubActionSaysArticle)
+                return DynamicKind.Article;
+            if (item.CommentType == 11 || item.HasPictures)
+                return DynamicKind.ImageText;
+            return item.HasText ? DynamicKind.Text : DynamicKind.ImageText;
+        }
+
+        if (item.Kind == DynamicKind.Article && hasMajorOpus &&
+            !hasMajorArticle && !jumpsToCv && item.CommentType != 12 && !pubActionSaysArticle &&
+            (item.CommentType == 11 || item.HasPictures))
+        {
+            return DynamicKind.ImageText;
+        }
+
+        return item.Kind;
+    }
+
+    private static void ReadArticle(JsonElement e, DynamicItem item)
+    {
+        bool hasMajorOpus = false;
+        if (e.TryGetProperty("modules", out var mods) && mods.ValueKind == JsonValueKind.Object &&
+            mods.TryGetProperty("module_dynamic", out var md) && md.ValueKind == JsonValueKind.Object &&
+            md.TryGetProperty("major", out var major) && major.ValueKind == JsonValueKind.Object)
+        {
+            hasMajorOpus = major.TryGetProperty("opus", out var opus) && opus.ValueKind == JsonValueKind.Object;
+            if (major.TryGetProperty("article", out var art) && art.ValueKind == JsonValueKind.Object)
+            {
+                item.ArticleTitle = Str(art, "title");
+                item.ArticleCover = UrlUtil.Normalize(
+                    art.TryGetProperty("covers", out var cvs) && cvs.ValueKind == JsonValueKind.Array &&
+                    cvs.GetArrayLength() > 0 ? cvs[0].GetString() ?? "" : Str(art, "cover"));
+                item.ArticleId = Scalar(art, "id");
+                if (!item.HasText) item.Text = Str(art, "desc");
+            }
+            if (item.ArticleId.Length == 0 && major.TryGetProperty("article", out _) == false &&
+                opus.ValueKind == JsonValueKind.Object)
+            {
+                var jump = Str(opus, "jump_url");
+                var cvMatch = Regex.Match(jump, @"/read/cv(\d+)", RegexOptions.IgnoreCase);
+                if (cvMatch.Success) item.ArticleId = cvMatch.Groups[1].Value;
+            }
+        }
+        if (item.ArticleTitle.Length == 0) item.ArticleTitle = item.ContentTitle;
         if (item.ArticleTitle.Length == 0) item.ArticleTitle = Str(e, "title");
+        if (item.ArticleCover.Length == 0 && item.Pictures.Count > 0) item.ArticleCover = item.Pictures[0].Url;
+        if (item.ArticleId.Length == 0 && item.CommentType == 12 &&
+            e.TryGetProperty("basic", out var basic) && basic.ValueKind == JsonValueKind.Object)
+            item.ArticleId = Scalar(basic, "rid_str");
         if (item.ArticleId.Length == 0) item.ArticleId = Scalar(e, "rid");
+        if (item.OpusId.Length == 0 && hasMajorOpus && item.Id.Length > 0)
+            item.OpusId = item.Id;
     }
 
     // ------------------------------------------------------------ 直播

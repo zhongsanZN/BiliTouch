@@ -806,7 +806,8 @@ public class FollowViewModel : ObservableObject
             });
             await LoadSelectionAsync(reset: true);
             _ = CompleteFollowingsAsync(refreshGeneration, list?.Count == 50);
-            _ = CheckNewDynamicsAsync();
+            _lastUnreadScanTs = Dynamics.Count > 0 ? Dynamics.Max(d => d.PubTs) : _lastUnreadScanTs;
+            _ = RefreshServerUnreadAsync(includeOverflowPages: true);
             // ★ 拉完第一页动态后按当前排序模式重排左栏 —— 这一步必须在 UpdateUnreadBadges
             //   之后(它在 LoadSelectionAsync 里已经跑过), 否则排的是没有时间轴的空序。
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(SortUsers);

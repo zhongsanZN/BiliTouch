@@ -104,7 +104,11 @@ public static class DynamicActions
 
     public static void OpenArticle(DynamicItem d)
     {
-        OpenDetail(d);
+        if (d.ArticleId.Length > 0 || d.OpusId.Length > 0)
+            Svc.Navigate?.OpenArticle(d.ArticleId, d.OpusId,
+                d.ArticleTitle.Length > 0 ? d.ArticleTitle : d.ContentTitle, d);
+        else
+            OpenDetail(d);
     }
 
     public static void OpenLive(DynamicItem d)

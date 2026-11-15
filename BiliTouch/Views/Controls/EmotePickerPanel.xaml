@@ -1,0 +1,66 @@
+<UserControl x:Class="BiliTouch.Views.Controls.EmotePickerPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="372" Height="328">
+    <Border CornerRadius="10" Padding="10"
+            Background="{DynamicResource CardBackgroundBrush}"
+            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- 顶部分类过滤与刷新 -->
+            <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                <Button x:Name="BtnRefresh" DockPanel.Dock="Right" Content="刷新"
+                        Style="{StaticResource SubtleButtonStyle}" Padding="8,3" MinHeight="26"
+                        FontSize="11" Click="OnRefreshClick" ToolTip="重新拉取已解锁的收藏集/会员表情" />
+                <StackPanel Orientation="Horizontal">
+                    <RadioButton x:Name="CatAll" Content="全部" GroupName="EmoteCat" IsChecked="True"
+                                 Style="{StaticResource PillTabStyle}" FontSize="11" Padding="8,3" Margin="0,0,4,0"
+                                 Checked="OnCategoryChecked" />
+                    <RadioButton x:Name="CatSuite" Content="收藏集" GroupName="EmoteCat"
+                                 Style="{StaticResource PillTabStyle}" FontSize="11" Padding="8,3" Margin="0,0,4,0"
+                                 Checked="OnCategoryChecked" />
+                    <RadioButton x:Name="CatBasic" Content="小黄脸" GroupName="EmoteCat"
+                                 Style="{StaticResource PillTabStyle}" FontSize="11" Padding="8,3" Margin="0,0,4,0"
+                                 Checked="OnCategoryChecked" />
+                    <RadioButton x:Name="CatKaomoji" Content="颜文字" GroupName="EmoteCat"
+                                 Style="{StaticResource PillTabStyle}" FontSize="11" Padding="8,3"
+                                 Checked="OnCategoryChecked" />
+                </StackPanel>
+            </DockPanel>
+
+            <!-- 表情包列表条 -->
+            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                          Margin="0,0,0,8">
+                <StackPanel x:Name="PackageStrip" Orientation="Horizontal" />
+            </ScrollViewer>
+
+            <!-- 当前选中包的表情网格 -->
+            <Grid Grid.Row="2">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <WrapPanel x:Name="EmoteWrap" />
+                </ScrollViewer>
+                <TextBlock x:Name="StatusText" HorizontalAlignment="Center" VerticalAlignment="Center"
+                           FontSize="12" TextAlignment="Center" TextWrapping="Wrap" Margin="16"
+                           Foreground="{DynamicResource TextSecondaryBrush}" Visibility="Collapsed" />
+            </Grid>
+
+            <!-- 底部提示（显示当前包名称 / 收藏集解锁状态） -->
+            <Border Grid.Row="3" Margin="0,6,0,0" Padding="0,6,0,0"
+                    BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0">
+                <DockPanel>
+                    <TextBlock x:Name="FooterHint" DockPanel.Dock="Right" FontSize="11"
+                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                    <TextBlock x:Name="PackageTitleText" FontSize="11" FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                </DockPanel>
+            </Border>
+        </Grid>
+    </Border>
+</UserControl>

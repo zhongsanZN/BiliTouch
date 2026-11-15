@@ -67,13 +67,14 @@ public partial class ApiClient
         {
             var cursor = GetStr(more, "offset");
             if (cursor.Length == 0 || !cursors.Add(cursor) || cursors.Count > 256)
-                return (false, "动态未读列表分页不完整，请稍后刷新", authors);
+                return authors.Count > 0 ? (true, null, authors) : (false, "动态未读列表分页不完整，请稍后刷新", authors);
             var next = await GetJsonAsync("https://api.bilibili.com/x/polymer/web-dynamic/v1/uplist",
                 new() { ["offset"] = cursor, ["platform"] = "web" }, referer: "https://t.bilibili.com/");
-            if (next.code != 0 || next.data == null) return (false, next.msg ?? "动态未读列表翻页失败", authors);
+            if (next.code != 0 || next.data == null)
+                return authors.Count > 0 ? (true, null, authors) : (false, next.msg ?? "动态未读列表翻页失败", authors);
             more = next.data.Value;
             if (!more.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
-                return (false, "动态未读列表分页响应不完整", authors);
+                return authors.Count > 0 ? (true, null, authors) : (false, "动态未读列表分页响应不完整", authors);
             ReadUsers(items);
         }
         return (true, null, authors);
@@ -93,8 +94,18 @@ public partial class ApiClient
     public async Task<(bool ok, string? err, DynamicItem? item)> GetDynamicDetailAsync(string id)
     {
         if (!long.TryParse(id, out var value) || value <= 0) return (false,"动态 ID 无效",null);
+        var ps = new Dictionary<string, string>
+        {
+            ["id"] = id,
+            ["timezone_offset"] = "-480",
+            ["platform"] = "web",
+            ["features"] = DynamicFeatures
+        };
         var (code,msg,data) = await GetJsonAsync("https://api.bilibili.com/x/polymer/web-dynamic/v1/detail",
-            new() { ["id"] = id, ["features"] = "itemOpusStyle" }, referer:"https://t.bilibili.com/");
+            ps, sign: false, referer:"https://t.bilibili.com/");
+        if (code == -352)
+            (code,msg,data) = await GetJsonAsync("https://api.bilibili.com/x/polymer/web-dynamic/v1/detail",
+                ps, sign: true, referer:"https://t.bilibili.com/");
         if (code != 0 || data == null) return (false,msg ?? "动态加载失败",null);
         if (!data.Value.TryGetProperty("item",out var item)) return (false,"动态不存在或已删除",null);
         var parsed = DynamicParser.Parse(item);
@@ -219,20 +230,16 @@ public partial class ApiClient
 
     public async Task<(bool ok,string? err,string text,List<DynamicPicture> pictures)> GetNativeArticleAsync(string id)
     {
-        var pictures=new List<DynamicPicture>();
-        if(!long.TryParse(id,out var article) || article <= 0) return (false,"专栏 ID 无效","",pictures);
-        var (code,msg,data)=await GetJsonAsync("https://api.bilibili.com/x/article/view",new() { ["id"]=id },referer:"https://www.bilibili.com/");
-        if(code!=0 || data==null) return(false,msg ?? "专栏正文加载失败","",pictures);
-        var html=GetStr(data.Value,"content");
-        if(html.Length==0) return(false,"暂未取得完整专栏正文，请重试","",pictures);
-        foreach(Match match in Regex.Matches(html,"<img[^>]+(?:data-src|src)=[\"']([^\"']+)",RegexOptions.IgnoreCase))
-        {
-            var url=UrlUtil.Normalize(WebUtility.HtmlDecode(match.Groups[1].Value));
-            if(url.StartsWith("https://",StringComparison.OrdinalIgnoreCase) && pictures.All(p=>p.Url!=url)) pictures.Add(new(){Url=url});
-        }
-        html=Regex.Replace(html,"<(script|style)\\b[^>]*>[\\s\\S]*?</\\1>","",RegexOptions.IgnoreCase);
-        html=Regex.Replace(html,"<br\\s*/?>|</(?:p|div|h[1-6]|li)>","\n",RegexOptions.IgnoreCase);
-        var text=WebUtility.HtmlDecode(Regex.Replace(html,"<[^>]+>",""));
-        return(true,null,text.Trim(),pictures);
+        var pictures = new List<DynamicPicture>();
+        var res = await GetArticleDetailAsync(id);
+        if (!res.ok || res.detail == null) return (false, res.err ?? "暂未取得完整专栏正文，请重试", "", pictures);
+        var parts = res.detail.Blocks
+            .Where(b => !string.IsNullOrWhiteSpace(b.Text))
+            .Select(b => b.Text);
+        var text = string.Join("\n\n", parts).Trim();
+        pictures.AddRange(res.detail.AllImages);
+        if (text.Length == 0 && pictures.Count == 0)
+            return (false, "暂未取得完整专栏正文，请重试", "", pictures);
+        return (true, null, text, pictures);
     }
 }

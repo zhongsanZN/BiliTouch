@@ -510,6 +510,9 @@ public enum ContentKind
     ///   所以单独走 <see cref="SearchData.UserItems"/>, 页面用用户卡渲染。
     /// </summary>
     User,
+
+    /// <summary>专栏文章(搜索 search_type=article)</summary>
+    Article,
 }
 
 /// <summary>搜索 API 返回结构</summary>
@@ -532,6 +535,9 @@ public class SearchData
     /// 点开的去向是**个人主页**(mid), 不是播放器。
     /// </summary>
     public System.Collections.Generic.List<UserItem> UserItems { get; set; } = new();
+
+    /// <summary>专栏结果(search_type=article)</summary>
+    public System.Collections.Generic.List<ArticleSummary> ArticleItems { get; set; } = new();
 
     public bool HasMore { get; set; }
     public int TotalPages { get; set; }
@@ -1011,6 +1017,48 @@ public class CommentItem : System.ComponentModel.INotifyPropertyChanged
         RepliesNextPage = 1;
         NotifyRepliesChanged();
     }
+}
+
+/// <summary>评论表情面板中的单个表情（小黄脸 / 会员 / 收藏集装扮 / 颜文字）</summary>
+public class EmoteEntry
+{
+    public long Id { get; set; }
+    public long PackageId { get; set; }
+    /// <summary>写入评论正文的短代码（如 [微笑] / [某收藏集_开心]，颜文字为纯文本）</summary>
+    public string Text { get; set; } = "";
+    public string Url { get; set; } = "";
+    public string GifUrl { get; set; } = "";
+    /// <summary>1=常规小图, 2=大表情, 3=超大收藏集表情</summary>
+    public int Size { get; set; } = 1;
+    /// <summary>1=普通小黄脸, 2=会员专属, 3=装扮/收藏集, 4=颜文字</summary>
+    public int Type { get; set; } = 1;
+    public bool Unlocked { get; set; } = true;
+    public bool IsTextOnly => string.IsNullOrEmpty(Url);
+}
+
+/// <summary>评论表情包分组</summary>
+public class EmotePackage
+{
+    public long Id { get; set; }
+    public string Text { get; set; } = "";
+    public string Url { get; set; } = "";
+    /// <summary>1=普通小黄脸, 2=会员专属, 3=装扮/收藏集, 4=颜文字</summary>
+    public int Type { get; set; }
+    public bool Unlocked { get; set; } = true;
+    public bool IsCollection => Type == 3;
+    public List<EmoteEntry> Emotes { get; } = new();
+}
+
+/// <summary>发表/回复评论详细结果（包含服务端回传的 comment 与验证状态）</summary>
+public class PostCommentResult
+{
+    public bool Ok { get; set; }
+    public string? Err { get; set; }
+    public long Rpid { get; set; }
+    public string SuccessToast { get; set; } = "";
+    public bool NeedCaptcha { get; set; }
+    public string CaptchaUrl { get; set; } = "";
+    public CommentItem? Reply { get; set; }
 }
 
 /// <summary>云端收藏夹(账号下的一个收藏夹分组)</summary>
@@ -2287,10 +2335,12 @@ public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
     /// <summary>有没有时长角标可显示</summary>
     public bool HasDuration => DurationText.Length > 0;
 
-    /// <summary>专栏: 标题 + 封面 + cv 号</summary>
+    /// <summary>专栏: 标题 + 封面 + cv 号 / Opus 号</summary>
     public string ArticleTitle { get; set; } = "";
     public string ArticleCover { get; set; } = "";
     public string ArticleId { get; set; } = "";
+    public string OpusId { get; set; } = "";
+    public string OpusJumpUrl { get; set; } = "";
 
     /// <summary>直播: 房间号</summary>
     public long LiveRoomId { get; set; }
@@ -2422,6 +2472,7 @@ public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
         Kind = d.Kind; AuthorMid = d.AuthorMid; AuthorName = d.AuthorName; AuthorFace = d.AuthorFace;
         PubTs = d.PubTs; PubTimeText = d.PubTimeText; Text = d.Text; Pictures = d.Pictures; Video = d.Video;
         ContentTitle = d.ContentTitle; ArticleTitle = d.ArticleTitle; ArticleCover = d.ArticleCover; ArticleId = d.ArticleId;
+        OpusId = d.OpusId; OpusJumpUrl = d.OpusJumpUrl;
         LiveRoomId = d.LiveRoomId; Original = d.Original; OriginalDeleted = d.OriginalDeleted;
         // ★ 2026-11-04: 投票 / 附加卡片 / 富文本节点也必须跟着刷新, 否则详情页拉回完整数据后
         //   卡片上还是列表接口那份旧快照(投票参与人数不更新、话题不上色)。

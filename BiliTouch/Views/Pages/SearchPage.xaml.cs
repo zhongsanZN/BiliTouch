@@ -447,7 +447,7 @@ public partial class SearchPage : UserControl
     /// <summary>聚焦描边淡入淡出。From 取当前值, 淡出途中再聚焦也不会跳。</summary>
     private UIElement CreatePeerPreview(int targetIndex)
     {
-        var label = targetIndex switch { 0 => "视频", 1 => "直播间", 2 => "番剧", 3 => "用户", _ => "结果" };
+        var label = targetIndex switch { 0 => "视频", 1 => "直播间", 2 => "番剧", 3 => "用户", 4 => "专栏", _ => "结果" };
         var keyword = (Vm?.Keyword ?? "").Trim();
         var stack = new StackPanel
         {
@@ -520,6 +520,15 @@ public partial class SearchPage : UserControl
     }
 
     /// <summary>从 from 淡到 to。每次新建动画实例 —— 同一个实例挂到两处容易出怪问题。</summary>
+    private void OnSearchArticleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: BiliTouch.Models.ArticleSummary art })
+        {
+            Svc.Navigate?.OpenArticle(art.ArticleId, art.OpusId, art.Title);
+            e.Handled = true;
+        }
+    }
+
     private static void Fade(UIElement target, double from, double to, int beginMs, int durationMs)
     {
         target.BeginAnimation(OpacityProperty,

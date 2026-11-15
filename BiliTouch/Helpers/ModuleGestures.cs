@@ -17,7 +17,7 @@ internal sealed class ModuleGestures
     private readonly Action<object>? _edit;
     private readonly Action<object>? _activate;
     private readonly DispatcherTimer _hold=new() { Interval=TimeSpan.FromMilliseconds(550) };
-    private readonly DispatcherTimer _wheelIdle=new() { Interval=TimeSpan.FromMilliseconds(180) };
+    private readonly DispatcherTimer _wheelIdle=new() { Interval=TimeSpan.FromMilliseconds(220) };
     private readonly DispatcherTimer _fadeHide=new() { Interval=TimeSpan.FromMilliseconds(135) };
     private Point _start;
     private TouchDevice? _touchDevice;
@@ -29,7 +29,7 @@ internal sealed class ModuleGestures
     internal const double PullTriggerDistance = 120;
     private const double PullMaxVisualOffset = 108;
     private const double RefreshRestOffset = 54;
-    private const int WheelTriggerThreshold = 420;
+    private const int WheelTriggerThreshold = 240;
 
     private ScrollViewer? _scroll;
     private UIElement? _pullTarget;
@@ -69,10 +69,10 @@ internal sealed class ModuleGestures
     private ModuleGestures(UserControl page,Func<Task> refresh,Action<object>? edit,Action<object>? activate,Panel? hintHost,Func<ScrollViewer?, bool>? canPull)
     {
         _page=page;_refresh=refresh;_edit=edit;_activate=activate;_canPull=canPull;
-        _hintText=new TextBlock { FontSize=13 };
+        _hintText=new TextBlock { FontSize=13, VerticalAlignment=VerticalAlignment.Center };
         _hintText.SetResourceReference(TextBlock.ForegroundProperty,"AccentTextBrush");
-        _refreshRing=new LoadingRing {Width=24,Height=24,Visibility=Visibility.Collapsed};
-        var visual=new Grid();visual.Children.Add(_refreshRing);visual.Children.Add(_hintText);
+        _refreshRing=new LoadingRing {Width=20,Height=20,VerticalAlignment=VerticalAlignment.Center,Visibility=Visibility.Collapsed};
+        var visual=new StackPanel { Orientation=Orientation.Horizontal, VerticalAlignment=VerticalAlignment.Center };visual.Children.Add(_refreshRing);visual.Children.Add(_hintText);
         var hintGroup=new TransformGroup();hintGroup.Children.Add(_hintScale);hintGroup.Children.Add(_hintOffset);
         _hint=new Border { Child=visual,Padding=new Thickness(10),CornerRadius=new CornerRadius(22),HorizontalAlignment=HorizontalAlignment.Center,VerticalAlignment=VerticalAlignment.Top,Margin=new Thickness(0,8,0,0),Visibility=Visibility.Collapsed,IsHitTestVisible=false,RenderTransformOrigin=new Point(0.5,0.5),RenderTransform=hintGroup };
         _hint.SetResourceReference(Border.BorderBrushProperty,"CardBorderBrush");
@@ -91,8 +91,9 @@ internal sealed class ModuleGestures
             host.Children.Add(_hint);
         }
         _hold.Tick+=(_,_)=>CompleteHold();
-        _wheelIdle.Tick+=async(_,_)=>{_wheelIdle.Stop();var trigger=_wheel>=WheelTriggerThreshold;_wheel=0;if(trigger)await RefreshAsync();else Hint("");};
+        _wheelIdle.Tick+=async(_,_)=>await FinishWheelAsync();
         _fadeHide.Tick+=(_,_)=>{_fadeHide.Stop();if(!_refreshing && !_down && _wheel==0)_hint.Visibility=Visibility.Collapsed;};
+        page.ManipulationStarting+=(_,e)=>{if(_pull){e.Cancel();e.Handled=true;}};
         page.PreviewTouchDown+=(_,e)=>{_touchContact=true;_lastTouchAt=Environment.TickCount64;Begin(e.GetTouchPoint(null).Position,e.OriginalSource as DependencyObject);_touchDevice=e.TouchDevice;};
         page.PreviewTouchMove+=(_,e)=>{_lastTouchAt=Environment.TickCount64;if(Move(e.GetTouchPoint(null).Position)){e.Handled=true;e.TouchDevice.Capture(page);}};
         page.PreviewTouchUp+=async(_,e)=>{_touchContact=false;if(!_down)return;var tap=!_held&&!_pull&&!_moved && _activate!=null?_item:null;var consumed=_held||_pull||tap!=null;var run=End();if(tap!=null)_activate?.Invoke(tap);if(consumed){_suppressMouseUntil=Environment.TickCount64+350;TouchSupport.CancelPendingTap();e.Handled=true;e.TouchDevice.Capture(null);}if(run)await RefreshAsync();};
@@ -132,8 +133,10 @@ internal sealed class ModuleGestures
         if(!_pull)
         {
             if(Math.Abs(dx)>12 && Math.Abs(dx)>Math.Abs(dy)){Reset();return false;}
-            if(dy<14 || Math.Abs(dy)<Math.Abs(dx)*1.4 || _scroll==null || _scroll.VerticalOffset>0.5)return false;
-            _pull=true;_panning=_scroll.PanningMode;_scroll.PanningMode=PanningMode.None;TrackpadScroll.Cancel(_scroll);
+            // Engage pull-to-refresh before WPF ScrollViewer's ~8–10px native manipulation lock threshold
+            // so downward drags from the top intercept cleanly instead of being swallowed by PanningMode.
+            if(dy<6 || Math.Abs(dy)<Math.Abs(dx)*1.3 || _scroll==null || _scroll.VerticalOffset>0.5)return false;
+            _pull=true;_wheel=0;_wheelIdle.Stop();_panning=_scroll.PanningMode;_scroll.PanningMode=PanningMode.None;TrackpadScroll.Cancel(_scroll);
             AttachPullTarget(_scroll);
             _card?.CancelGestureTap();TouchSupport.CancelPendingTap();
         }
@@ -216,26 +219,84 @@ internal sealed class ModuleGestures
         }
         _down=_pull=_held=false;_distance=0;_scroll=null;_card=null;_item=null;_touchDevice=null;if(!_refreshing)Hint("");
     }
+    private async Task FinishWheelAsync()
+    {
+        _wheelIdle.Stop();
+        var trigger=_wheel>=WheelTriggerThreshold;
+        _wheel=0;
+        if(trigger)
+        {
+            _distance=0;
+            if(_pullTarget != null) AnimatePullOffset(RefreshRestOffset, 180);
+            await RefreshAsync();
+        }
+        else
+        {
+            _distance=0;
+            if(_pullTarget != null && _contentOffset.Y > 0.5) AnimatePullOffset(0, 220);
+            Hint("");
+        }
+    }
+    private double WheelEquivalentDistance(double wheelDelta)
+        => wheelDelta <= 0 ? 0 : wheelDelta * (PullTriggerDistance / WheelTriggerThreshold);
+
     private void OnWheel(object sender,MouseWheelEventArgs e)
     {
         if(_refreshing || _down)return;
         var scroll=Ancestor<ScrollViewer>(e.OriginalSource as DependencyObject);
-        if(scroll==null || (_canPull!=null && !_canPull(scroll)) || scroll.VerticalOffset>0.5 || e.Delta<=0){_wheel=0;_wheelIdle.Stop();Hint("");return;}
-        _wheel+=e.Delta;Hint(_wheel>=WheelTriggerThreshold?"松开刷新":"继续上滚刷新");_wheelIdle.Stop();_wheelIdle.Start();
+        if(scroll==null || (_canPull!=null && !_canPull(scroll)) || scroll.VerticalOffset>0.5)
+        {
+            _wheel=0;_wheelIdle.Stop();
+            if(_pullTarget != null && !_pull && _contentOffset.Y > 0.5) AnimatePullOffset(0, 180);
+            Hint("");
+            return;
+        }
+        if(e.Delta<=0)
+        {
+            if(_wheel>0)
+            {
+                _wheel=Math.Max(0,_wheel+e.Delta);
+                if(_wheel==0)
+                {
+                    _wheelIdle.Stop();
+                    _distance=0;
+                    if(_pullTarget != null) AnimatePullOffset(0, 180);
+                    Hint("");
+                }
+                else
+                {
+                    _distance=WheelEquivalentDistance(_wheel);
+                    ApplyPullOffsetImmediate(ComputeRubberBandOffset(_distance));
+                    Hint(_wheel>=WheelTriggerThreshold?"松开刷新":"继续下拉刷新");
+                    _wheelIdle.Stop();_wheelIdle.Start();
+                }
+                e.Handled=true;
+            }
+            return;
+        }
+        AttachPullTarget(scroll);
+        _wheel=Math.Min(WheelTriggerThreshold*2.2,_wheel+e.Delta);
+        _distance=WheelEquivalentDistance(_wheel);
+        ApplyPullOffsetImmediate(ComputeRubberBandOffset(_distance));
+        Hint(_wheel>=WheelTriggerThreshold?"松开刷新":"继续下拉刷新");
+        _wheelIdle.Stop();_wheelIdle.Start();
+        e.Handled=true;
     }
     private void Hint(string text)
     {
         _fadeHide.Stop();
         _hint.BeginAnimation(UIElement.OpacityProperty,null);
-        var spinner=text.Length>0 && (_refreshing || _pull || _wheel>0);
-        _hintText.Text=spinner?"":text;_hintText.Visibility=spinner?Visibility.Collapsed:Visibility.Visible;
+        var activePull=_pull || _wheel>0;
+        var spinner=text.Length>0 && (_refreshing || activePull);
+        _hintText.Text=text;_hintText.Visibility=text.Length>0?Visibility.Visible:Visibility.Collapsed;
+        _hintText.Margin=spinner?new Thickness(8,0,0,0):new Thickness(0);
         _refreshRing.Visibility=spinner?Visibility.Visible:Visibility.Collapsed;
-        _hint.Padding=spinner?new Thickness(10):new Thickness(18,10,18,10);
-        var visualOffset=_pull && !_refreshing?ComputeRubberBandOffset(_distance):0;
-        _hintOffset.Y=_pull && !_refreshing?Math.Clamp(visualOffset*0.52-16,-24,42):8;
-        var ready=_pull && _distance>=PullTriggerDistance;
-        _hintScale.ScaleX=_hintScale.ScaleY=ready?1.08:1.0;
-        _hint.Opacity=_pull && !_refreshing?Math.Clamp(_distance/(PullTriggerDistance*0.75),0.2,1):1;
+        _hint.Padding=spinner?new Thickness(14,8,16,8):new Thickness(18,10,18,10);
+        var visualOffset=activePull && !_refreshing?ComputeRubberBandOffset(_distance):0;
+        _hintOffset.Y=activePull && !_refreshing?Math.Clamp(visualOffset*0.52-16,-24,42):8;
+        var ready=activePull && (_distance>=PullTriggerDistance || _wheel>=WheelTriggerThreshold);
+        _hintScale.ScaleX=_hintScale.ScaleY=ready?1.06:1.0;
+        _hint.Opacity=activePull && !_refreshing?Math.Clamp(_distance/(PullTriggerDistance*0.6),0.35,1):1;
         _hint.Visibility=text.Length==0?Visibility.Collapsed:Visibility.Visible;
         System.Windows.Automation.AutomationProperties.SetName(_hint,text);
     }

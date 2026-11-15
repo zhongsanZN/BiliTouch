@@ -71,6 +71,7 @@ public partial class PlayerWindow
 
     private bool IsTouchControl(DependencyObject? source)
     {
+        if (IsInAnyPlayerPopup(source)) return true;
         while (source != null && source != VideoAreaRoot)
         {
             if (source == ControlBar || source == SkipNoticeBorder || source == EndOverlay ||
@@ -102,14 +103,16 @@ public partial class PlayerWindow
             return;
         }
         // Use the routed source, never IsMouseOver: a finger does not need a mouse cursor.
-        if (DanmakuAreaPopup?.IsOpen == true && !IsDescendantOf(e.OriginalSource as DependencyObject, BtnDanmakuArea) &&
-            !IsDescendantOf(e.OriginalSource as DependencyObject, ControlBar))
+        var touchSource = e.OriginalSource as DependencyObject;
+        if (IsInAnyPlayerPopup(touchSource)) return;
+        if (DanmakuAreaPopup?.IsOpen == true && !IsDescendantOf(touchSource, BtnDanmakuArea) &&
+            !IsDescendantOf(touchSource, ControlBar))
         {
             CloseDanmakuAreaPopup();
             e.Handled = true;
             return;
         }
-        if (IsTouchControl(e.OriginalSource as DependencyObject) || AnyPlayerPopupOpen || _mp == null) return;
+        if (IsTouchControl(touchSource) || AnyPlayerPopupOpen || _mp == null) return;
         // ★ 首次用手指点视频: 自动弹一次手势说明(控制栏那个「触控」按钮已经删了)。
         //   只弹一次; 这一次触摸**只用于展示**, 不继续走单击/长按 —— 否则同一帧里
         //   下面那段"点说明面板就收起"会立刻把它关掉(自己吃自己)。

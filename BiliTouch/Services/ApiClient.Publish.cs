@@ -305,12 +305,15 @@ public partial class ApiClient
     private async Task<(int code, string? msg, JsonElement? data)> PostFormJsonAsync(
         string url, Dictionary<string, string> ps, string? referer = null)
     {
+        var account = SessionManager.Instance.CaptureAccount();
+        if (!account.IsCurrent) return (-101, "账号已切换，请重试", null);
         var csrf = SessionManager.Instance.Current.BiliJct;
         if (string.IsNullOrEmpty(csrf)) return (-101, "未登录", null);
         ps["csrf"] = csrf;
         try
         {
             await EnsureWriteReadyAsync();
+            if (!account.IsCurrent) return (-101, "账号已切换，请重试", null);
             using var request = new HttpRequestMessage(HttpMethod.Post, url);
             request.Headers.TryAddWithoutValidation("Cookie", AppendFingerprint(SessionManager.Instance.BuildCookieHeader()));
             if (!string.IsNullOrEmpty(referer)) request.Headers.TryAddWithoutValidation("Referer", referer);
@@ -318,6 +321,7 @@ public partial class ApiClient
             request.Content = new FormUrlEncodedContent(ps);
             await ThrottleAsync();
             using var response = await _http.SendAsync(request);
+            if (!account.IsCurrent) return (-101, "账号已切换，请重试", null);
             var text = await response.Content.ReadAsStringAsync();
             using var document = JsonDocument.Parse(text);
             var root = document.RootElement;

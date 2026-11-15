@@ -17,6 +17,21 @@ public partial class DynamicDetailPage : UserControl
         ViewModel=new(item,repost);DataContext=ViewModel;
         Loaded+=async (_,_)=>{await ViewModel.InitializeAsync();ScheduleCommentsPrefetch();};
         ViewModel.PropertyChanged+=(_,e)=>{if(e.PropertyName==nameof(ViewModel.Loading) && !ViewModel.Loading)ScheduleCommentsPrefetch();};
+        ViewModel.CaptchaRequested += url => Svc.Navigate?.OpenWebViewWindow(url, "评论人机验证");
+        ViewModel.CommentPosted += c => CommentList.ScrollIntoView(c);
+        DetailEmotePicker.EmoteSelected += entry =>
+        {
+            var current = Composer.Text ?? "";
+            var start = Math.Clamp(Composer.SelectionStart, 0, current.Length);
+            var len = Math.Clamp(Composer.SelectionLength, 0, current.Length - start);
+            var next = current.Remove(start, len).Insert(start, entry.Text);
+            if (Composer.MaxLength > 0 && next.Length > Composer.MaxLength) return;
+            Composer.Text = next;
+            ViewModel.Draft = next;
+            Composer.CaretIndex = Math.Min(next.Length, start + entry.Text.Length);
+            DetailEmotePopup.IsOpen = false;
+            Composer.Focus();
+        };
     }
     private bool _prefetchScheduled;
     private static ScrollViewer? FindScroll(DependencyObject parent)
@@ -53,6 +68,12 @@ public partial class DynamicDetailPage : UserControl
     private async void OnRetry(object sender,RoutedEventArgs e)=>await ViewModel.RetryCommentsAsync();
     private async void OnReloadDetail(object sender,RoutedEventArgs e)=>await ViewModel.RefreshDetailAsync();
     private async void OnSend(object sender,RoutedEventArgs e)=>await ViewModel.SendAsync();
+    private void OnEmoteClick(object sender, RoutedEventArgs e)
+    {
+        DetailEmotePopup.IsOpen = !DetailEmotePopup.IsOpen;
+        if (DetailEmotePopup.IsOpen)
+            _ = DetailEmotePicker.EnsureLoadedAsync();
+    }
     private async void OnLike(object sender,RoutedEventArgs e) { if(sender is FrameworkElement {DataContext:CommentItem c})await ViewModel.LikeCommentAsync(c); }
     private async void OnReplies(object sender,RoutedEventArgs e) { if(sender is FrameworkElement {DataContext:CommentItem c})await ViewModel.LoadRepliesAsync(c); }
     private void OnReply(object sender,RoutedEventArgs e) { if(sender is FrameworkElement {DataContext:CommentItem c})ViewModel.ComposeReply(c);Composer.Focus(); }

@@ -46,6 +46,14 @@ public class NavigationDispatcher
             return;
         }
 
+        var cvId = UrlParser.ExtractArticleId(url);
+        var opusId = UrlParser.ExtractOpusId(url);
+        if (!string.IsNullOrEmpty(cvId) || !string.IsNullOrEmpty(opusId))
+        {
+            OpenArticle(cvId, opusId);
+            return;
+        }
+
         // 其他 URL 交给 WebView2 继续
         // 由调用方决定
     }
@@ -74,6 +82,31 @@ public class NavigationDispatcher
             var page=new DynamicDetailPage(item,repost);
             if(SvcWindow.Main is {IsLoaded:true} main)main.ShowEmbeddedPage(page,"动态详情");
             else new Window {Title="动态详情",Content=page,Width=1100,Height=800,Owner=_owner,Background=ThemeBackground()}.Show();
+        });
+    }
+
+    /// <summary>打开原生专栏 / Opus 阅读页</summary>
+    public void OpenArticle(string? cvId, string? opusId = null, string? title = null, BiliTouch.Models.DynamicItem? sourceItem = null)
+    {
+        if (string.IsNullOrWhiteSpace(cvId) && string.IsNullOrWhiteSpace(opusId)) return;
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            var page = new ArticlePage(cvId, opusId, title, sourceItem);
+            var pageTitle = !string.IsNullOrWhiteSpace(title) ? title! : "专栏阅读";
+            if (SvcWindow.Main is { IsLoaded: true } main) main.ShowEmbeddedPage(page, pageTitle);
+            else new Window { Title = pageTitle, Content = page, Width = 1140, Height = 820, Owner = _owner, Background = ThemeBackground() }.Show();
+        });
+    }
+
+    /// <summary>打开原生星创组（吉星派对同人站）浏览页</summary>
+    public void OpenStarParty()
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            var page = new StarPartyPage();
+            const string title = "星创组 · 吉星派对同人站";
+            if (SvcWindow.Main is { IsLoaded: true } main) main.ShowEmbeddedPage(page, title);
+            else new Window { Title = title, Content = page, Width = 1140, Height = 820, Owner = _owner, Background = ThemeBackground() }.Show();
         });
     }
 

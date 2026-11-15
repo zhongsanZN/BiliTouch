@@ -36,6 +36,9 @@
                 <RadioButton GroupName="SearchKind" Style="{StaticResource SettingsTabStyle}"
                              Content="用户" Margin="2,0,0,0"
                              IsChecked="{Binding IsUserKind, Mode=TwoWay}" />
+                <RadioButton GroupName="SearchKind" Style="{StaticResource SettingsTabStyle}"
+                             Content="专栏" Margin="2,0,0,0"
+                             IsChecked="{Binding IsArticleKind, Mode=TwoWay}" />
             </StackPanel>
         </Border>
 
@@ -141,6 +144,51 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <controls:UserCard />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- 专栏结果列表 -->
+                        <ItemsControl ItemsSource="{Binding ArticleResults}"
+                                      Visibility="{Binding IsArticleSearch, Converter={StaticResource BoolToVis}}"
+                                      Margin="28,4,28,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,0,0,10" Padding="14" CornerRadius="10" Cursor="Hand"
+                                            Background="{DynamicResource CardBackgroundBrush}"
+                                            BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1"
+                                            MouseLeftButtonUp="OnSearchArticleClick">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Width="140" Height="88" CornerRadius="6" ClipToBounds="True" Margin="0,0,14,0"
+                                                    Background="{DynamicResource PlaceholderBrush}"
+                                                    Visibility="{Binding HasCover, Converter={StaticResource BoolToVis}}">
+                                                <Image helpers:Cover.ImageDecodeWidth="360" helpers:Cover.ImageSource="{Binding Cover}"
+                                                       Stretch="UniformToFill" />
+                                            </Border>
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="SemiBold"
+                                                           TextTrimming="CharacterEllipsis" MaxHeight="24"
+                                                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                                                <TextBlock Text="{Binding Summary}" FontSize="12.5" Margin="0,5,0,0"
+                                                           TextWrapping="Wrap" MaxHeight="36" TextTrimming="CharacterEllipsis"
+                                                           Foreground="{DynamicResource TextSecondaryBrush}"
+                                                           Visibility="{Binding Summary, Converter={StaticResource StrToVis}}" />
+                                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                                    <TextBlock Text="{Binding MetaLine}" FontSize="12"
+                                                               Foreground="{DynamicResource TextTertiaryBrush}"
+                                                               Visibility="{Binding MetaLine, Converter={StaticResource StrToVis}}" />
+                                                    <TextBlock Text=" · " FontSize="12" Foreground="{DynamicResource TextTertiaryBrush}"
+                                                               Visibility="{Binding MetaLine, Converter={StaticResource StrToVis}}" />
+                                                    <TextBlock Text="{Binding StatLine}" FontSize="12"
+                                                               Foreground="{DynamicResource TextTertiaryBrush}" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>

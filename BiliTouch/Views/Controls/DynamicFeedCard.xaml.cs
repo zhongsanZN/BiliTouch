@@ -111,8 +111,16 @@ public partial class DynamicFeedCard : UserControl
             {
                 var url = node.JumpUrl.Length > 0 ? node.JumpUrl : node.OrigText;
                 if (url.StartsWith("//")) url = "https:" + url;
-                if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+                var cvId = BiliTouch.Utils.UrlParser.ExtractArticleId(url);
+                var opusId = BiliTouch.Utils.UrlParser.ExtractOpusId(url);
+                if (!string.IsNullOrEmpty(cvId) || !string.IsNullOrEmpty(opusId))
+                {
+                    Svc.Navigate?.OpenArticle(cvId, opusId, node.Text);
+                }
+                else if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+                {
                     Svc.Navigate?.OpenWebViewWindow(uri.AbsoluteUri, node.Text);
+                }
             }
             return;
         }
@@ -179,6 +187,7 @@ public partial class DynamicFeedCard : UserControl
             case DynamicKind.Forward:
                 // 点引用框: 原动态是视频就播, 其它进详情页
                 if (d.Original?.Video != null) DynamicActions.OpenVideo(d.Original);
+                else if (d.Original?.Kind == DynamicKind.Article) DynamicActions.OpenArticle(d.Original);
                 else if(d.Original!=null)DynamicActions.OpenDetail(d.Original);
                 break;
             default:
@@ -380,7 +389,8 @@ public partial class DynamicFeedCard : UserControl
         if (IsDetail || !IsClick(e) || e.Handled) return;
         if (DataContext is not DynamicItem d) return;
         // 作者名/头像有自己的点击(去个人主页), 那些事件已被子元素 Handled, 到不了这里
-        DynamicActions.OpenDetail(d);
+        if (d.Kind == DynamicKind.Article) DynamicActions.OpenArticle(d);
+        else DynamicActions.OpenDetail(d);
         e.Handled = true;
     }
 }
