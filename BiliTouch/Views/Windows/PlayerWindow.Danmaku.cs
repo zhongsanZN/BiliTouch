@@ -169,7 +169,10 @@ public partial class PlayerWindow
     /// </summary>
     private void CalibrateDanmakuClock(double mediaSeconds)
     {
-        _dmClockMedia = mediaSeconds;
+        // 时钟停着时直接对齐(起播/恢复前首次校准); 运行中走软校准消掉 4Hz 相位微抖(6a6e650)
+        _dmClockMedia = _dmClockRunning
+            ? Helpers.DanmakuMotion.Calibrate(DanmakuClock(), mediaSeconds)
+            : mediaSeconds;
         _dmClockStamp = _dmWatch.ElapsedMilliseconds;
         // ★ 顺便刷新倍速(这里读原生 Rate 是低频路径, 不违反"逐帧零 P/Invoke"那条铁律)。
         //   Rate 偶尔会返 0(切换/初始化的一瞬), 那时按 1x 走, 别让外推停摆。
@@ -912,6 +915,8 @@ public partial class PlayerWindow
             return;
         }
         if (_closing) return;
+        // 时钟冻结(暂停/缓冲)期间位置不变，直接退出避免逐帧空转重算几十条弹幕位移
+        if (!_dmClockRunning) return;
 
         // ★ 只读一次本地 Stopwatch, **一次原生调用都不做**(见 _dmWatch 那段说明)
         var now = DanmakuClock();

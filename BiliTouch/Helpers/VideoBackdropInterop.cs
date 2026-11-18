@@ -60,8 +60,12 @@ internal static class VideoBackdropInterop
 
     private delegate IntPtr WindowProc(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
-    /// <summary>进程级唯一的一支黑色 GDI 笔刷。类背景刷要求笔刷长期有效, 不能用完就删。</summary>
-    private static readonly IntPtr BlackBrush = CreateSolidBrush(0x000000);
+    /// <summary>
+    /// 进程级唯一的一支「近黑」(#010101) GDI 笔刷。类背景刷要求笔刷长期有效, 不能用完就删。
+    /// ★ 必须用近黑 0x010101 而不是纯黑 0x000000: 开启云母/亚克力后整个客户区是 DWM 玻璃区,
+    ///   DWM 会把 GDI 绘制的纯黑当作全透明，导致视频黑边在 resize 时闪出材质/背景。
+    /// </summary>
+    private static readonly IntPtr LetterboxBrush = CreateSolidBrush(0x010101);
 
     /// <summary>子类化用的委托必须静态持有, 否则 GC 后窗口过程会指向已释放的托管对象。</summary>
     private static readonly WindowProc SubclassProcDelegate = SubclassWndProc;
@@ -134,54 +138,51 @@ internal static class VideoBackdropInterop
     private static extern IntPtr CreateSolidBrush(int color);
 
     /// <summary>
-    /// 把视频区原生宿主窗口处理成"黑底 + 不覆盖子窗口"。
-    ///
-    /// 传进来的是 HwndHost 的 `Static` 子窗口(见 <c>PlayerWindow.FindVideoStaticWindow</c>)。
-    /// 失败一律静默: 顶多还是白边/白闪, 绝不能因为"修外观"影响播放。
+    /// 把视频区原生宿主窗口处理成"近黑底(#010101) + 不覆盖子窗口"。
     /// </summary>
-    public static void EnsureBlackVideoHost(IntPtr staticHwnd)
+    public static void EnsureLetterboxVideoHost(IntPtr staticHwnd)
     {
         if (staticHwnd == IntPtr.Zero || !IsWindow(staticHwnd)) return;
 
         try
         {
-            // ① 先把类背景刷设黑: 这样后面加样式/重算非客户区时, 已经不会擦出白底。
+            // ① 先把类背景刷设成近黑: 这样后面加样式/重算非客户区时, 已经不会擦出白底。
             var parent = GetParent(staticHwnd);
-            SetClassBrushBlack(staticHwnd);
-            if (parent != IntPtr.Zero) SetClassBrushBlack(parent);
+            SetClassBrushLetterbox(staticHwnd);
+            if (parent != IntPtr.Zero) SetClassBrushLetterbox(parent);
 
             // ② 父窗口先裁剪子窗口: 否则父窗口重绘时会把白底刷到视频子窗口上。
             if (parent != IntPtr.Zero) AddClipChildren(parent);
             AddClipChildren(staticHwnd);
 
-            // ③ 子类化 Static: 它的客户区被擦/重绘时填黑。
+            // ③ 子类化 Static: 它的客户区被擦/重绘时填近黑。
             EnsureSubclassed(staticHwnd);
         }
         catch { /* 外观修复失败不影响播放 */ }
     }
 
+    /// <inheritdoc cref="EnsureLetterboxVideoHost"/>
+    public static void EnsureBlackVideoHost(IntPtr staticHwnd) => EnsureLetterboxVideoHost(staticHwnd);
+
     /// <summary>
-    /// 把视频区原生窗口的类背景刷设成纯黑并立刻擦一次(**兜底**)。
-    ///
-    /// ★ 2026-11-03 起主修是 <see cref="EnsureBlackVideoHost"/>; 这个方法保留给
-    ///   `Vout` 原生回调那种"不能做子类化/SetWindowPos"的线程使用, 以及作为额外兜底。
-    /// ★ 用 `SetClassLongPtr`(改类)而不是 `SetWindowLongPtr(GWL_HBRBACKGROUND)`:
-    ///   后者只在 Win32 子类化路径里有效, 对 WPF 的 HwndWrapper 不生效(实测)。
-    /// ★ 失败一律静默: 顶多还是白边, 绝不能因为"修外观"影响播放。
+    /// 把视频区原生窗口的类背景刷设成近黑并立刻擦一次(**兜底**)。
     /// </summary>
-    public static void PaintClassBackgroundBlack(IntPtr hwnd)
+    public static void PaintClassBackgroundLetterbox(IntPtr hwnd)
     {
         var target = GetParent(hwnd);      // 必须改父窗口的类背景刷
         if (target == IntPtr.Zero) target = hwnd;   // 兜底: 拿不到父级就试自己
-        SetClassBrushBlack(target);
+        SetClassBrushLetterbox(target);
     }
 
-    private static void SetClassBrushBlack(IntPtr hwnd)
+    /// <inheritdoc cref="PaintClassBackgroundLetterbox"/>
+    public static void PaintClassBackgroundBlack(IntPtr hwnd) => PaintClassBackgroundLetterbox(hwnd);
+
+    private static void SetClassBrushLetterbox(IntPtr hwnd)
     {
-        if (hwnd == IntPtr.Zero || BlackBrush == IntPtr.Zero) return;
+        if (hwnd == IntPtr.Zero || LetterboxBrush == IntPtr.Zero) return;
         try
         {
-            SetClassLongPtr(hwnd, GclpHbrBackground, BlackBrush);
+            SetClassLongPtr(hwnd, GclpHbrBackground, LetterboxBrush);
             // 立刻擦一次: 用户报的就是"一直白着", 不能等下一次重绘
             InvalidateRect(hwnd, IntPtr.Zero, true);
             UpdateWindow(hwnd);
@@ -245,9 +246,9 @@ internal static class VideoBackdropInterop
 
     private static void FillClientRect(IntPtr hwnd, IntPtr hdc)
     {
-        if (hdc == IntPtr.Zero || BlackBrush == IntPtr.Zero) return;
+        if (hdc == IntPtr.Zero || LetterboxBrush == IntPtr.Zero) return;
         if (GetClientRect(hwnd, out var rc))
-            FillRect(hdc, ref rc, BlackBrush);
+            FillRect(hdc, ref rc, LetterboxBrush);
     }
 
     /// <summary>

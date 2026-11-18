@@ -292,7 +292,7 @@
                                         <helpers:SkinGlyph Kind="DanmakuSettings" IconSize="24" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White"><TextBlock Text="弹幕设置" Foreground="#F2FFFFFF"/></helpers:SkinGlyph>
                                     </Button>
                                     <Popup x:Name="LiveSettingsPopup" PlacementTarget="{Binding ElementName=LiveSettingsButton}"
-                                           Placement="Top" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
+                                           Placement="Top" StaysOpen="True" AllowsTransparency="True" PopupAnimation="None">
                                         <Border Background="#F0202226" BorderBrush="#33FFFFFF" BorderThickness="1"
                                                 CornerRadius="10" Padding="12,10" Width="248">
                                             <StackPanel>
@@ -303,6 +303,7 @@
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0" Text="显示区域" Style="{StaticResource DanmakuRowLabelStyle}"/>
                                                     <Slider Grid.Column="1" x:Name="AreaSetting" Style="{StaticResource PlayerSlider}"
+                                                            Focusable="False"
                                                             Minimum="25" Maximum="100" TickFrequency="25" IsSnapToTickEnabled="True"
                                                             Margin="6,0,6,0" ValueChanged="OverlaySettingChanged"/>
                                                     <TextBlock Grid.Column="2" x:Name="AreaValue" Text="25%"
@@ -314,6 +315,7 @@
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0" Text="不透明度" Style="{StaticResource DanmakuRowLabelStyle}"/>
                                                     <Slider Grid.Column="1" x:Name="OpacitySetting" Style="{StaticResource PlayerSlider}"
+                                                            Focusable="False"
                                                             Minimum="20" Maximum="100" TickFrequency="10" IsSnapToTickEnabled="True"
                                                             Margin="6,0,6,0" ValueChanged="OverlaySettingChanged"/>
                                                     <TextBlock Grid.Column="2" x:Name="OpacityValue" Text="80%"
@@ -325,6 +327,7 @@
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0" Text="字号" Style="{StaticResource DanmakuRowLabelStyle}"/>
                                                     <Slider Grid.Column="1" x:Name="FontSetting" Style="{StaticResource PlayerSlider}"
+                                                            Focusable="False"
                                                             Minimum="50" Maximum="200" TickFrequency="25" IsSnapToTickEnabled="True"
                                                             Margin="6,0,6,0" ValueChanged="OverlaySettingChanged"/>
                                                     <TextBlock Grid.Column="2" x:Name="FontValue" Text="100%"
@@ -336,6 +339,7 @@
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0" Text="速度" Style="{StaticResource DanmakuRowLabelStyle}"/>
                                                     <Slider Grid.Column="1" x:Name="SpeedSetting" Style="{StaticResource PlayerSlider}"
+                                                            Focusable="False"
                                                             Minimum="0" Maximum="4" TickFrequency="1" IsSnapToTickEnabled="True"
                                                             Margin="6,0,6,0" ValueChanged="OverlaySettingChanged"/>
                                                     <TextBlock Grid.Column="2" x:Name="SpeedValue" Text="适中"
@@ -344,9 +348,26 @@
                                                 <CheckBox x:Name="ColorSetting" Style="{StaticResource LabeledCheckBoxStyle}" Focusable="False"
                                                           Content="彩色弹幕" Margin="0,12,0,0"
                                                           Foreground="#E6FFFFFF" Checked="ColorSettingChanged" Unchecked="ColorSettingChanged"/>
-                                                <CheckBox x:Name="OutlineSetting" Style="{StaticResource LabeledCheckBoxStyle}" Focusable="False"
-                                                          Content="弹幕描边" Margin="0,8,0,0"
-                                                          Foreground="#E6FFFFFF" Checked="OutlineSettingChanged" Unchecked="OutlineSettingChanged"/>
+                                                <Grid Margin="0,12,0,0" Background="Transparent" Cursor="Hand"
+                                                      TouchDown="OnLiveOutlineRowTouchDown"
+                                                      TouchUp="OnLiveOutlineRowTouchUp"
+                                                      MouseLeftButtonUp="OnLiveOutlineRowClick">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="64" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="弹幕描边" Style="{StaticResource DanmakuRowLabelStyle}" />
+                                                    <TextBlock Grid.Column="1" x:Name="OutlineStateText" Text="已关闭"
+                                                               FontSize="11" Foreground="#99FFFFFF"
+                                                               VerticalAlignment="Center" HorizontalAlignment="Right"
+                                                               Margin="0,0,8,0" />
+                                                    <CheckBox Grid.Column="2" x:Name="OutlineSetting"
+                                                              Style="{StaticResource SettingsToggleStyle}" Focusable="False"
+                                                              AutomationProperties.Name="弹幕描边"
+                                                              VerticalAlignment="Center" HorizontalAlignment="Right"
+                                                              Checked="OutlineSettingChanged" Unchecked="OutlineSettingChanged"/>
+                                                </Grid>
                                                 <TextBlock Text="屏蔽词沿用设置页中的弹幕规则" FontSize="11"
                                                            Foreground="#80FFFFFF" Margin="0,10,0,0" TextWrapping="Wrap"/>
                                             </StackPanel>

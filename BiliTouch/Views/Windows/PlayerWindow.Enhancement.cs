@@ -42,7 +42,7 @@ public partial class PlayerWindow
     VideoView.MediaPlayer=null;
     await Task.Run(old.Dispose);if(_closing)break;
     _libVLC=core;CreateNativeVideoPlayer();_mp.EnableHardwareDecoding=VideoDecode.HardwareEnabled;_mp.Volume=_volumeCache;
-    _resumeAfterSwitchMs=position;_pauseAfterEnhancementSwitch=paused;
+    _resumeAfterSwitchMs=position;_resumeByStartTime=false;_pauseAfterEnhancementSwitch=paused;
     if(!string.IsNullOrEmpty(_lastPlayUrl)){ShowLoading("正在切换画质增强…");PlayMedia(BuildMedia(_isListenMode?_listenAudioUrl??_lastPlayUrl:_lastPlayUrl,_isListenMode?null:_lastAudioUrl));_mp.SetRate(rate);}
     UpdateEnhancementButton();
    }while(_enhancementQueued && !_closing);

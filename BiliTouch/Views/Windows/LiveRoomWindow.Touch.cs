@@ -15,7 +15,14 @@ public partial class LiveRoomWindow
         Stylus.SetIsPressAndHoldEnabled(VideoOverlay, false);
         Stylus.SetIsFlicksEnabled(VideoOverlay, false);
         VideoOverlay.PreviewTouchDown += (_, e) => {
-            if (e.OriginalSource is DependencyObject source && IsInsideControls(source)) return;
+            var source = e.OriginalSource as DependencyObject;
+            if (IsInsideControls(source)) return;
+            if (LiveSettingsPopup?.IsOpen == true)
+            {
+                LiveSettingsPopup.IsOpen = false;
+                e.Handled = true;
+                return;
+            }
             var point = e.GetTouchPoint(VideoOverlay).Position;
             _liveFingers[e.TouchDevice.Id] = point;
             VideoOverlay.CaptureTouch(e.TouchDevice);

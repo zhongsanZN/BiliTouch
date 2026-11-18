@@ -89,4 +89,32 @@ public static class UrlParser
             return null;
         }
     }
+
+    /// <summary>
+    /// 从完整 URL(或带 <c>//</c> 的 URL)的查询串中读取一个整数参数(例如 playurl 的 <c>deadline</c>)。
+    /// 找不到、格式无效或 URL 解析失败一律返回 null。
+    /// </summary>
+    public static long? ExtractQueryLong(string? urlOrUri, string paramName)
+    {
+        if (string.IsNullOrEmpty(urlOrUri) || string.IsNullOrEmpty(paramName)) return null;
+        if (!TryParseUri(urlOrUri, out var uri)) return null;
+        try
+        {
+            var q = uri.Query.TrimStart('?');
+            foreach (var pair in q.Split('&', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var eq = pair.IndexOf('=');
+                if (eq < 0) continue;
+                var key = Uri.UnescapeDataString(pair[..eq]);
+                if (!string.Equals(key, paramName, StringComparison.Ordinal)) continue;
+                var raw = Uri.UnescapeDataString(pair[(eq + 1)..]);
+                return long.TryParse(raw, out var value) ? value : null;
+            }
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

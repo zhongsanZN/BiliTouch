@@ -71,12 +71,15 @@ public partial class WindowButtons : UserControl
 
     private void OnMinClick(object sender, RoutedEventArgs e)
     {
-        if (_win != null) _win.WindowState = WindowState.Minimized;
+        if (_win == null) return;
+        (_win as FluentWindow)?.NotifyStateTransitionStarting();
+        _win.WindowState = WindowState.Minimized;
     }
 
     private void OnMaxClick(object sender, RoutedEventArgs e)
     {
         if (_win == null) return;
+        (_win as FluentWindow)?.NotifyStateTransitionStarting();
         _win.WindowState = _win.WindowState == WindowState.Maximized
             ? WindowState.Normal
             : WindowState.Maximized;

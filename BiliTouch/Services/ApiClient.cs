@@ -61,6 +61,11 @@ public partial class ApiClient
     private string? _buvid3;
     private string? _buvid4;
 
+    /// <summary>
+    /// 设备指纹领取的串行闸(借鉴上游 6a6e650): 进直播间并行拉流与连弹幕等并发路径不会双发 spi 互相覆盖。
+    /// </summary>
+    private readonly SemaphoreSlim _buvidGate = new(1, 1);
+
     internal const string DynamicFeatures = "itemOpusStyle,listOnlyfans,opusBigCover,onlyfansVote,forwardListHidden,decorationCard";
 
     private readonly object _emoteCacheGate = new();
@@ -306,25 +311,24 @@ public partial class ApiClient
         // 内存里这一对齐全, 直接用
         if (!string.IsNullOrEmpty(_buvid3) && !string.IsNullOrEmpty(_buvid4)) return;
 
-        // 不全就先把本地存的补进来(buvid3 / buvid4 都可能只缺一个)
-        var sess = SessionManager.Instance.Current;
-        _buvid3 ??= sess.Buvid3;
-        _buvid4 ??= sess.Buvid4;
-
-        // 补齐后完整了 —— 不需要再打网络请求
-        if (!string.IsNullOrEmpty(_buvid3) && !string.IsNullOrEmpty(_buvid4)) return;
-
+        await _buvidGate.WaitAsync().ConfigureAwait(false);
         try
         {
+            if (!string.IsNullOrEmpty(_buvid3) && !string.IsNullOrEmpty(_buvid4)) return;
+
+            // 不全就先把本地存的补进来(buvid3 / buvid4 都可能只缺一个)
+            var sess = SessionManager.Instance.Current;
+            _buvid3 ??= sess.Buvid3;
+            _buvid4 ??= sess.Buvid4;
+
+            // 补齐后完整了 —— 不需要再打网络请求
+            if (!string.IsNullOrEmpty(_buvid3) && !string.IsNullOrEmpty(_buvid4)) return;
+
             var (code, _, data) = await GetJsonAsync(
-                "https://api.bilibili.com/x/frontend/finger/spi", null);
+                "https://api.bilibili.com/x/frontend/finger/spi", null).ConfigureAwait(false);
             if (code == 0 && data != null)
             {
                 // ★ 只补**缺的那一半**, 已有的绝不覆盖。
-                //   spi 一次给两个, 但已有的那个往往比它给的这个更"旧"、更被服务端认过 ——
-                //   假如本地只缺 buvid4(老版本升上来的用户就是这样), 无条件把 b_3 也收下,
-                //   就会出现"内存用新 buvid3、磁盘留旧 buvid3"的分叉:
-                //   下次启动读回来的是旧 buvid3 + 新 buvid4, 等于又换了一次设备身份。
                 if (string.IsNullOrEmpty(_buvid3) &&
                     data.Value.TryGetProperty("b_3", out var b3) &&
                     b3.ValueKind == JsonValueKind.String)
@@ -337,7 +341,7 @@ public partial class ApiClient
                     b4.ValueKind == JsonValueKind.String)
                 {
                     _buvid4 = b4.GetString();
-                    // ★ 必须落盘: 不存的话下次启动又变成一台新设备(见上面那段说明)
+                    // ★ 必须落盘: 不存的话下次启动又变成一台新设备
                     if (!string.IsNullOrEmpty(_buvid4)) SessionManager.Instance.SetBuvid4(_buvid4);
                 }
             }
@@ -345,6 +349,10 @@ public partial class ApiClient
         catch
         {
             // 忽略
+        }
+        finally
+        {
+            _buvidGate.Release();
         }
     }
 
@@ -4024,6 +4032,48 @@ public partial class ApiClient
             referer: "https://www.bilibili.com/video/" + bvid);
         return (ok, ok ? err : FriendlyRiskMessage(err));
     }
+
+    public sealed record TripleLikeResult(bool Ok, string? Error, bool Like, bool Coin, bool Fav, int Multiply);
+
+    /// <summary>一键三连结果解析（无网络单测入口）。</summary>
+    internal static TripleLikeResult ParseTripleLikeResponse(int code, string? msg, JsonElement? data)
+    {
+        if (code != 0)
+        {
+            var err = FriendlyRiskMessage(string.IsNullOrWhiteSpace(msg) ? $"code {code}" : msg);
+            return new TripleLikeResult(false, err, false, false, false, 0);
+        }
+
+        if (data is { ValueKind: JsonValueKind.Object } d)
+        {
+            var like = GetBool(d, "like");
+            var coin = GetBool(d, "coin");
+            var fav = GetBool(d, "fav");
+            var multiply = Math.Max(0, GetInt(d, "multiply"));
+            return new TripleLikeResult(true, null, like, coin, fav, multiply);
+        }
+
+        return new TripleLikeResult(true, null, false, false, false, 0);
+    }
+
+    /// <summary>
+    /// 官方 Web 端一键三连接口：单次请求完成点赞 + 投币(最多 2 枚) + 收藏(默认收藏夹)。
+    /// 相比拆成多次 POST，服务端按实际状态决定每一项是否变更并统一过风控。
+    /// </summary>
+    public async Task<TripleLikeResult> TripleLikeAsync(string bvid)
+    {
+        if (string.IsNullOrWhiteSpace(bvid))
+            return new TripleLikeResult(false, "缺少视频 bvid", false, false, false, 0);
+
+        var (code, msg, data) = await PostFormJsonAsync(
+            "https://api.bilibili.com/x/web-interface/archive/like/triple",
+            new Dictionary<string, string> { ["bvid"] = bvid },
+            referer: "https://www.bilibili.com/video/" + bvid);
+        return ParseTripleLikeResponse(code, msg, data);
+    }
+
+    private static bool GetBool(JsonElement e, string name)
+        => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
 
     /// <summary>
     /// 查询与指定用户的关系(是否已关注)。同 <see cref="HasLikedAsync"/>: 2026-10-01 由

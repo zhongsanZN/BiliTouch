@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:BiliTouch.Views.Controls"
              xmlns:helpers="clr-namespace:BiliTouch.Helpers"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
              Background="Transparent">
 
     <Grid>
@@ -351,6 +352,41 @@
 
         <!-- 内置大图灯箱 -->
         <controls:InlineImageGallery x:Name="ScreenshotGallery" Grid.RowSpan="2" Visibility="Collapsed" />
+
+        <!-- 原生内嵌同人游戏运行台（无需弹出独立浏览器窗口） -->
+        <Grid x:Name="GameRunnerOverlay" Grid.Row="1" Visibility="Collapsed"
+              Background="{DynamicResource WindowBackgroundBrush}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Border Grid.Row="0" Padding="20,10"
+                    Background="{DynamicResource CardBackgroundBrush}"
+                    BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,0,1">
+                <DockPanel>
+                    <Button x:Name="BtnCloseGame" Content="← 退出游戏返回列表"
+                            Style="{StaticResource SubtleButtonStyle}"
+                            Click="OnCloseGameClick" Padding="12,5" MinHeight="32" />
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Content="重新加载" Style="{StaticResource SubtleButtonStyle}"
+                                Click="OnReloadGameClick" Margin="0,0,8,0" Padding="10,4" MinHeight="30" />
+                        <Button Content="独立窗口打开 ↗" Style="{StaticResource SubtleButtonStyle}"
+                                Click="OnPopoutGameClick" Padding="10,4" MinHeight="30" />
+                    </StackPanel>
+                    <TextBlock x:Name="GameRunnerTitleText" FontSize="15" FontWeight="SemiBold"
+                               VerticalAlignment="Center" Margin="14,0" TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource TextPrimaryBrush}" />
+                </DockPanel>
+            </Border>
+            <Grid Grid.Row="1" Background="#080B14">
+                <StackPanel x:Name="GameRunnerLoading" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <controls:LoadingRing Width="28" Height="28" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="GameRunnerStatusText" Text="正在启动同人游戏画布…"
+                               Margin="0,12,0,0" FontSize="13" Foreground="#CCFFFFFF" />
+                </StackPanel>
+                <wv2:WebView2 x:Name="GameWebView" Visibility="Collapsed" DefaultBackgroundColor="Black" />
+            </Grid>
+        </Grid>
 
         <!-- 底部原生 OST 迷你播放器 -->
         <Border x:Name="AudioPlayerBar" Grid.Row="2" Visibility="Collapsed"

@@ -127,6 +127,7 @@ public partial class PlayerWindow
 
         _sponsorHandled.Add(coverStart.Uuid);
         _resumeAfterSwitchMs = coverStart.EndMs;
+        _resumeByStartTime = false;
         _lastSkipSeg = coverStart;
         ShowSkipNotice(
             $"已跳过{coverStart.Label}  {VideoItem.FormatSeconds((int)coverStart.EndSec)}");

@@ -85,6 +85,8 @@ public partial class LiveRoomWindow : FluentWindow
         _player.Volume = Svc.Settings.PlayerVolume;
         VolumeSliderSync(Svc.Settings.PlayerVolume, updateSettings: false);
         PreviewKeyDown += OnKeyDown;
+        PreviewMouseDown += OnPreviewMouseDown;
+        PreviewTouchDown += OnPreviewTouchDown;
         Loaded += (_, _) => { Model.Start(); _health.Start(); SyncVolumeGlyph(); EnsureVolumePopupAnchor(); };
         SizeChanged += (_, _) =>
         {
@@ -106,6 +108,8 @@ public partial class LiveRoomWindow : FluentWindow
             _volumeHover = _volumePinned = false;
             if (!IsClosing) StartControlsCountdown();
         };
+        LiveSettingsPopup.Opened += (_, _) => _controlsTimer.Stop();
+        LiveSettingsPopup.Closed += (_, _) => { if (!IsClosing) StartControlsCountdown(); };
         QualityPopup.PlacementTarget = QualityButton;
         QualityPopup.Opened += (_, _) => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(RightAlignQualityPopup));
     }
@@ -197,9 +201,13 @@ public partial class LiveRoomWindow : FluentWindow
                 await Task.Run(() => _player.Stop());
                 if (!Current(roomRequest) || stream != _streamRequest) return;
                 using var media = new Media(_liveCore, result.url, FromType.FromLocation);
+                var liveCaching = BufferPolicy.Resolve(BufferMediaKind.Live, result.url, shortVideo: false,
+                    Svc.Settings.NetworkCachingMs, Svc.Settings.AutoBufferPolicy);
                 media.AddOption(":http-referrer=https://live.bilibili.com/");
-                media.AddOption(":http-user-agent=Mozilla/5.0");
-                media.AddOption(":network-caching=1000");
+                media.AddOption(":http-user-agent=" + HttpDefaults.UserAgent);
+                media.AddOption(":http-reconnect");
+                media.AddOption(":network-caching=" + liveCaching);
+                media.AddOption(":live-caching=" + liveCaching);
                 _paused = false; SetPauseGlyph(playing: true);
                 if (!_player.Play(media)) throw new InvalidOperationException("无法打开直播流");
                 _player.Volume = _muted ? 0 : Svc.Settings.PlayerVolume;
@@ -215,15 +223,75 @@ public partial class LiveRoomWindow : FluentWindow
     }
     private Window? _liveOverlayWindow;
     private DispatcherTimer? _liveBackdropGuard;
+    private DispatcherTimer? _liveBackdropResumeTimer;
+    private bool _liveBackdropSuspendQueued;
     private int _liveBackdropTicks;
+
+    private void SuspendLiveBackdropForResize()
+    {
+        if (IsClosing || BackdropSuspended || !IsBackdropMaterialActive) return;
+        SetBackdropSuspended(true);
+        ResumeLiveBackdropAfterResize();
+    }
+
+    private void QueueLiveBackdropSuspendForResize()
+    {
+        if (IsClosing || _liveBackdropSuspendQueued || BackdropSuspended) return;
+        _liveBackdropSuspendQueued = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            _liveBackdropSuspendQueued = false;
+            if (!IsClosing) SuspendLiveBackdropForResize();
+        }, DispatcherPriority.Render);
+    }
+
+    private void ResumeLiveBackdropAfterResize()
+    {
+        if (IsClosing || !BackdropSuspended) return;
+        _liveBackdropResumeTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
+        _liveBackdropResumeTimer.Tick -= OnLiveBackdropResumeTick;
+        _liveBackdropResumeTimer.Tick += OnLiveBackdropResumeTick;
+        _liveBackdropResumeTimer.Stop();
+        _liveBackdropResumeTimer.Start();
+    }
+
+    private void OnLiveBackdropResumeTick(object? sender, EventArgs e)
+    {
+        _liveBackdropResumeTimer?.Stop();
+        if (IsClosing) return;
+        SetBackdropSuspended(false);
+    }
+
+    protected override void OnWindowStateTransitionStarting()
+    {
+        base.OnWindowStateTransitionStarting();
+        SuspendLiveBackdropForResize();
+    }
+
+    protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
+    {
+        base.OnRenderSizeChanged(sizeInfo);
+        if (IsClosing || !IsLoaded || !IsVisible) return;
+        if (BackdropSuspended) { ResumeLiveBackdropAfterResize(); return; }
+        if (WindowState != WindowState.Minimized && IsBackdropMaterialActive)
+            QueueLiveBackdropSuspendForResize();
+    }
     private void HookLiveOverlayInput()
     {
         var overlay = LiveVideo.GetType().GetProperty("ForegroundWindow", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(LiveVideo) as Window;
         if (overlay == null || ReferenceEquals(overlay, _liveOverlayWindow)) return;
-        if (_liveOverlayWindow != null) { UnhookLiveTrackpad(); _liveOverlayWindow.PreviewKeyDown -= OnKeyDown; }
+        if (_liveOverlayWindow != null)
+        {
+            UnhookLiveTrackpad();
+            _liveOverlayWindow.PreviewKeyDown -= OnKeyDown;
+            _liveOverlayWindow.PreviewMouseDown -= OnPreviewMouseDown;
+            _liveOverlayWindow.PreviewTouchDown -= OnPreviewTouchDown;
+        }
         _liveOverlayWindow = overlay;
         overlay.ShowInTaskbar = false;
         overlay.PreviewKeyDown += OnKeyDown;
+        overlay.PreviewMouseDown += OnPreviewMouseDown;
+        overlay.PreviewTouchDown += OnPreviewTouchDown;
         HookLiveTrackpad(overlay);
         VideoOverlay.Focus();
     }
@@ -336,7 +404,7 @@ public partial class LiveRoomWindow : FluentWindow
     private void ChatScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (e.OriginalSource is not ScrollViewer scroll || e.VerticalChange == 0) return;
-        if (scroll.ScrollableHeight - scroll.VerticalOffset < 4)
+        if (e.ExtentHeightChange == 0 && e.VerticalChange > 0 && scroll.ScrollableHeight - scroll.VerticalOffset < 4)
         { _followLatest = true; _unread = 0; LatestButton.Visibility = Visibility.Collapsed; }
         else if (e.ExtentHeightChange == 0 && e.VerticalChange < 0) _followLatest = false;
     }
@@ -515,7 +583,7 @@ public partial class LiveRoomWindow : FluentWindow
     {
         if (_controlsHidden == hidden || IsClosing) return;
         _controlsHidden = hidden;
-        if (hidden) CloseVolumePopup();
+        if (hidden) { CloseVolumePopup(); LiveSettingsPopup.IsOpen = false; }
         LiveControls.IsHitTestVisible = !hidden;
         VideoOverlay.Cursor = hidden ? Cursors.None : Cursors.Arrow;
         var fade = new System.Windows.Media.Animation.DoubleAnimation(LiveControls.Opacity, hidden ? 0 : 1, TimeSpan.FromMilliseconds(hidden ? 180 : 140))
@@ -581,6 +649,7 @@ public partial class LiveRoomWindow : FluentWindow
         AreaSetting.Value = s.DanmakuAreaPercent; OpacitySetting.Value = s.DanmakuOpacityPercent;
         FontSetting.Value = s.DanmakuFontScalePercent; SpeedSetting.Value = s.DanmakuSpeedLevel;
         ColorSetting.IsChecked = s.DanmakuColorful; OutlineSetting.IsChecked = s.DanmakuOutline;
+        if (OutlineStateText != null) OutlineStateText.Text = s.DanmakuOutline ? "已开启" : "已关闭";
         AreaValue.Text = s.DanmakuAreaPercent + "%"; OpacityValue.Text = s.DanmakuOpacityPercent + "%";
         FontValue.Text = s.DanmakuFontScalePercent + "%"; SpeedValue.Text = DanmakuMotion.SpeedLabel(s.DanmakuSpeedLevel);
         Model.OverlayEnabled = s.DanmakuEnabled; OverlayOff.Visibility = Model.OverlayEnabled ? Visibility.Collapsed : Visibility.Visible;
@@ -589,13 +658,77 @@ public partial class LiveRoomWindow : FluentWindow
     }
     private void OverlaySettingsClick(object sender, RoutedEventArgs e)
     {
-        if (LiveSettingsPopup.IsOpen) { LiveSettingsPopup.IsOpen = false; return; }
+        if (LiveSettingsPopup.IsOpen) { CloseLiveSettingsPopup(); return; }
         LiveSettingsPopup.PlacementTarget = LiveSettingsButton;
         LiveSettingsPopup.IsOpen = true;
     }
+    private void CloseLiveSettingsPopup()
+    {
+        if (LiveSettingsPopup != null && LiveSettingsPopup.IsOpen)
+        {
+            if (Mouse.Captured is DependencyObject captured && IsInLivePopup(captured, LiveSettingsPopup))
+                Mouse.Capture(null);
+            LiveSettingsPopup.IsOpen = false;
+        }
+    }
+    private static bool IsLiveDescendantOf(DependencyObject? node, DependencyObject? ancestor)
+    {
+        if (ancestor == null) return false;
+        while (node != null)
+        {
+            if (ReferenceEquals(node, ancestor)) return true;
+            node = (node is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(node) : null)
+                   ?? LogicalTreeHelper.GetParent(node);
+        }
+        return false;
+    }
+    private static bool IsInLivePopup(DependencyObject? source, Popup? popup)
+        => source != null && popup != null &&
+           (ReferenceEquals(source, popup) || (popup.Child != null && IsLiveDescendantOf(source, popup.Child)));
+    private void OnLiveOutlineRowClick(object sender, MouseButtonEventArgs e)
+    {
+        if (OutlineSetting == null || IsLiveDescendantOf(e.OriginalSource as DependencyObject, OutlineSetting))
+            return;
+        OutlineSetting.IsChecked = OutlineSetting.IsChecked != true;
+        e.Handled = true;
+    }
+    private void OnLiveOutlineRowTouchDown(object? sender, TouchEventArgs e)
+    {
+        if (OutlineSetting == null) return;
+        e.Handled = true;
+    }
+    private void OnLiveOutlineRowTouchUp(object? sender, TouchEventArgs e)
+    {
+        if (OutlineSetting == null) return;
+        OutlineSetting.IsChecked = OutlineSetting.IsChecked != true;
+        TouchSupport.CancelPendingTap();
+        e.Handled = true;
+    }
+    private void DismissLiveSettingsIfOutside(DependencyObject? source)
+    {
+        if (LiveSettingsPopup?.IsOpen != true) return;
+        if (IsInLivePopup(source, LiveSettingsPopup)) return;
+        if (IsLiveDescendantOf(source, LiveSettingsButton)) return;
+        if (IsLiveDescendantOf(source, VideoOverlay) && !IsLiveDescendantOf(source, LiveControls)) return;
+        CloseLiveSettingsPopup();
+    }
+    private void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (IsClosing) return;
+        DismissLiveSettingsIfOutside(e.OriginalSource as DependencyObject);
+    }
+    private void OnPreviewTouchDown(object? sender, TouchEventArgs e)
+    {
+        if (IsClosing) return;
+        DismissLiveSettingsIfOutside(e.OriginalSource as DependencyObject);
+    }
     private void OverlaySettingChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => SaveOverlaySettings();
     private void ColorSettingChanged(object sender, RoutedEventArgs e) => SaveOverlaySettings();
-    private void OutlineSettingChanged(object sender, RoutedEventArgs e) => SaveOverlaySettings();
+    private void OutlineSettingChanged(object sender, RoutedEventArgs e)
+    {
+        if (OutlineStateText != null) OutlineStateText.Text = OutlineSetting?.IsChecked == true ? "已开启" : "已关闭";
+        SaveOverlaySettings();
+    }
     private void SaveOverlaySettings()
     {
         if (_syncingOverlay || _overlay == null || AreaSetting == null || FontSetting == null || SpeedSetting == null || ColorSetting == null || OutlineSetting == null || OpacitySetting == null) return;
@@ -632,15 +765,25 @@ public partial class LiveRoomWindow : FluentWindow
     }
     private void VideoMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.OriginalSource is DependencyObject hit && !IsInsideControls(hit)) VideoOverlay.Focus();
-        if (e.ClickCount == 2 && e.OriginalSource is DependencyObject source && !IsInsideControls(source))
+        var hitSource = e.OriginalSource as DependencyObject;
+        if (IsInLivePopup(hitSource, LiveSettingsPopup) || IsInLivePopup(hitSource, QualityPopup) || IsInLivePopup(hitSource, VolumePopup)) return;
+        if (LiveSettingsPopup?.IsOpen == true && !IsInsideControls(hitSource!))
+        {
+            CloseLiveSettingsPopup();
+            e.Handled = true;
+            return;
+        }
+        if (hitSource != null && !IsInsideControls(hitSource)) VideoOverlay.Focus();
+        if (e.ClickCount == 2 && hitSource != null && !IsInsideControls(hitSource))
         { ToggleFullscreen(); e.Handled = true; return; }
         // 单击(非双击)画面 = 控制栏显隐, 与播放器一致。
-        if (e.ClickCount == 1 && e.OriginalSource is DependencyObject single && !IsInsideControls(single))
+        if (e.ClickCount == 1 && hitSource != null && !IsInsideControls(hitSource))
         { ToggleControlsByClick(); e.Handled = true; }
     }
-    private bool IsInsideControls(DependencyObject source)
+    private bool IsInsideControls(DependencyObject? source)
     {
+        if (source == null) return false;
+        if (IsInLivePopup(source, LiveSettingsPopup) || IsInLivePopup(source, QualityPopup) || IsInLivePopup(source, VolumePopup)) return true;
         for (var d = source; d != null; d = d is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : null)
             if (ReferenceEquals(d, LiveControls) || d is ButtonBase or Slider or TextBoxBase) return true;
         return false;
@@ -649,6 +792,7 @@ public partial class LiveRoomWindow : FluentWindow
     private void ToggleFullscreen()
     {
         if (IsClosing) return;
+        SuspendLiveBackdropForResize();
         _full = !_full;
         if (_full) { _previousState = WindowState; _previousResize = ResizeMode; ResizeMode = ResizeMode.NoResize; MaximizeCoversTaskbar = true; SuppressAcrylicActivationSwap = true; DwmInterop.SuppressCaptionForFullscreen(this); }
         else { MaximizeCoversTaskbar = false; ResizeMode = _previousResize; SuppressAcrylicActivationSwap = false; DwmInterop.RestoreCaption(this); }
@@ -665,7 +809,11 @@ public partial class LiveRoomWindow : FluentWindow
         switch (e.Key)
         {
             case Key.F: ToggleFullscreen(); break;
-            case Key.Escape: if (_full) ToggleFullscreen(); else Close(); break;
+            case Key.Escape:
+                if (LiveSettingsPopup?.IsOpen == true) CloseLiveSettingsPopup();
+                else if (_full) ToggleFullscreen();
+                else Close();
+                break;
             case Key.Space: TogglePause(); break;
             case Key.M: _muted = !_muted; VolumeSliderSync((int)LiveVolume.Value, updateSettings: false); break;
             case Key.Enter: ToggleFillWindow(); break;
@@ -685,8 +833,15 @@ public partial class LiveRoomWindow : FluentWindow
                 IsClosing = true; ++_request; ++_streamRequest; _health.Stop(); _controlsTimer.Stop();
                 _volumeCloseTimer?.Stop();
                 _liveBackdropGuard?.Stop();
+                _liveBackdropResumeTimer?.Stop();
                 UnhookLiveTrackpad();
-                if (_liveOverlayWindow != null) { UnhookLiveTrackpad(); _liveOverlayWindow.PreviewKeyDown -= OnKeyDown; }
+                if (_liveOverlayWindow != null)
+                {
+                    UnhookLiveTrackpad();
+                    _liveOverlayWindow.PreviewKeyDown -= OnKeyDown;
+                    _liveOverlayWindow.PreviewMouseDown -= OnPreviewMouseDown;
+                    _liveOverlayWindow.PreviewTouchDown -= OnPreviewTouchDown;
+                }
                 LiveSettingsPopup.IsOpen = false; QualityPopup.IsOpen = false; VolumePopup.IsOpen = false;
                 Svc.Settings.DanmakuSettingsChanged -= ApplyOverlaySettings; Model.Dispose(); _chat.Dispose(); _overlay.Dispose();
                 _player.Playing -= OnPlaying; _player.Volume = 0; Hide(); _ = TeardownAsync();

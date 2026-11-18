@@ -101,6 +101,7 @@ public static class VlcCore
                 SettingsStore.Instance.NetworkCachingMs, SettingsStore.Instance.AutoBufferPolicy);
             var options = new List<string>{"--intf=dummy","--no-osd","--no-snapshot-preview","--network-caching="+caching};
             if(profile.Enabled) options.AddRange(profile.Options);
+            AppendOptionalDebugLogOptions(options);
             var instance = new LibVLC(options.ToArray());
             VideoEnhancement.Observe(instance,profile);
             VideoDecode.Observe(instance);
@@ -141,6 +142,7 @@ public static class VlcCore
                 "--intf=dummy", "--no-osd", "--no-snapshot-preview",
                 "--vout=vmem", "--network-caching=" + caching,
             };
+            AppendOptionalDebugLogOptions(options);
             _vmemInstance = new LibVLC(options.ToArray());
             VideoEnhancement.Observe(_vmemInstance, profile);
             VideoDecode.Observe(_vmemInstance);
@@ -149,6 +151,31 @@ public static class VlcCore
     }
 
     private static LibVLC? _vmemInstance;
+
+    /// <summary>
+    /// 可选 LibVLC 原生文件日志开关：设 <c>BILITOUCH_VLC_DEBUG=1</c> 或 <c>BILIDESK_VLC_DEBUG=1</c>
+    /// 时把 libvlc 原生日志落盘到 <see cref="AppPaths.DataDir"/> 下的 <c>vlc-native.log</c>，默认关闭。
+    /// </summary>
+    private static void AppendOptionalDebugLogOptions(List<string> options)
+    {
+        var enabled = Environment.GetEnvironmentVariable("BILITOUCH_VLC_DEBUG") == "1"
+                   || Environment.GetEnvironmentVariable("BILIDESK_VLC_DEBUG") == "1";
+        if (!enabled) return;
+
+        var added = new List<string>(3);
+        try
+        {
+            Directory.CreateDirectory(AppPaths.DataDir);
+            added.Add("--file-logging");
+            added.Add("--logfile=" + Path.Combine(AppPaths.DataDir, "vlc-native.log"));
+            added.Add("--verbose=2");
+            options.AddRange(added);
+        }
+        catch
+        {
+            // 数据目录不可写: 宁可不记日志, 也不能让播放器起不来
+        }
+    }
 
     /// <summary>
     /// 后台预热: 把原生库初始化 + 插件扫描的开销提前到应用启动阶段,

@@ -1638,18 +1638,40 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <!-- 点赞: 点过 = 图标和数字一起变红 -->
-                                    <Button x:Name="BtnLike" Style="{StaticResource PlayerActionBtn}"  Grid.Column="0"
-                                            Click="OnLikeClick" ToolTip="点赞 / 取消点赞">
-                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <Grid x:Name="LikeIconBox" Style="{StaticResource ActionIconBox}">
-                                                <helpers:SkinActionIcon Kind="Like" x:Name="ThemedLikeIcon" Data="{StaticResource LikeIconGeometry}"
-                                                      Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                                      Width="36" Height="36" Stretch="Uniform" VerticalAlignment="Center" />
-                                            </Grid>
-                                            <TextBlock x:Name="LikeLabel" Text="--"
-                                                       Style="{StaticResource ActionCountText}" />
-                                        </StackPanel>
+                                    <!-- 点赞: 短按点赞 / 取消点赞，长按满 2 秒触发一键三连（前 0.5 秒静默确认，后 1.5 秒 ProgressRing 扫满） -->
+                                    <Button x:Name="BtnLike" Style="{StaticResource PlayerActionBtn}" Grid.Column="0"
+                                            Stylus.IsPressAndHoldEnabled="False"
+                                            Click="OnLikeClick" ToolTip="点赞 (L)；长按一键三连"
+                                            PreviewMouseLeftButtonDown="OnTripleButtonPreviewMouseDown"
+                                            PreviewMouseLeftButtonUp="OnTripleButtonPreviewMouseUp"
+                                            MouseLeave="OnTripleButtonMouseLeave"
+                                            LostMouseCapture="OnTripleButtonLostMouseCapture"
+                                            PreviewTouchDown="OnTripleButtonPreviewTouchDown"
+                                            PreviewTouchMove="OnTripleButtonPreviewTouchMove"
+                                            PreviewTouchUp="OnTripleButtonPreviewTouchUp"
+                                            LostTouchCapture="OnTripleButtonLostTouchCapture">
+                                        <Grid>
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Grid x:Name="LikeIconBox" Style="{StaticResource ActionIconBox}">
+                                                    <helpers:SkinActionIcon Kind="Like" x:Name="ThemedLikeIcon" Data="{StaticResource LikeIconGeometry}"
+                                                          Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                          Width="36" Height="36" Stretch="Uniform" VerticalAlignment="Center" />
+                                                </Grid>
+                                                <TextBlock x:Name="LikeLabel" Text="--"
+                                                           Style="{StaticResource ActionCountText}" />
+                                            </StackPanel>
+                                            <!-- 「一键三连」徽章：三连演出后段浮现在按钮上方，随演出淡出，IsHitTestVisible=False 不挡触摸/鼠标。 -->
+                                            <Border x:Name="TripleComboBadge" Panel.ZIndex="10"
+                                                    HorizontalAlignment="Center" VerticalAlignment="Top"
+                                                    Margin="0,-24,0,0" Padding="8,2" CornerRadius="9"
+                                                    Background="#F43F5E" Opacity="0" IsHitTestVisible="False"
+                                                    RenderTransformOrigin="0.5,0.5">
+                                                <Border.RenderTransform>
+                                                    <ScaleTransform x:Name="TripleComboBadgeScale" ScaleX="0.8" ScaleY="0.8" />
+                                                </Border.RenderTransform>
+                                                <TextBlock Text="一键三连" FontSize="10" Foreground="White" />
+                                            </Border>
+                                        </Grid>
                                     </Button>
                                     <!-- 投币 -->
                                     <Button x:Name="BtnCoin" Style="{StaticResource PlayerActionBtn}"  Grid.Column="1"

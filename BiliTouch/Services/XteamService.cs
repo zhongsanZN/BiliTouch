@@ -204,6 +204,21 @@ public sealed partial class XteamService
         return await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
     }
 
+    public async Task<string?> ResolveShortLinkAsync(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return null;
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+            return resp.RequestMessage?.RequestUri?.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     internal static string ResolveUrl(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return "";

@@ -138,6 +138,12 @@ public partial class PlayerWindow : FluentWindow
     ///   (<see cref="_seekRebuildTried"/>)仍然只给一次, 防循环。
     /// </summary>
     private long _seekBounceSeenMs = -1;
+    private long _seekBounceAt = -1;
+    private long _seekIssuedAt = -1;
+    private long _lastSeekTargetMs = -1;
+    private bool _resumeByStartTime;
+    private bool _eofSeekRebuildTried;
+    private double _progressDragStartValue;
 
     /// <summary>
     /// seek 静音: 跳转后视频画面要等缓冲(几百 ms~几秒), 但音频解复用快, 会**先出声** ——
@@ -146,7 +152,12 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private int _seekMuteSavedVolume = -1;
     private const int SeekRetryMax = 2;
-    private const long SeekConfirmWindowMs = 900;  // Time 距目标多少毫秒内算"到位"
+    private const long SeekConfirmWindowMs = 900;  // 偏早/跑偏起步窗口(实际到位容差见 SeekSettledToleranceMs)
+    private const long SeekSettledToleranceMs = 3_000;
+    private const long SeekBounceConfirmMs = 1_500;
+    private const long SeekConfirmTimeoutMs = 3_500;
+    private const long SeekEofRecoverWindowMs = 15_000;
+    private const long SeekEofRecoverMinMissMs = 60_000;
 
     /// <summary>
     /// 判定"位置确实离开了跳转前那一点"的容差(毫秒)。
@@ -585,6 +596,8 @@ public partial class PlayerWindow : FluentWindow
         RightAlignPopup(SpeedPopup, SpeedBtn);
         QualityPopup.PlacementTarget = BtnQuality;
         DanmakuAreaPopup.PlacementTarget = BtnDanmakuArea;
+        HookPopupToggle(SpeedPopup, SpeedBtn);
+        HookPopupToggle(QualityPopup, BtnQuality);
         // 右缘对齐(弹层右缘 = 按钮右缘)。注意必须等弹层布局完成后再量宽:
         // Opened 那一刻 ActualWidth 还是 0, 偏移会算成正数把弹层推出窗口右缘(真机实证)。
         // Loaded 优先级在 Popup 自身布局跑完之后, 那时 ActualWidth 才可信。
@@ -1017,11 +1030,14 @@ public partial class PlayerWindow : FluentWindow
             if (CommentHint != null) CommentHint.Text = "直播没有评论区";
             UpdateButtonState();
 
+            // 提前启动直播弹幕 WebSocket 握手，与下方取流并发减少冷启动等待(借鉴 6a6e650)
+            StartLiveDanmaku(roomId);
             var (ok, err, url, actualQn, qnOptions) =
                 await Svc.Api.GetLivePlayUrlExAsync(roomId, _liveQn);
             if (_closing) return;
             if (!ok || string.IsNullOrEmpty(url))
             {
+                StopLiveDanmaku();
                 ShowFail(err ?? "无法获取直播流地址");
                 return;
             }
@@ -1050,6 +1066,7 @@ public partial class PlayerWindow : FluentWindow
                 ":no-video-title-show",
                 ":http-referrer=https://live.bilibili.com/" + roomId,
                 ":http-user-agent=" + PlayerUserAgent,
+                ":http-reconnect",
                 // 直播是持续流: 加大缓存, 别让 LibVLC 因为"看起来卡住"就早早判定结束
                 ":network-caching=" + liveCaching,
                 ":live-caching=" + liveCaching
@@ -1059,12 +1076,14 @@ public partial class PlayerWindow : FluentWindow
             // 直播是持续流, 没有可 seek 的时间轴; 标成"可靠源"让看门狗别去重建它
             _isReliableSeekSource = true;
             if (!PlayMedia(media))
+            {
+                StopLiveDanmaku();
                 ShowFail("直播流播放失败, 可能已经下播");
-            else
-                StartLiveDanmaku(roomId);
+            }
         }
         catch (Exception ex)
         {
+            StopLiveDanmaku();
             ShowFail("打开直播间失败: " + ex.Message);
         }
     }
@@ -1282,11 +1301,27 @@ public partial class PlayerWindow : FluentWindow
         // 清掉跳转看门狗与"提前结束自救"的上一片痕迹
         _pendingSeekMs = -1;
         _seekObservedMs = -1;
+        _seekFromMs = -1;
+        _seekElsewhereSeenMs = -1;
+        _seekBounceSeenMs = -1;
+        _seekBounceAt = -1;
+        _seekIssuedAt = -1;
+        _lastSeekTargetMs = -1;
+        _resumeByStartTime = false;
+        _eofSeekRebuildTried = false;
+        _progressDragStartValue = 0;
+        ResetRecoveryState();
         // ★ 长按快进也要收: 若停在长按态换片, MediaPlayer 上的速率会**跟着留到新片子**
         //   (速率是 MediaPlayer 的属性, 不随 Media 重置 —— 实测)。所以这里必须先恢复。
         //   顺带把 _longPressFired 清掉 —— 否则新片的第一次 Up 会走进"结束快进"分支。
         StopFastForward();
         _longPressFired = false;
+        _tripleComboAt = 0;
+        _tripleComboBusy = false;
+        _likePressCancelAt = 0;
+        ResetLikePressProgress();
+        _favoriteHeld = false;
+        _favoriteHoldTimer?.Stop();
         // 复位"该恢复到几倍速"的记录: 它只描述**本片**那次长按, 不该带到下一片
         // (下一片起播速率由 _mp.Rate 自己决定, 这里只是清掉上一个手势的账)。
         _rateBeforeFastForward = 1.0f;
@@ -1417,9 +1452,15 @@ public partial class PlayerWindow : FluentWindow
         nameof(_pendingSeekMs), nameof(_seekDeadline), nameof(_seekRetries),
         nameof(_seekObservedMs), nameof(_seekElsewhereSeenMs), nameof(_seekFromMs),
         nameof(_seekGraceUntil), nameof(_seekMuteSavedVolume), nameof(_isSeeking),
-        nameof(_seekRebuildTried), nameof(_seekBounceSeenMs), nameof(_audioHealCheckAt),
+        nameof(_seekRebuildTried), nameof(_seekBounceSeenMs), nameof(_seekBounceAt),
+        nameof(_seekIssuedAt), nameof(_lastSeekTargetMs), nameof(_resumeByStartTime),
+        nameof(_eofSeekRebuildTried), nameof(_progressDragStartValue), nameof(_audioHealCheckAt),
         nameof(_volumeRestoreDeadline), nameof(_volumeRestoreTries),
         nameof(_lastLoadingRevealMs),
+        // 卡顿自愈与地址保鲜
+        nameof(_playUrlDeadline), nameof(_playUrlFetchedAt), nameof(_playUrlRefreshedAt),
+        nameof(_urlRefreshAttemptAt), nameof(_urlRefreshInFlight), nameof(_stallRecoveryInFlight),
+        nameof(_errorRecoveryTried),
         // 卡顿检测
         nameof(_stallLastMs), nameof(_stallTicks),
         // 弹幕
@@ -1456,6 +1497,11 @@ public partial class PlayerWindow : FluentWindow
         nameof(_hasSeason), nameof(_switchingSeasonEpisode),
         // 分P 与合集是一对: 同样是"每片重算 + 换片闸门"。别只加一个漏一个。
         nameof(_hasPages), nameof(_switchingPage),
+        // 长按点赞一键三连 & 收藏长按选夹态（换片必须清，防止抑制窗口与进度残留跨片触发）
+        nameof(_favoriteHeld),
+        nameof(_tripleComboAt), nameof(_tripleComboBusy),
+        nameof(_likeDownTick), nameof(_likePressCancelAt), nameof(_likePressStartTick),
+        nameof(_likePressCommitted), nameof(_likeConfirmed), nameof(_activeLikeTouchId),
     };
 
     /// <summary>
@@ -1540,6 +1586,9 @@ public partial class PlayerWindow : FluentWindow
         //   用户展开了写长文, 换片/收面板再回来不该被打回 66px。发成功才归位(见 PostCommentAsync)。
         nameof(_composerExpanded),
         nameof(_nativeInputVersion),
+        nameof(_listenSwitching),
+        nameof(_modalResizeInProgress),
+        nameof(_backdropSuspendQueued),
     };
 
     /// <summary>
@@ -1877,6 +1926,7 @@ public partial class PlayerWindow : FluentWindow
             //   存 audioUrl 之后: 聆听态播纯音轨(省流量), 退出时用 _lastPlayUrl(本地文件)
             //   原样拼回 —— 两条路各用各的地址, 互不干扰。
             _listenAudioUrl = audioUrl;
+            RememberPlayUrlFreshness(!string.IsNullOrEmpty(main) ? main : audioUrl, backups);
             WriteLibVLCDebug(
                 $"\n[LoadVideo] bvid={_currentBvid} cid={_currentCid} qn={actualQn} url={url} audio={playAudio}\n");
 
@@ -2033,7 +2083,8 @@ public partial class PlayerWindow : FluentWindow
             // 顺序反了会把静音状态顶掉(声音先于画面出来)。
             try { _mp.Volume = _volumeCache; } catch { }
             LogAudioStateOnce();
-            HideLoading();
+            var willResumeSeek = _resumeAfterSwitchMs > 0;
+            if (!willResumeSeek) HideLoading();
             // 把 EOF 时切黑的手势层还原成近透明(见 OnEndReached 里切黑的原因):
             // 新 input 的 vout 已经起来, 后面要能看见画面。
             // ★★ 必须走 <see cref="ReleaseFullscreenCover"/> 而不是直接赋值(2026-10-13 修):
@@ -2086,13 +2137,16 @@ public partial class PlayerWindow : FluentWindow
             {
                 var resume = _resumeAfterSwitchMs;
                 _resumeAfterSwitchMs = 0;
-                try { _mp.Time = resume; } catch { }
-                // 走一次 MarkSeekIssued: 钉住进度条/时间显示, 并启动 seek 看门狗,
-                // 否则恢复进度那一下也可能被回写顶回 0(表现是"切完清晰度从头播")。
-                // ★ 不再叠"补跳"定时器(2026-10-17 手术删): 补跳那一套(反复重设 Time
-                //   + 要求连续 3 次稳住)实测会把位置冲过头, 而且主路已换成 seek 一次
-                //   就准的合流单流。万一这一次没接住, 交给下面的看门狗重建一次即可。
+                var byStartTime = _resumeByStartTime;
+                _resumeByStartTime = false;
+                if (!byStartTime) { try { _mp.Time = resume; } catch { } }
+                ShowLoading(BufferingText);
+                // 走一次 MarkSeekIssued: 钉住进度条/时间显示, 并启动 seek 看门狗
                 MarkSeekIssued(resume);
+            }
+            else
+            {
+                _resumeByStartTime = false;
             }
             if(_pauseAfterEnhancementSwitch){_pauseAfterEnhancementSwitch=false;_mp.SetPause(true);}
         }));
@@ -2113,6 +2167,7 @@ public partial class PlayerWindow : FluentWindow
         _mp.EncounteredError += (_, _) => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (_closing || !ReferenceEquals(player,_mp)) return;
+            if (TryAutoRecoverFromError()) return;
             HideLoading();
             FailOverlay.Visibility = Visibility.Visible;
             var msg = "视频播放出错, 请检查网络或尝试其他清晰度";
@@ -2207,7 +2262,7 @@ public partial class PlayerWindow : FluentWindow
     ///
     /// 本地路径必须走 FromPath: `new Uri("C:\...\x.mp4")` 会把盘符当成协议名, 抛 UriFormatException。
     /// </summary>
-    private Media BuildMedia(string url, string? audioUrl)
+    private Media BuildMedia(string url, string? audioUrl, long startMs = 0)
     {
         // B站 CDN 校验 Referer 和 User-Agent
         var options = new List<string>
@@ -2215,6 +2270,16 @@ public partial class PlayerWindow : FluentWindow
             ":http-referrer=https://www.bilibili.com/",
             ":http-user-agent=" + PlayerUserAgent
         };
+
+        var isRemoteHttp = url.StartsWith("http", StringComparison.OrdinalIgnoreCase);
+        if (isRemoteHttp)
+        {
+            // HTTP 长连接被 CDN 静默掐断后允许 VLC 自动重连(issue #81 第一道防线)
+            options.Add(":http-reconnect");
+            if (startMs > 0)
+                options.Add(":start-time=" +
+                            (startMs / 1000.0).ToString("0.###", CultureInfo.InvariantCulture));
+        }
 
         // Upstream v1.6.3: libvlc's MP4 demux drops the last fMP4 fragment.
         // Use avformat on every VOD source; existing seek recovery remains in place.
@@ -2251,7 +2316,9 @@ public partial class PlayerWindow : FluentWindow
         // ★ 2026-11-01: 值不再直接取用户设置 —— 统一走 BufferPolicy(自动/手动两档),
         //   直播/自动档的规则见 Services/BufferPolicy.cs。
         var isShortVideo = _totalMs > 0 && _totalMs <= 60_000;
-        var kind = string.IsNullOrEmpty(audioUrl) ? BufferMediaKind.VodSingle : BufferMediaKind.VodDash;
+        var kind = isListenAudio ? BufferMediaKind.ListenAudio
+            : string.IsNullOrEmpty(audioUrl) ? BufferMediaKind.VodSingle
+            : BufferMediaKind.VodDash;
         var cachingMs = BufferPolicy.Resolve(kind, url, isShortVideo,
             Svc.Settings.NetworkCachingMs, Svc.Settings.AutoBufferPolicy);
         WriteLibVLCDebug($"[BufferPolicy] kind={kind} short={isShortVideo} nc={cachingMs}ms " +
@@ -2753,6 +2820,7 @@ public partial class PlayerWindow : FluentWindow
     private void UpdateProgressUi()
     {
         if (_closing || _mp == null) return;
+        MaybeRefreshPlayUrl();
 
         // 宽限期(SeekGraceMs): 这段时间内不回写进度条。等待期已由下面的看门狗分支挡住,
         // 这里只作为"看门狗提前放行"时的兜底 —— 见 SeekGraceMs 的说明。
@@ -2812,21 +2880,28 @@ public partial class PlayerWindow : FluentWindow
             //   要认账并恢复播放; 这里判"偏到天边去了"(整体失效), 要当机立断换 input。
             if (!settled && !landedElsewhere && farFromBoth && !_seekRebuildTried)
             {
-                if (_seekBounceSeenMs >= 0 && time != _seekBounceSeenMs)
+                if (_seekBounceSeenMs < 0)
+                {
+                    _seekBounceSeenMs = time;
+                    _seekBounceAt = now;
+                }
+                else if (now - _seekBounceAt >= SeekBounceConfirmMs)
                 {
                     _seekRebuildTried = true;
                     var bounceTarget = _pendingSeekMs;
-                    ClearSeekWatchdog();
+                    var bounceFrom = _seekFromMs;
+                    ShowLoading("正在跳转…");
+                    ClearSeekWatchdog(hideBuffering: false);
                     WriteLibVLCDebug(
-                        $"[Seek] 落点弹回别处(time={time}ms target={bounceTarget}ms from={_seekFromMs}ms) → 重建 Media\n");
+                        $"[Seek] 落点弹回别处(time={time}ms target={bounceTarget}ms from={bounceFrom}ms) → 重建 Media\n");
                     RebuildMediaAndSeek(bounceTarget);
                     return;
                 }
-                if (_seekBounceSeenMs < 0) _seekBounceSeenMs = time;
             }
             else if (!farFromBoth)
             {
                 _seekBounceSeenMs = -1;
+                _seekBounceAt = -1;
             }
 
             _seekObservedMs = time;
@@ -2841,25 +2916,17 @@ public partial class PlayerWindow : FluentWindow
                 {
                     // seek 指令被 LibVLC 丢了: 重发一次(重发后位置会被重新 ack, 观察值也要清)
                     _seekRetries++;
-                    _seekDeadline = now + 2500;
+                    _seekDeadline = now + SeekConfirmTimeoutMs;
                     _seekObservedMs = -1;
                     try { _mp.Time = _pendingSeekMs; } catch { }
                 }
                 else if (!_seekRebuildTried && !_isReliableSeekSource &&
                          !string.IsNullOrEmpty(_lastPlayUrl))
                 {
-                    // ★★★ 2026-10-17 手术: 重发也救不回来时**重建一次**, 而不是收手。
-                    //
-                    //   实测(探针 bd-probe-muxed5, DASH+slave): 同一路连跳 90%/55%/80%
-                    //   全部被 libvlc 丢掉(偏差 -1180s/-590s/-910s), 而"重发"实测同样无效
-                    //   —— 那条 input 的解复用器已经认死了, 再发几次 Time 都一样。
-                    //   重建 = 起一条全新 input, 这正是"换片/切清晰度"那条一直好用的路。
-                    //
-                    //   只对**不可靠源**做: 可靠源(合流单流)本就一发到位, 真走到这里
-                    //   说明是网络卡顿, 重建只会白白打断播放。
                     _seekRebuildTried = true;
                     var target = _pendingSeekMs;
-                    ClearSeekWatchdog();
+                    ShowLoading("正在跳转…");
+                    ClearSeekWatchdog(hideBuffering: false);
                     RebuildMediaAndSeek(target);
                 }
                 else
@@ -2867,7 +2934,7 @@ public partial class PlayerWindow : FluentWindow
                     ClearSeekWatchdog();
                 }
             }
-            else if (now - (_seekDeadline - 2500) > SeekBufferingDelayMs &&
+            else if (now - (_seekDeadline - SeekConfirmTimeoutMs) > SeekBufferingDelayMs &&
                      LoadingOverlay != null && LoadingText != null &&
                      LoadingOverlay.Visibility == Visibility.Collapsed &&
                      !_isLive && !_isLocalPlayback)
@@ -3002,22 +3069,23 @@ public partial class PlayerWindow : FluentWindow
     /// <param name="paused">播放器当前是否处于暂停/停止态</param>
     private static bool IsSeekSettled(long timeMs, long targetMs, long observedMs, bool paused)
     {
-        if (Math.Abs(timeMs - targetMs) > SeekConfirmWindowMs) return false;
+        if (Math.Abs(timeMs - targetMs) > SeekSettledToleranceMs) return false;
         if (paused) return true;
         return observedMs >= 0 && timeMs != observedMs;
     }
 
     /// <summary>跳转确认到位(或放弃重试)后收尾: 关掉"正在缓冲"提示, 清掉待确认目标</summary>
-    private void ClearSeekWatchdog()
+    private void ClearSeekWatchdog(bool hideBuffering = true)
     {
         _pendingSeekMs = -1;
         _seekObservedMs = -1;
         _seekFromMs = -1;
         _seekElsewhereSeenMs = -1;
         _seekBounceSeenMs = -1;
+        _seekBounceAt = -1;
         if (_progressTimer != null) _progressTimer.Interval = ProgressTickIdle;
         RestoreVolumeAfterSeek();
-        HideBufferingIfShown();
+        if (hideBuffering) HideBufferingIfShown();
         // ★ 2026-10-31: 到位这一刻正是"音轨偶发没跟上"的暴露点, 顺手做一次自愈检查
         //   (见 HealAudioIfDead —— 命中才动作, 不命中零开销)。
         HealAudioIfDead("seek-settled");
@@ -3230,11 +3298,11 @@ public partial class PlayerWindow : FluentWindow
     //    代价只有松手后零点几秒静音 —— 换 seek 式反而会把顺滑度整个丢掉(实测用户反馈"画面和音频均卡顿")。
 
 
-    /// <summary>当前遮罩是不是我们自己弹的"正在缓冲"(据此判断能不能收掉)</summary>
+    /// <summary>当前遮罩是不是我们自己弹的"正在缓冲/重连"(据此判断能不能收掉)</summary>
     private bool IsShowingBuffering()
         => LoadingOverlay != null && LoadingText != null &&
            LoadingOverlay.Visibility == Visibility.Visible &&
-           LoadingText.Text == BufferingText;
+           IsStallOverlayText(LoadingText.Text);
 
     /// <summary>
     /// 收起"正在缓冲"遮罩 —— **只收这一种**。
@@ -3271,31 +3339,31 @@ public partial class PlayerWindow : FluentWindow
         if (_isLive || _isLocalPlayback || _ended || _mp == null || _mp.Length <= 0)
         {
             _stallTicks = 0;
+            _stallPolicy.OnUnfrozen();
             return;
         }
 
-        // 暂停时位置本来就不动; 拖动/跳转宽限期内同理 —— 都不算卡顿
-        // ★ 2026-10-16: 这里**不再**豁免长按快进。那条豁免是 seek 式方案加的(那时我们自己
-        //   每 400ms 发一次 seek, 位置会一阵阵停住)。改回 SetRate 后位置照常推进
-        //   (只是快 2 倍)—— 与"倍速按钮 2x"完全同款, 那个从来没豁免过。
-        //   留着反而会掩盖长按期间真实的卡顿。
-        if (!_mp.IsPlaying || _isSeeking || inSeekGrace || _pendingSeekMs >= 0)
+        // 暂停/停止时位置本来就不动; 拖动/跳转宽限期与刚发完 seek 的 2s 冷却期同理
+        var state = SafePlayerState();
+        var nowTick = Environment.TickCount64;
+        var inPostSeekCooldown = _seekIssuedAt > 0 && nowTick - _seekIssuedAt < 2_000;
+        if (state is VLCState.Paused or VLCState.Stopped or VLCState.Ended ||
+            _isSeeking || inSeekGrace || inPostSeekCooldown || _pendingSeekMs >= 0)
         {
             _stallTicks = 0;
+            _stallPolicy.OnUnfrozen();
+            if (state == VLCState.Paused) HideBufferingIfShown();
             return;
         }
 
-        // ★ 结尾豁免(2026-10-01, 用户实测"长视频最后五秒弹'正在缓冲'"): 剩余不足
-        // TailQuietZoneMs 时不再报缓冲。DASH 音视频是两路独立流, 长度略有差异,
-        // 短的那路数据先耗尽时 Time 会停几秒等另一路 —— 这是"快播完了"的正常形态,
-        // 不是网络卡顿(三分钟以下的视频走本地合流单文件没有双流, 所以从来不出这个提示)。
-        // 就算真是网络慢, 结尾几秒也没有"等它缓冲好"的价值, EndReached 马上会来收场。
+        // 结尾静默区豁免
         var now = _mp.Time;
         var remainingMs = _mp.Length - now;
         if (remainingMs < TailQuietZoneMs)
         {
             _stallTicks = 0;
             _stallLastMs = now;
+            _stallPolicy.OnAdvance();
             HideBufferingIfShown();
             return;
         }
@@ -3303,42 +3371,51 @@ public partial class PlayerWindow : FluentWindow
         if (_stallLastMs >= 0 && Math.Abs(now - _stallLastMs) < StallIdleToleranceMs)
         {
             _stallTicks++;
-            if (_stallTicks >= StallTicksToReport && LoadingOverlay != null &&
-                LoadingOverlay.Visibility != Visibility.Visible)
+            if (_stallTicks >= StallTicksToReport)
             {
-                // 遮罩上已经有别的内容(切清晰度等)就不抢, 免得把对方的文案顶掉
-                ShowLoading(BufferingText);
-                // 给 BufferPolicy 记一笔(按 CDN host 归因): 同一线路 60s 内卡 2 次,
-                // 后续媒体自动加深 1s 预读 —— 只影响下一条, 不动当前在播的源。
-                BufferPolicy.ReportStall(_lastPlayUrl);
+                if (!_stallPolicy.GaveUp && LoadingOverlay != null &&
+                    LoadingOverlay.Visibility != Visibility.Visible)
+                {
+                    ShowLoading(BufferingText);
+                    BufferPolicy.ReportStall(CurrentMediaUrl);
+                }
+
+                var recoverable = !_stallRecoveryInFlight &&
+                                  state is VLCState.Playing or VLCState.Buffering or VLCState.Opening;
+                var action = _stallPolicy.Tick(nowTick, frozen: true, recoverable);
+                if (action != StallRecoveryAction.None) HandleStallAction(action, now);
             }
             return;
         }
 
-        // 位置推进了 -> 卡顿结束。只收我们自己弹的那张遮罩
+        // 位置推进了 -> 卡顿结束, 归零自愈状态并收起自己的缓冲/重连遮罩
         _stallLastMs = now;
-        if (_stallTicks >= StallTicksToReport) HideBufferingIfShown();
+        if (_stallTicks >= StallTicksToReport || _stallPolicy.IsFrozen || _stallPolicy.Rebuilds > 0)
+            HideBufferingIfShown();
         _stallTicks = 0;
+        _stallPolicy.OnAdvance();
     }
 
     /// <summary>把一次跳转记下来: 打上宽限期, 并立刻把进度条/时间钉到目标位置</summary>
     private void MarkSeekIssued(long targetMs)
     {
-        _seekGraceUntil = Environment.TickCount64 + SeekGraceMs;
+        var now = Environment.TickCount64;
+        _seekGraceUntil = now + SeekGraceMs;
         MuteForSeek();
-        // 启动/重置跳转看门狗: 2.5 秒内位置还没回到目标附近就重发 seek
+        // 启动/重置跳转看门狗
         _pendingSeekMs = targetMs;
-        // 记下"跳转前的位置"给看门狗判"是不是真的丢了"(见 _seekFromMs 的说明)。
-        // ★ 必须在这里取: 调用方通常已经先设过 `_mp.Time = target`, 那个属性读回来的是受理回执
-        //   (= 目标值), 拿它当起点会让"落地偏早"永远判不出来。
+        // 记下"跳转前的位置"给看门狗判"是不是真的丢了"
         _seekFromMs = _lastKnownMs > 0 ? _lastKnownMs : -1;
         _seekRetries = 0;
-        _seekDeadline = Environment.TickCount64 + 2500;
-        // 观察值清空: 第一个心跳拿到的会是"目标值本身"(那是 LibVLC 的 ack, 不是画面), 不能当作推进
+        _seekDeadline = now + SeekConfirmTimeoutMs;
         _seekObservedMs = -1;
         _seekElsewhereSeenMs = -1;
         _seekBounceSeenMs = -1;
+        _seekBounceAt = -1;
+        _seekIssuedAt = now;
+        _lastSeekTargetMs = targetMs;
         _ended = false;
+        _stallPolicy.OnUnfrozen();
         // 进度外推的锚点与显示钳制基线作废: 不作废的话, 跳转落地后可能外推出凭空进度,
         // 往回拖进度条也无法倒着显示
         _anchorMs = -1;
@@ -3388,9 +3465,14 @@ public partial class PlayerWindow : FluentWindow
         var cur = _lastKnownMs > 0 ? _lastKnownMs : 0;
         var delta = targetMs - cur;
 
+        // 挡掉同一次点击经 ValueChanged + DragCompleted 重复进来的相同目标
+        if (_pendingSeekMs >= 0 && Math.Abs(_pendingSeekMs - targetMs) <= SeekConfirmWindowMs) return;
+        if (_pendingSeekMs < 0 && Math.Abs(cur - targetMs) < 250) return;
+
         // ★ 用户**主动**发起了一次新跳转 ⇒ 重建预算复位(新的一次该再给一次机会)。
         //   只在这里复位, 不在 MarkSeekIssued 里 —— 见 _seekRebuildTried 的说明。
         _seekRebuildTried = false;
+        _eofSeekRebuildTried = false;
 
         // ★★★ 2026-10-17 播放器手术第 2 步: 两条路, 由**片源类型**决定, 不由距离决定。
         //
@@ -3460,7 +3542,21 @@ public partial class PlayerWindow : FluentWindow
     ///     已经压着"正在跳转…"遮罩, 用户感知是"缓冲了一下", 可接受; 但**绝不能让它在
     ///     常规操作里反复触发** —— 那才会变成"卡死"。这正是长跳不再一律走这里的理由。
     /// </summary>
-    private void RebuildMediaAndSeek(long targetMs)
+    private void RestoreEndedOverlay()
+    {
+        if (_closing) return;
+        _ended = true;
+        HideLoading();
+        if (VideoAreaRoot != null)
+        {
+            VideoAreaRoot.Background = Brushes.Black;
+            _fullscreenCoverArmed = true;
+        }
+        if (EndOverlay != null) EndOverlay.Visibility = Visibility.Visible;
+        UpdatePlayButton();
+    }
+
+    private void RebuildMediaAndSeek(long targetMs, bool stallRecovery = false)
     {
         if (_closing) return;
         if (_isLocalPlayback)
@@ -3469,31 +3565,45 @@ public partial class PlayerWindow : FluentWindow
             if (string.IsNullOrEmpty(path) || !File.Exists(path)) return;
             ShowLoading("正在跳转…");
             _resumeAfterSwitchMs = targetMs;
+            _resumeByStartTime = false;
             _ = ReplaceNativeInputAsync(() =>
             {
                 if (!PlayMedia(new Media(_libVLC, path, FromType.FromPath)))
+                {
+                    _resumeAfterSwitchMs = 0;
                     WriteLibVLCDebug("[Seek] 重建后 play() 未被接受(本地文件)\n");
+                    if (stallRecovery) ShowFail("播放重建失败，请重试");
+                    else RestoreEndedOverlay();
+                }
             });
             return;
         }
 
         var url = _lastPlayUrl;
         if (string.IsNullOrEmpty(url)) return;
-        ShowLoading("正在跳转…");
-        // ★ 重建前把"最后已知位置"清掉: 它记的是**旧 input** 的位置(比如 72 万 ms),
-        //   留着的话补跳会拿它当"当前位置"算出荒谬的下一段(2026-10-17 实测踩到)。
+        // 聆听态下重建必须切回音轨单流, 否则会退成无声音视频(issue #81)
+        var audioForRebuild = _isListenMode ? null : _lastAudioUrl;
+        var urlForRebuild = _isListenMode && !string.IsNullOrEmpty(_listenAudioUrl)
+            ? _listenAudioUrl!
+            : url;
+        ShowLoading(stallRecovery ? StallReconnectingText : "正在跳转…");
         _lastKnownMs = 0;
-        // 起播后由 Playing 事件读到这个值并跳到目标(见 _resumeAfterSwitchMs 那套机制)
         _resumeAfterSwitchMs = targetMs;
-        // ★★ 必须先 Stop: LibVLC 3 里已有 input 在播时 play() 会被**直接忽略**
-        //    —— 漏掉这一步就是"黑屏 + 恢复进度丢失"(见方法说明)。
-        // ★ 2026-11-01: 聆听态下重建必须继续播**音轨单流**(audioUrl 传 null) ——
-        //   与 EnterListenMode/重播/切清晰度那几条路的既有约定一致; 传 _lastAudioUrl
-        //   会把"视频+音轨"的组合塞回聆听态, 画面直接复活。
+        _resumeByStartTime = true;
+        WriteLibVLCDebug(
+            $"[Seek] 重建 Media url={(urlForRebuild == url ? "video" : "listen-audio")} " +
+            $"audio={(!string.IsNullOrEmpty(audioForRebuild) ? "slave" : "none")} " +
+            $"stall={stallRecovery} start-time={targetMs}ms\n");
         _ = ReplaceNativeInputAsync(() =>
         {
-            if (!PlayMedia(BuildMedia(url, _isListenMode ? null : _lastAudioUrl)))
+            if (!PlayMedia(BuildMedia(urlForRebuild, audioForRebuild, targetMs)))
+            {
+                _resumeAfterSwitchMs = 0;
+                _resumeByStartTime = false;
                 WriteLibVLCDebug("[Seek] 重建后 play() 未被接受(远端流)\n");
+                if (stallRecovery) ShowFail("网络卡顿，自动重连失败，请检查网络后重试");
+                else RestoreEndedOverlay();
+            }
         });
     }
 
@@ -3504,10 +3614,10 @@ public partial class PlayerWindow : FluentWindow
         if (_closing || _mp == null || _isSeeking || _updatingSlider) return;
         if (_mp.Length <= 0) return;
 
-        // 用 Time(毫秒) 而不是 Position(0~1 的浮点): 位置量本身就是毫秒,
-        // 少一层换算, 短视频(6 秒时 0.001 只代表 6ms)上也不会被"变化太小"的过滤挡掉。
+        // 用 _lastKnownMs 而非 _mp.Time: LibVLC seek 受理后 _mp.Time 会立刻回执目标值, 会吞掉真实偏离判断
         var targetMs = (long)Math.Round(e.NewValue / 1000.0 * _mp.Length);
-        if (Math.Abs(_mp.Time - targetMs) < 250) return; // 已经在目标附近, 不必发跳转
+        var currentMs = _lastKnownMs > 0 ? _lastKnownMs : _mp.Time;
+        if (Math.Abs(currentMs - targetMs) < 250) return;
         SeekTo(targetMs);
     }
 
@@ -3550,7 +3660,8 @@ public partial class PlayerWindow : FluentWindow
                 if (_lastLoadingRevealMs >= 0 && e.Time > _lastLoadingRevealMs &&
                     LoadingOverlay != null && LoadingOverlay.Visibility == Visibility.Visible &&
                     LoadingText != null &&
-                    (LoadingText.Text == BufferingText || LoadingText.Text.StartsWith("正在跳转", StringComparison.Ordinal)))
+                    (IsStallOverlayText(LoadingText.Text) ||
+                     LoadingText.Text.StartsWith("正在跳转", StringComparison.Ordinal)))
                 {
                     HideLoading();
                 }
@@ -3633,11 +3744,19 @@ public partial class PlayerWindow : FluentWindow
         //      等于"从坏位置再播一次", 正是"快进 → 缓冲几次 → 回到 9s"的最后一环。
         //      看门狗自己会重建到目标(_pendingSeekMs 还挂着), 这里必须让路。
         var effectiveTotalMs = _mp.Length > 0 ? _mp.Length : _totalMs;
-        if (!_isLive && !_isLocalPlayback && !_ended && _pendingSeekMs < 0 &&
+        var canResumeEarlyEof = _isListenMode
+            ? !string.IsNullOrEmpty(_listenAudioUrl)
+            : !string.IsNullOrEmpty(_lastAudioUrl);
+        var seekLooksUnlanded = !_eofSeekRebuildTried
+            && _lastSeekTargetMs > 0
+            && _seekIssuedAt > 0
+            && Environment.TickCount64 - _seekIssuedAt <= SeekEofRecoverWindowMs
+            && Math.Abs(_lastSeekTargetMs - _lastKnownMs) >= SeekEofRecoverMinMissMs;
+
+        if (!_isLive && !_isLocalPlayback && !_ended && _pendingSeekMs < 0 && !seekLooksUnlanded &&
             effectiveTotalMs > 0 &&
-            !string.IsNullOrEmpty(_lastAudioUrl) &&
-            // 尾部静默区见 TailQuietZoneMs 的说明: 音轨缺口之内自救救不回任何数据,
-            // 只会"黑屏缓冲一趟 → 立刻再 EOF → 重播遮罩"(2026-10-01 用户两轮实测)
+            canResumeEarlyEof &&
+            // 尾部静默区见 TailQuietZoneMs 的说明: 音轨缺口之内自救救不回任何数据
             _lastKnownMs > 0 && _lastKnownMs < effectiveTotalMs - TailQuietZoneMs &&
             _eofResumeCount < EofResumeMax &&
             _lastKnownMs - _lastEofResumeMs >= EofResumeMinAdvanceMs &&
@@ -3649,36 +3768,32 @@ public partial class PlayerWindow : FluentWindow
             ShowLoading("正在继续播放…");
             // 起播后由 Playing 事件恢复到断点(见 _resumeAfterSwitchMs 那套机制)
             _resumeAfterSwitchMs = resume;
-            try { PlayMedia(BuildMedia(_lastPlayUrl, _lastAudioUrl)); } catch { }
+            _resumeByStartTime = false;
+            try
+            {
+                if (_isListenMode && !string.IsNullOrEmpty(_listenAudioUrl))
+                    PlayMedia(BuildMedia(_listenAudioUrl!, null));
+                else
+                    PlayMedia(BuildMedia(_lastPlayUrl!, _lastAudioUrl));
+            }
+            catch { }
             return;
         }
 
         _ended = true;
         RestoreVolumeAfterSeek();   // 播完若还挂在 seek 静音里, 立刻恢复(重播/下一条别哑)
-        // ★ 把手势层切成不透明黑(2026-10-01, 用户报"浅色全屏全白/深色一层阴影遮罩"):
-        //   EOF 后 vout 被拆掉, 视频 HWND 露出**默认白底** —— 它在所有 WPF 元素之上
-        //   (airspace), RootGrid 切黑盖不住它。表现就是: 浅色主题全屏一块纯白;
-        //   深色主题上半透明的"重播"遮罩(#CC000000)盖在白底上 = "一层阴影遮罩"。
-        //   手势层在覆盖窗口(VideoView.Content)里, 位于 HWND **之上**, 切黑才真的盖得住。
-        //   ★★ 必须同时把 `_fullscreenCoverArmed` 置上(2026-10-17 修"点重播黑屏"):
-        //   起播时负责还原的是 <see cref="ReleaseFullscreenCover"/>, 而它开头就
-        //   `if (!_fullscreenCoverArmed) return;` —— 只改 Background 不改这个标志,
-        //   揭幕那一步会被整个跳过, 手势层就**永远**停在不透明黑上, 于是"重播"之后
-        //   画面全黑(用户报的正是这个)。原先这里是直接赋值 + `Playing` 里也直接赋值,
-        //   两边对称; cf76cc6 把"起播那侧"改成走 ReleaseFullscreenCover(为了不吃掉
-        //   _resizeHold 闸), 却没给"压下这侧"补上标志, 就成了单边。
-        //   ★★★ 2026-11-01 修「听视频模式快进提示已播完」: EOF 时若还有**未确认的跳转**
-        //     在飞, 那多半是远跳甩到流尾的假 EOF(音轨 seek 失败被当成播完) ——
-        //     上面那条"跳转中不自救"的闸会放它落到这里。此刻不能宣告播完:
-        //     把 _ended 压回去、给目标重新打上 MarkSeekIssued 走看门狗重建, 唯独不进重播态。
-        if (_pendingSeekMs >= 0 && !_isLive && !_isLocalPlayback &&
-            !string.IsNullOrEmpty(_lastPlayUrl))
+        if (!_isLive && !_isLocalPlayback && !_eofSeekRebuildTried &&
+            !string.IsNullOrEmpty(_lastPlayUrl) &&
+            (_pendingSeekMs >= 0 || seekLooksUnlanded))
         {
-            var target = _pendingSeekMs;
+            var target = _pendingSeekMs >= 0 ? _pendingSeekMs : _lastSeekTargetMs;
             _ended = false;
+            _eofSeekRebuildTried = true;
             WriteLibVLCDebug(
-                $"[EndReached] 疑似远跳假EOF(target={target}ms time={_lastKnownMs}ms) → 重建 Media 续跳\n");
-            ClearSeekWatchdog();
+                $"[EndReached] 疑似远跳假EOF(target={target}ms time={_lastKnownMs}ms " +
+                $"pending={_pendingSeekMs}) → 重建 Media 续跳\n");
+            ShowLoading("正在跳转…");
+            ClearSeekWatchdog(hideBuffering: false);
             RebuildMediaAndSeek(target);
             return;
         }
@@ -3703,17 +3818,20 @@ public partial class PlayerWindow : FluentWindow
             _ = Svc.HistorySync.ReportNowAsync(_aid, _currentCid, _lastKnownMs / 1000);
     }));
 
-    private void OnProgressDragStart(object sender, DragStartedEventArgs e) => _isSeeking = true;
+    private void OnProgressDragStart(object sender, DragStartedEventArgs e)
+    {
+        _progressDragStartValue = ProgressSlider.Value;
+        _isSeeking = true;
+    }
 
     private void OnProgressDragEnd(object sender, DragCompletedEventArgs e)
     {
         _isSeeking = false;
         if (e.Canceled || _closing) { UpdateProgressUi(); return; }
-        if (_mp.Length > 0)
+        var moved = Math.Abs(ProgressSlider.Value - _progressDragStartValue) > 0.01;
+        if (moved && _mp.Length > 0)
         {
             var targetMs = (long)Math.Round(ProgressSlider.Value / 1000.0 * _mp.Length);
-            // ★ 走统一入口: 它会按距离决定"一步到位 / 分段跳 / 重建后跳"
-            //   (libvlc 对 frag-MP4 的单次 seek 有距离上限, 见 SeekTo 的说明)
             SeekTo(targetMs);
         }
         // 拖动结束后立刻补报一次: 用户主动跳转是"我在看这个位置"的强信号,
@@ -3871,7 +3989,10 @@ public partial class PlayerWindow : FluentWindow
             return;
         }
 
-        if(!IsTouchControl(e.OriginalSource as DependencyObject) && HandleWebVideoWheel(e.Delta)){e.Handled=true;return;}
+        if (!IsTouchControl(e.OriginalSource as DependencyObject) && HandleWebVideoWheel(e.Delta)) { e.Handled = true; return; }
+        var wheelSource = e.OriginalSource as DependencyObject;
+        if (IsInPopup(wheelSource, SpeedPopup) || IsInPopup(wheelSource, QualityPopup) || IsInPopup(wheelSource, DanmakuAreaPopup))
+            return;
         // 反向滚动时先清掉上次攒的余量, 否则要先"抵消"掉才动
         if (Math.Sign(e.Delta) != Math.Sign(_wheelAccum)) _wheelAccum = 0;
         _wheelAccum += e.Delta;
@@ -4113,8 +4234,7 @@ public partial class PlayerWindow : FluentWindow
     private void OnSpeedClick(object sender, RoutedEventArgs e)
     {
         if (_mp == null) return;
-        FillSpeedMenu();
-        SpeedPopup.IsOpen = true;
+        TogglePlayerPopup(SpeedPopup, FillSpeedMenu);
     }
 
     /// <summary>
@@ -4424,7 +4544,72 @@ public partial class PlayerWindow : FluentWindow
 
     private void OnQualityClick(object sender, RoutedEventArgs e)
     {
-        QualityPopup.IsOpen = true;
+        TogglePlayerPopup(QualityPopup);
+    }
+
+    private readonly Dictionary<System.Windows.Controls.Primitives.Popup, long> _popupClosedTicks = new();
+    private readonly List<(System.Windows.Controls.Primitives.Popup Popup, System.ComponentModel.DependencyPropertyDescriptor Descriptor, EventHandler Handler)> _popupToggleHooks = new();
+
+    private void HookPopupToggle(System.Windows.Controls.Primitives.Popup popup, Button trigger)
+    {
+        if (popup == null || trigger == null) return;
+        var descriptor = System.ComponentModel.DependencyPropertyDescriptor.FromProperty(
+            System.Windows.Controls.Primitives.Popup.IsOpenProperty,
+            typeof(System.Windows.Controls.Primitives.Popup));
+        EventHandler onIsOpenChanged = (_, _) =>
+        {
+            if (popup.IsOpen) return;
+            if (IsCursorOverElement(trigger)) _popupClosedTicks[popup] = Environment.TickCount64;
+        };
+        descriptor.AddValueChanged(popup, onIsOpenChanged);
+        _popupToggleHooks.Add((popup, descriptor, onIsOpenChanged));
+
+        trigger.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            if (_closing || !popup.IsOpen) return;
+            popup.IsOpen = false;
+            e.Handled = true;
+        };
+    }
+
+    private static bool IsCursorOverElement(FrameworkElement element)
+    {
+        try
+        {
+            if (!GetCursorPos(out var pt)) return false;
+            var tl = element.PointToScreen(new Point(0, 0));
+            var br = element.PointToScreen(new Point(element.ActualWidth, element.ActualHeight));
+            return pt.X >= tl.X && pt.X <= br.X && pt.Y >= tl.Y && pt.Y <= br.Y;
+        }
+        catch { return false; }
+    }
+
+    private void TogglePlayerPopup(System.Windows.Controls.Primitives.Popup popup, Action? onOpen = null)
+    {
+        if (_closing || popup == null) return;
+        long? closedAt = _popupClosedTicks.TryGetValue(popup, out var tick) ? tick : null;
+        switch (Helpers.PopupToggle.Decide(popup.IsOpen, closedAt, Environment.TickCount64))
+        {
+            case Helpers.PopupToggle.Action.Close:
+                popup.IsOpen = false;
+                break;
+            case Helpers.PopupToggle.Action.StayClosed:
+                break;
+            default:
+                onOpen?.Invoke();
+                popup.IsOpen = true;
+                break;
+        }
+    }
+
+    private void UnhookPopupToggles()
+    {
+        foreach (var (popup, descriptor, handler) in _popupToggleHooks)
+        {
+            try { descriptor.RemoveValueChanged(popup, handler); } catch { }
+        }
+        _popupToggleHooks.Clear();
+        _popupClosedTicks.Clear();
     }
 
     private void OnQualitySelected(object sender, SelectionChangedEventArgs e)
@@ -4536,11 +4721,21 @@ public partial class PlayerWindow : FluentWindow
             // ★ 用与首次加载**同一个** BuildMedia, 免得两处选项慢慢漂移
             //   (Referer/UA/缓存策略/音频挂载有一处不同就是"换完音质播不动")。
             _lastPlayUrl=main;_lastAudioUrl=audioUrl;_listenAudioUrl=audioUrl;
+            RememberPlayUrlFreshness(main ?? audioUrl, backups);
             _resumeAfterSwitchMs=resumeMs>0?resumeMs:0;
+            _resumeByStartTime=false;
             Svc.Settings.Save();
             await ReplaceNativeInputAsync(() =>
             {
-                var media = _isListenMode && !string.IsNullOrEmpty(audioUrl)?BuildMedia(audioUrl,null):BuildMedia(main,audioUrl);
+                var mediaUrl = _isListenMode && !string.IsNullOrEmpty(audioUrl) ? audioUrl : main;
+                if (string.IsNullOrEmpty(mediaUrl))
+                {
+                    ShowFail("切换音质失败");
+                    return;
+                }
+                var media = _isListenMode && !string.IsNullOrEmpty(audioUrl)
+                    ? BuildMedia(mediaUrl, null)
+                    : BuildMedia(mediaUrl, audioUrl);
                 if (!PlayMedia(media)) ShowFail("切换音质失败");
             });
             if (_closing || generation != _loadGen) return;
@@ -4764,6 +4959,7 @@ public partial class PlayerWindow : FluentWindow
 
             // 起播后(Playing 事件)自动恢复到切换前进度
             _resumeAfterSwitchMs = resumeMs > 2000 ? resumeMs : 0;
+            _resumeByStartTime = false;
             // 新流重新计时"提前结束自救"
             _eofResumeCount = 0;
             _lastEofResumeMs = 0;
@@ -4771,11 +4967,9 @@ public partial class PlayerWindow : FluentWindow
             _lastPlayUrl = url;
             // 本地合流是单文件源: 不能带 input-slave, 否则等于给同一个文件再挂一条音轨
             _lastAudioUrl = local != null ? null : audioUrl;
-            // 「听视频」的音轨地址跟着新档位更新 —— 不清的话切完清晰度再进出聆听态,
-            // 用的还是旧档那条音轨(可能码率不同、甚至已过期)。
-            // ★ 必须取 **audioUrl** 而不是 _lastAudioUrl: 后者在本地合流那条路上是 null
-            //   (单文件源不挂 input-slave), 而音轨本身是好的。理由同 LoadVideoAsync 里那段。
+            // 「听视频」的音轨地址跟着新档位更新
             _listenAudioUrl = audioUrl;
+            RememberPlayUrlFreshness(!string.IsNullOrEmpty(main) ? main : audioUrl, backups);
             // 必须先 Stop: LibVLC 3 里已有 input 在播时 play() 会被**直接忽略**,
             // 不 Stop 的话新 Media 根本不会起播 —— 这就是"切换清晰度没反应"
             // ★ 聆听态下切清晰度: 仍然只播音轨(用户此刻要的是声音, 不该突然出画面再切回去)。
@@ -4820,7 +5014,11 @@ public partial class PlayerWindow : FluentWindow
     private void CloseDanmakuAreaPopup()
     {
         if (DanmakuAreaPopup != null && DanmakuAreaPopup.IsOpen)
+        {
+            if (Mouse.Captured is DependencyObject captured && IsInPopup(captured, DanmakuAreaPopup))
+                Mouse.Capture(null);
             DanmakuAreaPopup.IsOpen = false;
+        }
     }
 
     private static bool IsDescendantOf(DependencyObject? node, DependencyObject? ancestor)
@@ -4829,7 +5027,8 @@ public partial class PlayerWindow : FluentWindow
         while (node != null)
         {
             if (ReferenceEquals(node, ancestor)) return true;
-            node = VisualTreeHelper.GetParent(node) ?? LogicalTreeHelper.GetParent(node);
+            node = (node is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(node) : null)
+                   ?? LogicalTreeHelper.GetParent(node);
         }
         return false;
     }
@@ -4911,15 +5110,13 @@ public partial class PlayerWindow : FluentWindow
 
     private void OnDanmakuOutlineRowTouchDown(object? sender, TouchEventArgs e)
     {
-        if (DanmakuOutlineCheck == null || IsDescendantOf(e.OriginalSource as DependencyObject, DanmakuOutlineCheck))
-            return;
+        if (DanmakuOutlineCheck == null) return;
         e.Handled = true;
     }
 
     private void OnDanmakuOutlineRowTouchUp(object? sender, TouchEventArgs e)
     {
-        if (DanmakuOutlineCheck == null || IsDescendantOf(e.OriginalSource as DependencyObject, DanmakuOutlineCheck))
-            return;
+        if (DanmakuOutlineCheck == null) return;
         DanmakuOutlineCheck.IsChecked = DanmakuOutlineCheck.IsChecked != true;
         TouchSupport.CancelPendingTap();
         e.Handled = true;
@@ -5113,16 +5310,17 @@ public partial class PlayerWindow : FluentWindow
     {
         if (TouchSupport.IsTouchMouse(e)) return;
         _lastPlayerInputWasTouch = false;
+        // 点击控制栏或播放器设置弹层(播放/清晰度/倍速/音量/弹幕设置等)不作为视频区手势,
+        // 必须在边缘缩放判定与焦点抢回之前先行放行, 否则既会干扰弹层内 CheckBox/Slider 的鼠标捕获,
+        // 也会把随后的 PreviewMouseLeftButtonUp 误当成无配对余波吞掉。
+        var source = e.OriginalSource as DependencyObject;
+        if (IsInAnyPlayerPopup(source)) { _videoGestureActive = false; return; }
+        if (ControlBar != null && (ControlBar.IsMouseOver || IsDescendantOf(source, ControlBar))) { _videoGestureActive = false; return; }
         // 落在窗口边缘缩放带里的按下是"拖边缘改大小", 不算视频区手势(见 TryBeginEdgeResize)
         if (TryBeginEdgeResize()) { e.Handled = true; return; }
         if (_mp == null) return;
         // 点视频区会把焦点交给那层浮动覆盖窗口/原生视频窗口, 顺手把键盘焦点收回 WPF 树
         RestoreKeyboardFocus();
-        // 点击控制栏或播放器设置弹层(播放/清晰度/倍速/音量/弹幕设置等)不作为视频区手势,
-        // 否则既误触发暂停/长按快进, 也会把当前弹层误关掉。
-        var source = e.OriginalSource as DependencyObject;
-        if (IsInAnyPlayerPopup(source)) { _videoGestureActive = false; return; }
-        if (ControlBar != null && (ControlBar.IsMouseOver || IsDescendantOf(source, ControlBar))) return;
         if (VolumePopup.IsOpen)
         {
             CloseVolumePopup();
@@ -5187,8 +5385,14 @@ public partial class PlayerWindow : FluentWindow
     private void OnVideoAreaMouseLeftUp(object sender, MouseButtonEventArgs e)
     {
         if (TouchSupport.IsTouchMouse(e)) return;
-        // 与 Down 对称: 控制栏上的点击不触发单击暂停
-        if (ControlBar != null && ControlBar.IsMouseOver) return;
+        // ★ 与 Down 严格对称: 弹层内(DanmakuAreaPopup/SpeedPopup/QualityPopup/VolumePopup)及控制栏上的
+        //   MouseLeftButtonUp 必须原样放行! 之前这里漏判了 IsInAnyPlayerPopup 和 IsDescendantOf(ControlBar),
+        //   导致在弹幕设置弹层里点「弹幕描边」时, PreviewMouseLeftButtonUp 被下面的 `!_videoGestureActive`
+        //   置为 e.Handled = true 吞掉 —— 既导致描边开关点不动, 又让 CheckBox 在 Down 时拿到的
+        //   Mouse.Capture 永远得不到 Up 释放而死锁整窗鼠标焦点(必须按 Esc 关弹层才解开)。
+        var source = e.OriginalSource as DependencyObject;
+        if (IsInAnyPlayerPopup(source)) return;
+        if (ControlBar != null && (ControlBar.IsMouseOver || IsDescendantOf(source, ControlBar))) return;
         // ★ 与 Down 对称: 跳过提示条上的「撤回」点击也不触发单击暂停
         if (SkipNoticeBorder != null && SkipNoticeBorder.IsMouseOver) return;
         // ★★ 弹层余波(2026-10-13 第三轮修正, 前两轮都没修对):
@@ -5264,6 +5468,10 @@ public partial class PlayerWindow : FluentWindow
     private void OnVideoAreaMouseRightDown(object sender, MouseButtonEventArgs e)
     {
         if (TouchSupport.IsTouchMouse(e)) return;
+        // 控制栏 / 播放器设置弹层 / 跳过提示条上的右键不算视频区手势(与左键同款理由)
+        var source = e.OriginalSource as DependencyObject;
+        if (IsInAnyPlayerPopup(source)) { _rightGestureActive = false; return; }
+        if (ControlBar != null && (ControlBar.IsMouseOver || IsDescendantOf(source, ControlBar))) { _rightGestureActive = false; return; }
         // ★ 落在窗口边缘缩放带里就**不要**当成视频区手势, 但**也不能**调 TryBeginEdgeResize():
         //   它内部发的是 `WM_NCLBUTTONDOWN`(**左键**消息), 用右键去调等于"假装用户按了左键拖边框",
         //   会让系统进入模态缩放循环 —— 而那个循环等的是左键松开, 右键根本不会给它。
@@ -5271,26 +5479,12 @@ public partial class PlayerWindow : FluentWindow
         if (IsOnResizeEdge()) return;
         if (_mp == null) return;
         RestoreKeyboardFocus();
-        // 控制栏 / 播放器设置弹层 / 跳过提示条上的右键不算视频区手势(与左键同款理由)
-        var source = e.OriginalSource as DependencyObject;
-        if (IsInAnyPlayerPopup(source)) { _rightGestureActive = false; return; }
-        if (ControlBar != null && (ControlBar.IsMouseOver || IsDescendantOf(source, ControlBar))) return;
         if (SkipNoticeBorder != null && SkipNoticeBorder.IsMouseOver) return;
         if (DanmakuAreaPopup?.IsOpen == true) { CloseDanmakuAreaPopup(); _rightGestureActive = false; e.Handled = true; return; }
         // 弹层开着 ⇒ 这一下属于浮层, 不起步(地基, 见方法说明)
         if (AnyPlayerPopupOpen) { _rightGestureActive = false; return; }
         _rightGestureActive = true;
         e.Handled = true;   // 别让它冒泡成系统菜单
-
-        // ★★ 2026-11-04 合并上游 1.5.4: 右键**不再参与长按快进**。
-        //
-        //   原来是"短右键 = 铺满窗口 / 长右键 ≥500ms = 2x 快进"。问题在于右键的既定语义
-        //   是"收起右侧详情栏"(用户最常用的动作之一), 而按住时长本来就不固定 ——
-        //   一次正常的收起只要手慢一点(500ms 很容易超), 就会莫名变成 2 倍速,
-        //   而且松手才恢复, 用户完全不知道发生了什么。
-        //   ⇒ 长按快进只保留在**左键**上; 右键专注做"铺满/收起详情栏"这一件事。
-        //
-        //   ★ 这里不再挂任何计时器, 所以 Up 侧也不会再判 _longPressFired(见那边同款改动)。
     }
 
     /// <summary>左右键长按共用的判定时长(毫秒)。与左键长按原阈值保持一致。</summary>
@@ -5310,6 +5504,10 @@ public partial class PlayerWindow : FluentWindow
     private void OnVideoAreaMouseRightUp(object sender, MouseButtonEventArgs e)
     {
         if (TouchSupport.IsTouchMouse(e)) return;
+        var source = e.OriginalSource as DependencyObject;
+        if (IsInAnyPlayerPopup(source)) return;
+        if (ControlBar != null && (ControlBar.IsMouseOver || IsDescendantOf(source, ControlBar))) return;
+        if (SkipNoticeBorder != null && SkipNoticeBorder.IsMouseOver) return;
         if (!_rightGestureActive) { e.Handled = true; return; }
         _rightGestureActive = false;
         if (_closing) return;
@@ -5509,10 +5707,15 @@ public partial class PlayerWindow : FluentWindow
 
     // ------------------------------------------------------------ 键盘
 
+    internal static bool ShouldBypassShortcutModifiers(ModifierKeys modifiers)
+        => (modifiers & (ModifierKeys.Control | ModifierKeys.Alt)) != 0;
+
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
         // 只在焦点位于"可编辑"输入框时让按键走默认路径; 只读展示框不拦截空格
         if (Keyboard.FocusedElement is TextBox { IsReadOnly: false }) return;
+        // 放行带 Ctrl / Alt 的系统与文本组合键(如 Ctrl+C 复制), 避免被裸字母快捷键吞掉
+        if (ShouldBypassShortcutModifiers(Keyboard.Modifiers)) return;
         switch (e.Key)
         {
             case Key.Space: OnPlayPauseClick(this, new RoutedEventArgs()); e.Handled = true; return;
@@ -5526,7 +5729,7 @@ public partial class PlayerWindow : FluentWindow
             case Key.Up: SetVolume(_volumeCache + VolumeStep); e.Handled = true; return;
             case Key.Down: SetVolume(_volumeCache - VolumeStep); e.Handled = true; return;
             case Key.M: SetVolume(_volumeCache == 0 ? 80 : 0); e.Handled = true; return;
-            case Key.F: if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.None) ToggleFullscreen(); e.Handled = true; return;
+            case Key.F: ToggleFullscreen(); e.Handled = true; return;
             case Key.L: OnLikeClick(this, new RoutedEventArgs()); e.Handled = true; return;
             case Key.U: OnUpPageClick(this, new RoutedEventArgs()); e.Handled = true; return;
             case Key.D: ToggleDanmaku(); e.Handled = true; return;
@@ -5660,6 +5863,8 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     private void ApplyFullscreenLayout(bool on)
     {
+        // 非 vmem 模式下 HwndHost + WindowChrome 玻璃区会在全屏尺寸剧变时闪烁，临时停用材质并在稳定后恢复
+        SuspendBackdropForResize();
         // ★★★ 全屏切换期间**不要**让"最大化/还原黑罩"插手(2026-10-17):
         //   全屏 = 最大化 + 收顶栏, 所以它必然触发 WM_SYSCOMMAND / 尺寸剧变;
         //   而这条路径本来就有自己的一套遮罩时序(下面的 ArmFullscreenCover / ReleaseFullscreenCover)。
@@ -5895,18 +6100,13 @@ public partial class PlayerWindow : FluentWindow
     /// 见 <see cref="ArmResizeCover"/> 的说明。</summary>
     protected override void OnModalResizeStarted()
     {
-        // ★★ 2026-10-06 修"拖动窗口**移动位置**时黑屏":
-        //   这对钩子 WM_ENTERSIZEMOVE/EXITSIZEMOVE 对"移动"和"改大小"一视同仁, 但两者对视频
-        //   的意义完全不同 ——
-        //     · 改大小: 客户区尺寸每帧都变 ⇒ LibVLC 反复重协商 vout ⇒ 会露白底, **需要**压罩;
-        //     · 纯移动: 窗口尺寸**一点没变** ⇒ LibVLC 根本不重协商 vout ⇒ 没有任何东西会露白底,
-        //       此时压黑纯属多余, 而它的伤害是实的(见 OnModalResizeEnded 里"撤不掉"那条)。
-        //   原先不分两者 ⇒ 拖完位置黑屏一直不撤。
-        //
-        // ★★ 为什么**不能**在 ENTER 时就判断"这次是不是改大小"(第一版这么写, 已否掉):
-        //   ENTER 发在拖动**开始之前**, 那一刻尺寸当然还没变 ⇒ 任何"现在比一下"的判断都会
-        //   把"斜向拖边缘"(位置和尺寸同时变)误判成纯移动 ⇒ 不压罩 ⇒ 闪白回归。
-        //   所以改成**延迟判定**: ENTER 只记下矩形, 之后由尺寸真的变了再补压(见 StartModalResizeSizeWatch)。
+        base.OnModalResizeStarted();
+        if (!_vmemMode && IsLoaded && HitTestResizeEdge() != 0)
+        {
+            _modalResizeInProgress = true;
+            _backdropResumeTimer?.Stop();
+            SuspendBackdropForResize();
+        }
         _lastModalRect = new Rect(Left, Top, Width, Height);
         _fullscreenCoverArmed = false;
         _resizeHold = false;
@@ -5966,6 +6166,11 @@ public partial class PlayerWindow : FluentWindow
     /// </summary>
     protected override void OnModalResizeEnded()
     {
+        if (_modalResizeInProgress)
+        {
+            _modalResizeInProgress = false;
+            ResumeBackdropAfterResize();
+        }
         StopModalResizeSizeWatch();
         ReleaseResizeHold();
         // ★★ 2026-10-06 纯移动(尺寸未变)时压根没压过遮罩, 但底色**必须**还原 ——
@@ -6330,11 +6535,75 @@ public partial class PlayerWindow : FluentWindow
     /// ★ 只在"从没压过"时补, 且**不设** `_maximizeCoverArmed`: 这次补压没有对应的
     ///   WM_SYSCOMMAND, 由计时器兜底撤罩即可(见 ReleaseMaximizeCover 的说明)。
     /// </summary>
+    private const int BackdropResumeDelayMs = 180;
+    private DispatcherTimer? _backdropResumeTimer;
+    private bool _modalResizeInProgress;
+    private bool _backdropSuspendQueued;
+
+    private void SuspendBackdropForResize()
+    {
+        if (_closing || _vmemMode || BackdropSuspended) return;
+        if (!IsBackdropMaterialActive) return;
+        SetBackdropSuspended(true);
+        if (!_modalResizeInProgress) ResumeBackdropAfterResize();
+    }
+
+    private void QueueBackdropSuspendForResize()
+    {
+        if (_closing || _vmemMode || _backdropSuspendQueued || BackdropSuspended) return;
+        _backdropSuspendQueued = true;
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            _backdropSuspendQueued = false;
+            if (!_closing) SuspendBackdropForResize();
+        }), System.Windows.Threading.DispatcherPriority.Render);
+    }
+
+    private void ResumeBackdropAfterResize()
+    {
+        if (_closing || !BackdropSuspended) return;
+        _backdropResumeTimer ??= new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(BackdropResumeDelayMs)
+        };
+        _backdropResumeTimer.Tick -= OnBackdropResumeTick;
+        _backdropResumeTimer.Tick += OnBackdropResumeTick;
+        _backdropResumeTimer.Stop();
+        _backdropResumeTimer.Start();
+    }
+
+    private void OnBackdropResumeTick(object? sender, EventArgs e)
+    {
+        _backdropResumeTimer?.Stop();
+        if (_closing) return;
+        SetBackdropSuspended(false);
+    }
+
+    private void OnPlayerResizedForBackdrop()
+    {
+        if (_closing || _vmemMode || !IsLoaded || !IsVisible) return;
+        if (_modalResizeInProgress) return;
+        if (BackdropSuspended)
+        {
+            ResumeBackdropAfterResize();
+            return;
+        }
+        if (WindowState == WindowState.Minimized) return;
+        if (IsBackdropMaterialActive) QueueBackdropSuspendForResize();
+    }
+
+    protected override void OnWindowStateTransitionStarting()
+    {
+        base.OnWindowStateTransitionStarting();
+        SuspendBackdropForResize();
+    }
+
     protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
     {
         base.OnRenderSizeChanged(sizeInfo);
 
         if (_closing || !IsLoaded) return;
+        OnPlayerResizedForBackdrop();
         if (_isFullscreen || _suppressStateCover) return;
         if (sizeInfo.PreviousSize.Width < 1 || sizeInfo.PreviousSize.Height < 1) return;
         _lastMeasuredSize = sizeInfo.NewSize;
@@ -6462,6 +6731,7 @@ public partial class PlayerWindow : FluentWindow
 
     private async void OnLikeClick(object sender, RoutedEventArgs e)
     {
+        if (ShouldSuppressLikeClick(sender)) return;
         if (!Svc.Session.HasLogin) { Svc.Toast.Show("点赞需要先登录"); return; }
         if (string.IsNullOrEmpty(_currentBvid)) return;
         // 按当前状态切换: 已赞 -> 取消, 未赞 -> 点赞
@@ -6801,76 +7071,106 @@ public partial class PlayerWindow : FluentWindow
         }
     }
 
+    private bool _listenSwitching;
+
     private void OnListenToggleClick(object sender, RoutedEventArgs e)
     {
-        if (_closing) return;
-        if (_isListenMode) ExitListenMode();
-        else EnterListenMode();
+        if (_closing || _listenSwitching) return;
+        if (_isListenMode) _ = ExitListenModeAsync();
+        else _ = EnterListenModeAsync();
     }
 
-    /// <summary>
-    /// 进入「听视频」: 切到 DASH 音轨单流播放, 画面区盖上聆听视觉。
-    ///
-    /// ★ 为什么真的换流(而不是只给 Media 加 :no-video):
-    ///   加 :no-video 只是让 LibVLC 不解码画面, **视频流照样在下载** —— 该省的流量一点没省,
-    ///   而"听视频"这个功能的全部价值恰恰是省流量(以及省电/让笔记本安静)。
-    ///   所以我们改播 playurl 里那条音频地址(input-slave 用的同一条), 视频流一个字节都不拉。
-    ///
-    /// ★ 起播必然要重建 Media, 所以进度必须自己接上: 走 _resumeAfterSwitchMs 那套
-    ///   (Playing 事件里恢复), 与切清晰度完全同一条路 —— 别在这里再写一份恢复逻辑。
-    /// </summary>
-    private void EnterListenMode()
+    private async Task EnterListenModeAsync()
     {
-        if (_closing || _isListenMode) return;
+        if (_closing || _isListenMode || _listenSwitching) return;
         if (_isLive || _isLocalPlayback) return;
-        if (string.IsNullOrEmpty(_listenAudioUrl))
+        var audioUrl = _listenAudioUrl;
+        if (string.IsNullOrEmpty(audioUrl))
         {
             Svc.Toast.Show("这条视频没有可用的音轨");
             return;
         }
 
-        _isListenMode = true;
-        // 先在暂停/播到一半时也能接上: 用当前播放位置(拿不到就从 0 开始)
-        try { _listenResumeMs = _mp.Time; } catch { _listenResumeMs = 0; }
-        if (_listenResumeMs < 0) _listenResumeMs = 0;
+        var gen = _loadGen;
+        _listenSwitching = true;
+        try
+        {
+            _isListenMode = true;
+            try { _listenResumeMs = _mp.Time; } catch { _listenResumeMs = 0; }
+            if (_listenResumeMs < 0) _listenResumeMs = 0;
 
-        ApplyListenMode(true);
-        // 音轨是单流: audioUrl 传 null, 否则等于给音频文件再挂一条音频
-        ShowLoading("正在切换到听视频…");
-        _resumeAfterSwitchMs = _listenResumeMs;
-        _ = ReplaceNativeInputAsync(() => PlayMedia(BuildMedia(_listenAudioUrl!, null)));
+            ApplyListenMode(true);
+            ShowLoading("正在切换到听视频…");
+            _resumeAfterSwitchMs = _listenResumeMs;
+            _resumeByStartTime = false;
+            await ReplaceNativeInputAsync(() =>
+            {
+                if (_closing || gen != _loadGen) return;
+                if (!PlayMedia(BuildMedia(audioUrl, null)))
+                {
+                    _resumeAfterSwitchMs = 0;
+                    _isListenMode = false;
+                    ApplyListenMode(false);
+                    Svc.Toast.Show("切换听视频失败");
+                }
+            });
+        }
+        catch
+        {
+            if (!_closing && gen == _loadGen)
+            {
+                _isListenMode = false;
+                ApplyListenMode(false);
+                Svc.Toast.Show("切换听视频失败");
+            }
+        }
+        finally
+        {
+            _listenSwitching = false;
+        }
     }
 
-    /// <summary>
-    /// 退出「听视频」: 用原来的视频 + 音轨组合重建 Media(进度同样接回来), 收掉聆听视觉。
-    ///
-    /// ★ 退出时**不能**直接 _mp.Stop() 就完事: 那样视频就再也不播了。
-    ///   必须用 _lastPlayUrl/_lastAudioUrl 把"进入之前那条组合"原样拼回去 ——
-    ///   这正是这两个字段必须原封不动保留的原因(见 _listenAudioUrl 的说明)。
-    /// </summary>
-    private void ExitListenMode()
+    private async Task ExitListenModeAsync()
     {
-        if (_closing || !_isListenMode) return;
-        _isListenMode = false;
-
-        try { _listenResumeMs = _mp.Time; } catch { _listenResumeMs = 0; }
-        if (_listenResumeMs < 0) _listenResumeMs = 0;
-
-        ApplyListenMode(false);
-
-        // 直播/本地最后走到了这里也没关系: _lastPlayUrl 就是它们的源, 原样重播
+        if (_closing || !_isListenMode || _listenSwitching) return;
         var url = _lastPlayUrl;
-        if (string.IsNullOrEmpty(url))
+        var gen = _loadGen;
+        _listenSwitching = true;
+        try
         {
-            // 没有可回溯的源: 只能停下(比播着一个不知道是什么的流强)
-            _ = ReplaceNativeInputAsync(null);
-            HideLoading();
-            return;
+            _isListenMode = false;
+            try { _listenResumeMs = _mp.Time; } catch { _listenResumeMs = 0; }
+            if (_listenResumeMs < 0) _listenResumeMs = 0;
+
+            ApplyListenMode(false);
+
+            if (string.IsNullOrEmpty(url))
+            {
+                await ReplaceNativeInputAsync(null);
+                HideLoading();
+                return;
+            }
+            ShowLoading("正在恢复视频…");
+            _resumeAfterSwitchMs = _listenResumeMs;
+            _resumeByStartTime = false;
+            await ReplaceNativeInputAsync(() =>
+            {
+                if (_closing || gen != _loadGen) return;
+                if (!PlayMedia(BuildMedia(url, _isLocalPlayback ? null : _lastAudioUrl)))
+                {
+                    _resumeAfterSwitchMs = 0;
+                    ShowFail("恢复视频播放失败");
+                }
+            });
         }
-        ShowLoading("正在恢复视频…");
-        _resumeAfterSwitchMs = _listenResumeMs;
-        // 本地文件是单文件源, 不能带 input-slave
-        _ = ReplaceNativeInputAsync(() => PlayMedia(BuildMedia(url, _isLocalPlayback ? null : _lastAudioUrl)));
+        catch
+        {
+            if (!_closing && gen == _loadGen) ShowFail("恢复视频播放失败");
+        }
+        finally
+        {
+            _listenSwitching = false;
+        }
     }
 
     /// <summary>
@@ -7615,6 +7915,8 @@ public partial class PlayerWindow : FluentWindow
             // 长按快进也要收: 松手恢复速率的调用会碰 _mp, 而这时 _mp 可能正在 Dispose
             // (与上面两个手势定时器同理)
             StopFastForward();
+            ResetLikePressProgress();
+            _favoriteHoldTimer?.Stop();
             _localToastTimer?.Stop();
             _controlsHideTimer?.Stop();
             StopVolumeOsd();
@@ -7738,6 +8040,7 @@ public partial class PlayerWindow : FluentWindow
         Svc.Toast.Shown -= OnToast;
         Svc.Session.Changed -= UpdateButtonState;
         Svc.Settings.DanmakuSettingsChanged -= OnDanmakuSettingsChanged;
+        UnhookPopupToggles();
         // 跳过赞助片段: 退订 + 掐掉还没回来的查询
         Svc.Settings.SponsorBlockChanged -= OnSponsorSettingsChanged;
         CancelSponsorFetch();

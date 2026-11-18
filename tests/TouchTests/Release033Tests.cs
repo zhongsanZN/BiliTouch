@@ -70,17 +70,49 @@ internal static class Release033Tests
             var inside = (bool)isInPopupMethod.Invoke(win, new object?[] { checkBox })!;
             check(inside, "IsInAnyPlayerPopup identifies DanmakuOutlineCheck inside DanmakuAreaPopup");
 
-            var rowClickMethod = typeof(PlayerWindow).GetMethod("OnDanmakuOutlineRowClick", BindingFlags.Instance | BindingFlags.NonPublic)!;
-            var args = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+            // 1. Route real tunneling/bubbling Mouse.PreviewMouseDownEvent -> Mouse.MouseDownEvent ->
+            //    Mouse.PreviewMouseUpEvent -> Mouse.MouseUpEvent on stateText through VideoAreaRoot
+            var downPreviewRow = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
             {
-                RoutedEvent = UIElement.MouseLeftButtonUpEvent,
+                RoutedEvent = Mouse.PreviewMouseDownEvent,
                 Source = stateText
             };
-            rowClickMethod.Invoke(win, new object[] { stateText, args });
+            stateText.RaiseEvent(downPreviewRow);
+            var downBubbleRow = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+            {
+                RoutedEvent = Mouse.MouseDownEvent,
+                Source = stateText
+            };
+            stateText.RaiseEvent(downBubbleRow);
+            var upPreviewRow = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+            {
+                RoutedEvent = Mouse.PreviewMouseUpEvent,
+                Source = stateText
+            };
+            stateText.RaiseEvent(upPreviewRow);
+            check(!upPreviewRow.Handled, "OnVideoAreaMouseLeftUp does not swallow PreviewMouseUp inside DanmakuAreaPopup");
+
+            var upBubbleRow = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+            {
+                RoutedEvent = Mouse.MouseUpEvent,
+                Source = stateText
+            };
+            stateText.RaiseEvent(upBubbleRow);
             Pump(40);
 
             check(Svc.Settings.DanmakuOutline == !before && popup.IsOpen,
-                "Clicking 弹幕描边 toggles setting cleanly without closing DanmakuAreaPopup");
+                "Clicking 弹幕描边 row toggles setting cleanly without closing DanmakuAreaPopup");
+
+            // 2. Route tunneling PreviewMouseUp on DanmakuOutlineCheck directly and verify Mouse.Captured is never stuck
+            var upPreviewCheck = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+            {
+                RoutedEvent = Mouse.PreviewMouseUpEvent,
+                Source = checkBox
+            };
+            checkBox.RaiseEvent(upPreviewCheck);
+            check(!upPreviewCheck.Handled && Mouse.Captured == null,
+                "PreviewMouseUp on DanmakuOutlineCheck is not swallowed and never leaves Mouse.Captured stuck");
+
             var isFastForward = (bool)typeof(PlayerWindow).GetField("_isFastForwarding", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(win)!;
             check(!isFastForward, "Clicking 弹幕描边 inside popup never starts video fast-forward");
         }
@@ -125,7 +157,8 @@ internal static class Release033Tests
             check(hintText.Visibility == Visibility.Visible,
                 "Pull-to-refresh hint text stays visible alongside spinner");
             end.Invoke(gestures, null);
-            Pump(260);
+            var touchReboundDeadline = Environment.TickCount64 + 800;
+            while (Math.Abs(offset.Y) >= 1.0 && Environment.TickCount64 < touchReboundDeadline) Pump(20);
             check(Math.Abs(offset.Y) < 1.0,
                 $"Short touch pull rebounds cleanly back to 0 (offset={offset.Y:0.0}px)");
 
@@ -266,6 +299,18 @@ internal static class Release033Tests
         {
             win.Show();
             Pump(40);
+            var isPlayableMethod = typeof(StarPartyPage).GetMethod("IsPlayableGameUrl", BindingFlags.Static | BindingFlags.NonPublic)!;
+            var playUrlDetected = (bool)isPlayableMethod.Invoke(null, new object[] { "https://xteamparty.com/play/crazy-united-city/" })!;
+            var worksUrlNotGame = !(bool)isPlayableMethod.Invoke(null, new object[] { "https://xteamparty.com/works/crazy-united-city/" })!;
+            check(playUrlDetected && worksUrlNotGame,
+                "StarPartyPage.IsPlayableGameUrl identifies /play/... web games for inline runner instead of external BrowserWindow");
+
+            var gameOverlay = (FrameworkElement)page.FindName("GameRunnerOverlay")!;
+            gameOverlay.Visibility = Visibility.Visible;
+            var steppedBack = page.TryStepBack();
+            check(steppedBack && gameOverlay.Visibility == Visibility.Collapsed,
+                "StarPartyPage.TryStepBack closes inline GameRunnerOverlay before exiting StarPartyPage");
+
             win.Close();
             check(true, "StarPartyPage mounts and unloads cleanly without initializing WebView2");
         }

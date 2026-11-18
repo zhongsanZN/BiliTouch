@@ -43,6 +43,7 @@ public class FluentWindow : Window
         {
             var root = ScaleRoot;
             if (root != null) UiScale.Register(root);
+            SyncMaximizedContentInset();
         };
     }
 
@@ -181,26 +182,17 @@ public class FluentWindow : Window
             //   ⇒ 云母必须**单独一个分支**: 照常申请材质, 且窗口底色与亚克力一样要透明
             //     (理由见下面那段 —— 我中间试过给云母实色底, 那是把材质整个盖住, 必然失效)。
             var material = Svc.Settings.AcrylicMaterial;
-            var wantAcrylic = Svc.Settings.AcrylicBackground && material == BackdropMaterial.Acrylic;
-            var wantMica = Svc.Settings.AcrylicBackground &&
+            // 播放器/直播间在 HwndHost resize/全屏期间可以临时停用材质, 避免玻璃区+HwndHost 闪烁
+            var wantAcrylic = !_backdropSuspended &&
+                              Svc.Settings.AcrylicBackground && material == BackdropMaterial.Acrylic;
+            var wantMica = !_backdropSuspended &&
+                           Svc.Settings.AcrylicBackground &&
                            material is BackdropMaterial.Mica or BackdropMaterial.MicaAlt;
 
-            // ★★★ 两个材质分支都必须**取返回值** —— 返回值 = "这个窗口的材质到底有没有真的挂上"。
-            //   ★ 2026-10-12 修"云母下投币窗/收藏夹选择窗背景透出壁纸"(用户截图):
-            //     这里原先**只有亚克力分支取返回值, 云母分支把返回值丢了**,
-            //     而下面 `_acrylicActive = acrylicOn || wantMica` 照旧为 true —— 于是:
-            //       · 这两个窗口都是**系统标准窗口**(XAML 没写 WindowStyle/WindowChrome),
-            //         SetAcrylicBackdrop 对它们在**下发材质之前**就 return false
-            //         (DwmInterop.cs: 对标准窗口扩展客户区玻璃会把内容区压黑, 见那里的说明);
-            //       · ⇒ 材质**一个像素都没下上**, 窗口底却被设成 alpha=0 全透明;
-            //       · ⇒ 页面层只有 70% 不透明的 AppBackgroundBrush, 剩下 30% **没有任何东西兜底**,
-            //         直接透出桌面壁纸/后面的窗口 —— 就是截图里那层"灰蒙蒙"。
-            //     ★ 为什么只在云母下看出来: 亚克力分支取了返回值 ⇒ 已回落到实色底(2026-10-05
-            //       修"浅色亚克力下收藏界面发黑"时补上的), 云母分支漏了同一步。
-            //   ★ 判据必须是**返回值**而不是 `wantMica`/`wantAcrylic`: 那两个只表示"用户想要什么",
-            //     与"本窗口给不给得起"是两件事。取返回值才能让下面老老实实回落到实色底。
             var materialOn = false;
-            if (wantAcrylic)
+            if (_backdropSuspended)
+                DwmInterop.SetAcrylicBackdrop(this, BackdropMaterial.None);
+            else if (wantAcrylic)
                 materialOn = DwmInterop.SetAcrylicBackdrop(this, material);
             else if (wantMica)
                 // ★ 云母: 照样把材质下发给 DWM —— **这一步就是"启用云母"**。
@@ -240,7 +232,7 @@ public class FluentWindow : Window
                 // 没开材质(无材质 / 亚克力没开 / 该窗口不支持材质): 一律回落普通实色背景。
                 // ★ 这里才轮到 DisableMica: 材质的选择在函数开头已经统一决定了,
                 //     只在"确实要关"时禁 —— 否则会把刚开的云母一起禁掉(2026-11-12 的那个回归)。
-                if (!Svc.Settings.AcrylicBackground)
+                if (!Svc.Settings.AcrylicBackground || _backdropSuspended)
                     DwmInterop.DisableMica(this);
                 // ★★ 与 SetAcrylicBackdrop 里那次 HideNonClientDecorations **必须成对**(2026-10-17):
                 //   材质开启时我们让 DWM 不画 caption 底与 1px 边框; 关掉材质后客户区不再是玻璃区,
@@ -250,10 +242,13 @@ public class FluentWindow : Window
                 // ★ 必须先卸掉动画载体: 否则那个笔刷上还挂着 ColorAnimation,
                 //   会在后台继续按旧目标改色(表现是主题切换后底色又自己跳一下)。
                 StopAcrylicBaseAnimation();
-                // 统一纯色背景, 深浅主题用各自的 WindowSolid* 资源
-                Background = dark
-                    ? (Brush)FindResource("WindowSolidDarkBrush")
-                    : (Brush)FindResource("WindowSolidLightBrush");
+                // 全屏停用材质恢复期间保持纯黑，避免 WindowSolid 刷白全屏缝隙
+                if (!SuppressAcrylicActivationSwap)
+                {
+                    Background = dark
+                        ? (Brush)FindResource("WindowSolidDarkBrush")
+                        : (Brush)FindResource("WindowSolidLightBrush");
+                }
             }
         }
         catch
@@ -270,6 +265,24 @@ public class FluentWindow : Window
     ///   (见 ApplyChrome 里 2026-10-12 那段说明)。
     /// </summary>
     private bool _acrylicActive;
+
+    /// <summary>是否处于「临时停用背景材质」状态(HwndHost resize/全屏期间用)。</summary>
+    private bool _backdropSuspended;
+
+    protected bool BackdropSuspended => _backdropSuspended;
+
+    protected bool IsBackdropMaterialActive => _acrylicActive;
+
+    /// <summary>
+    /// 临时停用或恢复本窗口的云母/亚克力材质(重走 <see cref="ApplyChrome"/>)。
+    /// 仅供持原生 HwndHost 子窗口的视频窗在 resize/全屏期间绕开玻璃区+HwndHost 闪烁。
+    /// </summary>
+    protected void SetBackdropSuspended(bool suspended)
+    {
+        if (_backdropSuspended == suspended) return;
+        _backdropSuspended = suspended;
+        ApplyChrome();
+    }
 
     /// <summary>
     /// 亚克力窗口底色的可变动画笔(动画载体)。
@@ -378,13 +391,13 @@ public class FluentWindow : Window
     {
         base.OnActivated(e);
         // animate: true —— 焦点变化走 150ms 淡入(用户要求的"更平滑")
-        if (_acrylicActive) UpdateAcrylicWindowBase(true, animate: true);
+        if (_acrylicActive && !_backdropSuspended) UpdateAcrylicWindowBase(true, animate: true);
     }
 
     protected override void OnDeactivated(EventArgs e)
     {
         base.OnDeactivated(e);
-        if (_acrylicActive) UpdateAcrylicWindowBase(false, animate: true);
+        if (_acrylicActive && !_backdropSuspended) UpdateAcrylicWindowBase(false, animate: true);
     }
 
     protected override void OnClosed(EventArgs e)
@@ -421,6 +434,7 @@ public class FluentWindow : Window
     protected override void OnStateChanged(EventArgs e)
     {
         base.OnStateChanged(e);
+        SyncMaximizedContentInset();
 
         // ★★ 播放器: 最大化/还原期间视频区要压黑(2026-10-17)。
         //   放在 base 之前是**做不到**的 —— 这个回调进来时状态已经改完了, 所以真正的
@@ -451,6 +465,82 @@ public class FluentWindow : Window
             WalkCardWallPanels(root, p => p.ConvergeForResize());
         }));
     }
+
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        SyncMaximizedContentInset();
+    }
+
+    protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
+    {
+        base.OnRenderSizeChanged(sizeInfo);
+        SyncMaximizedContentInset();
+    }
+
+    private Thickness _contentBaseMargin;
+    private bool _contentBaseMarginCaptured;
+
+    /// <summary>
+    /// 最大化内容内缩补偿(借鉴上游 e337e84)：WindowStyle=None + WindowChrome 下
+    /// WM_NCCALCSIZE 将非客户区压成 0，导致最大化时根内容四边溢出工作区外几像素。
+    /// 保持窗口几何不变，把 GetWindowRect 与工作区/显示器矩形差值补到 Content.Margin 上。
+    /// </summary>
+    private void SyncMaximizedContentInset()
+    {
+        if (Content is not FrameworkElement root) return;
+
+        if (!_contentBaseMarginCaptured)
+        {
+            _contentBaseMargin = root.Margin;
+            _contentBaseMarginCaptured = true;
+        }
+
+        var margin = _contentBaseMargin;
+        if (WindowState == WindowState.Maximized && System.Windows.Shell.WindowChrome.GetWindowChrome(this) != null)
+        {
+            try
+            {
+                var hwnd = new WindowInteropHelper(this).Handle;
+                if (hwnd != IntPtr.Zero && GetWindowRect(hwnd, out var windowRect))
+                {
+                    var monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+                    if (monitor != IntPtr.Zero)
+                    {
+                        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+                        if (GetMonitorInfo(monitor, ref info))
+                        {
+                            var target = MaximizeCoversTaskbar ? info.Monitor : info.Work;
+                            var dpi = VisualTreeHelper.GetDpi(this);
+                            var inset = WindowMaximizeInset.Compute(
+                                windowRect.Left, windowRect.Top, windowRect.Right, windowRect.Bottom,
+                                target.Left, target.Top, target.Right, target.Bottom,
+                                dpi.DpiScaleX, dpi.DpiScaleY);
+
+                            margin = new Thickness(
+                                _contentBaseMargin.Left + inset.Left,
+                                _contentBaseMargin.Top + inset.Top,
+                                _contentBaseMargin.Right + inset.Right,
+                                _contentBaseMargin.Bottom + inset.Bottom);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                margin = _contentBaseMargin;
+            }
+        }
+
+        if (!NearlyEqual(root.Margin, margin))
+            root.Margin = margin;
+    }
+
+    private static bool NearlyEqual(Thickness a, Thickness b)
+        => Math.Abs(a.Left - b.Left) < 0.01
+        && Math.Abs(a.Top - b.Top) < 0.01
+        && Math.Abs(a.Right - b.Right) < 0.01
+        && Math.Abs(a.Bottom - b.Bottom) < 0.01;
 
     /// <summary>
     /// 窗口状态(最大化/还原/全屏)已经**落定**时调用, 供子类做收尾。
@@ -527,6 +617,9 @@ public class FluentWindow : Window
 
     [DllImport("user32.dll")]
     private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);
 
     /// <summary>
     /// 最大化时**盖住任务栏**(把最大化尺寸从"工作区"放大到"整块显示器")。
@@ -667,6 +760,8 @@ public class FluentWindow : Window
             //   WM_SYSCOMMAND 是"系统即将执行这个命令", 此刻压黑, 白块根本没有亮相的机会。
             //   ★ 不设 handled: 命令本身必须照常执行(交给 DefWindowProc/WPF)。
             var cmd = (int)(wParam.ToInt64() & 0xFFF0);
+            if (cmd is SC_MAXIMIZE or SC_RESTORE or SC_MINIMIZE)
+                OnWindowStateTransitionStarting();
             OnSystemCommand(cmd);
         }
         return IntPtr.Zero;
@@ -711,6 +806,15 @@ public class FluentWindow : Window
     protected virtual void OnSystemCommand(int command)
     {
     }
+
+    /// <summary>
+    /// 窗口状态即将切换(最大化/还原/最小化), 由 WM_SYSCOMMAND 与 WindowButtons 按钮点击触发。
+    /// </summary>
+    protected virtual void OnWindowStateTransitionStarting()
+    {
+    }
+
+    internal void NotifyStateTransitionStarting() => OnWindowStateTransitionStarting();
 
     /// <summary>
     /// 用户**开始**"拖着窗口边缘改大小"时调用(仅 <c>WM_ENTERSIZEMOVE</c>), 供子类挂副作用。

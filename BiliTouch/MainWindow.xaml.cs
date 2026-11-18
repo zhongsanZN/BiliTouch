@@ -372,6 +372,8 @@ public partial class MainWindow : FluentWindow
 
     private void GoBackEmbedded()
     {
+        if (EmbeddedContent.Content is StarPartyPage starParty && starParty.TryStepBack())
+            return;
         EmbeddedContent.RenderTransform = Transform.Identity;
         if(_embeddedHistory.TryPop(out var previous))
         {

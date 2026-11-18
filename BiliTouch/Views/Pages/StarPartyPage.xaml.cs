@@ -10,7 +10,9 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using BiliTouch.Helpers;
 using BiliTouch.Services;
+using BiliTouch.Utils;
 using LibVLCSharp.Shared;
+using Microsoft.Web.WebView2.Core;
 
 namespace BiliTouch.Views.Pages;
 
@@ -28,6 +30,11 @@ public partial class StarPartyPage : UserControl
     private bool _audioPlaying;
     private bool _audioScrubbing;
 
+    // 内嵌同人游戏运行台（仅在用户主动点击「开始游戏」时按需初始化）
+    private bool _gameWebViewInitialized;
+    private string _currentGameUrl = "";
+    private string _currentGameTitle = "";
+
     public StarPartyPage()
     {
         InitializeComponent();
@@ -40,7 +47,11 @@ public partial class StarPartyPage : UserControl
             _loadedOnce = true;
             await LoadAsync(forceRefresh: false);
         };
-        Unloaded += (_, _) => DisposeAudioPlayer();
+        Unloaded += (_, _) =>
+        {
+            DisposeAudioPlayer();
+            CloseEmbeddedGame(disposeWebView: true);
+        };
     }
 
     private async Task LoadAsync(bool forceRefresh)
@@ -122,6 +133,7 @@ public partial class StarPartyPage : UserControl
     private void OnSectionChecked(object sender, RoutedEventArgs e)
     {
         if (!IsLoaded) return;
+        CloseEmbeddedGame(disposeWebView: false);
         DetailOverlay.Visibility = Visibility.Collapsed;
         UpdateVisibleSection();
     }
@@ -333,14 +345,83 @@ public partial class StarPartyPage : UserControl
         return pill;
     }
 
+    internal static bool IsPlayableGameUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        return url.StartsWith(XteamService.BaseUrl + "/play/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool TryRouteBiliUrl(string? url, string? title = null)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        var bvid = UrlParser.ExtractBvid(url);
+        if (!string.IsNullOrEmpty(bvid))
+        {
+            Svc.Navigate?.OpenVideoPlayer(bvid);
+            return true;
+        }
+        var cvId = UrlParser.ExtractArticleId(url);
+        var opusId = UrlParser.ExtractOpusId(url);
+        if (!string.IsNullOrEmpty(cvId) || !string.IsNullOrEmpty(opusId))
+        {
+            Svc.Navigate?.OpenArticle(cvId, opusId, title);
+            return true;
+        }
+        var uid = XteamService.ExtractBiliUid(url);
+        if (!string.IsNullOrEmpty(uid))
+        {
+            Svc.Navigate?.OpenUserSpace(uid);
+            return true;
+        }
+        return false;
+    }
+
     private void HandleUrlAction(string url, string title, XteamProjectItem? sourceItem = null)
     {
+        _ = HandleUrlActionAsync(url, title, sourceItem);
+    }
+
+    private async Task HandleUrlActionAsync(string url, string title, XteamProjectItem? sourceItem = null)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+
+        // 1. 站内作品/同人详情页 -> 原生详情遮罩
         if (url.StartsWith(XteamService.BaseUrl + "/works/", StringComparison.OrdinalIgnoreCase)
             || url.StartsWith(XteamService.BaseUrl + "/picks/", StringComparison.OrdinalIgnoreCase))
         {
-            _ = ShowDetailAsync(url, sourceItem);
+            await ShowDetailAsync(url, sourceItem);
             return;
         }
+
+        // 2. 站内「关于/开发日志」锚点 -> 切换到友链与关于页签
+        if (url.Equals(XteamService.BaseUrl + "/about", StringComparison.OrdinalIgnoreCase)
+            || url.StartsWith(XteamService.BaseUrl + "/about/", StringComparison.OrdinalIgnoreCase))
+        {
+            DetailOverlay.Visibility = Visibility.Collapsed;
+            TabLinks.IsChecked = true;
+            return;
+        }
+
+        // 3. 站内 Web 游戏 (/play/...) -> 在页面内嵌游戏运行台直接打开，不弹独立网页窗口
+        if (IsPlayableGameUrl(url))
+        {
+            await OpenEmbeddedGameAsync(url, sourceItem?.Title ?? title);
+            return;
+        }
+
+        // 4. B 站原生链接（BV 视频 / 专栏 / Opus / UP 主空间）-> 路由到原生播放器或页面
+        if (TryRouteBiliUrl(url, title))
+            return;
+
+        // 5. b23.tv 短链 -> 先解析真实重定向地址，若为 B 站视频/空间/专栏则走原生打开
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && uri.Host.Equals("b23.tv", StringComparison.OrdinalIgnoreCase))
+        {
+            var resolved = await XteamService.Instance.ResolveShortLinkAsync(url);
+            if (!string.IsNullOrEmpty(resolved) && TryRouteBiliUrl(resolved, title))
+                return;
+        }
+
         Svc.Navigate?.OpenWebViewWindow(url, title);
     }
 
@@ -352,7 +433,137 @@ public partial class StarPartyPage : UserControl
             return;
         }
         if (!string.IsNullOrEmpty(url))
-            Svc.Navigate?.OpenWebViewWindow(url, string.IsNullOrEmpty(name) ? "创作者主页" : name);
+        {
+            _ = OpenAuthorUrlAsync(url, name);
+        }
+    }
+
+    private async Task OpenAuthorUrlAsync(string url, string name)
+    {
+        if (TryRouteBiliUrl(url, name)) return;
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && uri.Host.Equals("b23.tv", StringComparison.OrdinalIgnoreCase))
+        {
+            var resolved = await XteamService.Instance.ResolveShortLinkAsync(url);
+            if (!string.IsNullOrEmpty(resolved) && TryRouteBiliUrl(resolved, name))
+                return;
+        }
+        Svc.Navigate?.OpenWebViewWindow(url, string.IsNullOrEmpty(name) ? "创作者主页" : name);
+    }
+
+    // ---------- 原生内嵌同人游戏运行台 ----------
+
+    private async Task OpenEmbeddedGameAsync(string url, string title)
+    {
+        StopAudioPlayback();
+        AudioPlayerBar.Visibility = Visibility.Collapsed;
+
+        _currentGameUrl = url;
+        _currentGameTitle = string.IsNullOrWhiteSpace(title) ? "星创组同人游戏" : title;
+        GameRunnerTitleText.Text = _currentGameTitle;
+        GameRunnerStatusText.Text = $"正在启动《{_currentGameTitle}》…";
+        GameRunnerLoading.Visibility = Visibility.Visible;
+        GameWebView.Visibility = Visibility.Collapsed;
+        GameRunnerOverlay.Visibility = Visibility.Visible;
+
+        try
+        {
+            if (!_gameWebViewInitialized)
+            {
+                var env = await Svc.WebView2.GetEnvironmentAsync();
+                if (GameWebView.CoreWebView2 == null)
+                    await GameWebView.EnsureCoreWebView2Async(env);
+                Svc.WebView2.ApplyColorScheme(GameWebView);
+                if (GameWebView.CoreWebView2 != null)
+                {
+                    GameWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+                    GameWebView.CoreWebView2.Settings.IsStatusBarEnabled = false;
+                    GameWebView.CoreWebView2.NavigationCompleted += OnGameNavigationCompleted;
+                    GameWebView.CoreWebView2.NewWindowRequested += OnGameNewWindowRequested;
+                }
+                _gameWebViewInitialized = true;
+            }
+            GameWebView.CoreWebView2?.Navigate(url);
+        }
+        catch (Exception ex)
+        {
+            GameRunnerOverlay.Visibility = Visibility.Collapsed;
+            Svc.Toast.Show("内嵌游戏加载失败：" + ex.Message);
+        }
+    }
+
+    private void OnGameNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        if (GameRunnerOverlay.Visibility != Visibility.Visible) return;
+        GameRunnerLoading.Visibility = Visibility.Collapsed;
+        GameWebView.Visibility = Visibility.Visible;
+        GameWebView.Focus();
+    }
+
+    private void OnGameNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
+    {
+        e.Handled = true;
+        if (!string.IsNullOrEmpty(e.Uri))
+            HandleUrlAction(e.Uri, _currentGameTitle);
+    }
+
+    private void CloseEmbeddedGame(bool disposeWebView)
+    {
+        if (GameRunnerOverlay != null)
+            GameRunnerOverlay.Visibility = Visibility.Collapsed;
+        if (GameWebView != null)
+            GameWebView.Visibility = Visibility.Collapsed;
+
+        try
+        {
+            if (_gameWebViewInitialized && GameWebView?.CoreWebView2 != null)
+                GameWebView.CoreWebView2.Navigate("about:blank");
+        }
+        catch { }
+
+        if (disposeWebView && _gameWebViewInitialized)
+        {
+            _gameWebViewInitialized = false;
+            try { GameWebView?.Dispose(); } catch { }
+        }
+    }
+
+    public bool TryStepBack()
+    {
+        if (ScreenshotGallery.Visibility == Visibility.Visible)
+        {
+            ScreenshotGallery.Visibility = Visibility.Collapsed;
+            return true;
+        }
+        if (GameRunnerOverlay.Visibility == Visibility.Visible)
+        {
+            CloseEmbeddedGame(disposeWebView: false);
+            return true;
+        }
+        if (DetailOverlay.Visibility == Visibility.Visible)
+        {
+            DetailOverlay.Visibility = Visibility.Collapsed;
+            return true;
+        }
+        return false;
+    }
+
+    private void OnCloseGameClick(object sender, RoutedEventArgs e) =>
+        CloseEmbeddedGame(disposeWebView: false);
+
+    private void OnReloadGameClick(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(_currentGameUrl)) return;
+        _ = OpenEmbeddedGameAsync(_currentGameUrl, _currentGameTitle);
+    }
+
+    private void OnPopoutGameClick(object sender, RoutedEventArgs e)
+    {
+        var url = _currentGameUrl;
+        var title = _currentGameTitle;
+        CloseEmbeddedGame(disposeWebView: false);
+        if (!string.IsNullOrEmpty(url))
+            Svc.Navigate?.OpenWebViewWindow(url, title);
     }
 
     private async Task ShowDetailAsync(string url, XteamProjectItem? fallbackItem)

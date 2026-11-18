@@ -13,6 +13,9 @@ public enum BufferMediaKind
     /// <summary>durl 单流(音视频合一的远端 MP4)</summary>
     VodSingle,
 
+    /// <summary>「听视频」的 DASH 音轨单流(只有声音, 码率比视频低一到两个数量级)</summary>
+    ListenAudio,
+
     /// <summary>直播(持续流, 没有"预读完了就播"的概念)</summary>
     Live,
 }
@@ -59,6 +62,16 @@ public static class BufferPolicy
     private const int LiveManualFloorMs = 1000;
 
     /// <summary>
+    /// 「听视频」音轨单流的自动档预读(issue #81)。
+    /// 音轨码率仅约 0.1~0.2Mbps，若走 VodSingle 带宽比值常落到 500ms，在长挂机中一遇抖动即 underrun；
+    /// 音频 2000ms 缓存仅几十 KB，直接保底换稳定。
+    /// </summary>
+    private const int ListenAudioAutoMs = 2000;
+
+    /// <summary>手动模式下「听视频」的保底: 与直播同理, 低于 1 秒对连续听太激进</summary>
+    private const int ListenAudioManualFloorMs = 1000;
+
+    /// <summary>
     /// 算这条媒体该用的 network-caching(毫秒)。
     /// </summary>
     /// <param name="kind">播放源类型</param>
@@ -71,13 +84,20 @@ public static class BufferPolicy
     {
         if (!auto)
         {
-            return kind == BufferMediaKind.Live
-                ? Math.Max(userMs, LiveManualFloorMs)
-                : Math.Clamp(userMs, SettingsStore.NetworkCachingMinMs, SettingsStore.NetworkCachingMaxMs);
+            if (kind == BufferMediaKind.Live)
+                return Math.Max(userMs, LiveManualFloorMs);
+            if (kind == BufferMediaKind.ListenAudio)
+                return Math.Clamp(Math.Max(userMs, ListenAudioManualFloorMs),
+                    SettingsStore.NetworkCachingMinMs, SettingsStore.NetworkCachingMaxMs);
+            return Math.Clamp(userMs, SettingsStore.NetworkCachingMinMs, SettingsStore.NetworkCachingMaxMs);
         }
 
         if (kind == BufferMediaKind.Live)
             return Math.Clamp(LiveAutoMs + StallBoostMs(mediaUrl),
+                SettingsStore.NetworkCachingMinMs, SettingsStore.NetworkCachingMaxMs);
+
+        if (kind == BufferMediaKind.ListenAudio)
+            return Math.Clamp(ListenAudioAutoMs + StallBoostMs(mediaUrl),
                 SettingsStore.NetworkCachingMinMs, SettingsStore.NetworkCachingMaxMs);
 
         // 自动点播档: 实测吞吐 / 假设码率。比值含义是"带宽能同时拉几路这条流":

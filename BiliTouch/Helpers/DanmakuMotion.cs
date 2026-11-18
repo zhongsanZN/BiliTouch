@@ -121,5 +121,26 @@ public static class DanmakuMotion
     /// <param name="rate">当前播放倍速(1.0 = 原速)。&lt;=0 的脏值按 1.0 处理。</param>
     public static double Extrapolate(double baseMediaSeconds, double wallSeconds, double rate)
         => baseMediaSeconds + wallSeconds * (rate > 0 ? rate : 1.0);
+
+    // ------------------------------------------------------------ 时钟软校准(2026-11-17)
+
+    /// <summary>
+    /// 把"外推值"向"实测值"收敛, 并返回应该采用的新基准。
+    /// 小偏差按 <paramref name="gain"/> 软收敛消除微抖, 大偏差直接对齐以立即响应 seek。
+    /// </summary>
+    public static double Calibrate(double current, double measured,
+        double tolerance = 0.02, double gain = 0.25, double snapThreshold = 1.5)
+    {
+        if (double.IsNaN(measured) || double.IsInfinity(measured)) return current;
+
+        var delta = measured - current;
+        var abs = Math.Abs(delta);
+
+        if (abs >= snapThreshold) return measured;
+        if (abs <= tolerance) return current;
+
+        var g = gain <= 0 ? 1.0 : (gain >= 1 ? 1.0 : gain);
+        return current + delta * g;
+    }
 }
 

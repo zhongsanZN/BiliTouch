@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
+using BiliTouch.Services;
 
 namespace BiliTouch.Helpers;
 
@@ -12,8 +13,6 @@ public sealed class OutlinedDanmakuText : FrameworkElement
 {
     private const double StrokeThickness = 2.4;
     private const double StrokePad = StrokeThickness * 0.5;
-    private static readonly Typeface DefaultTypeface = new(
-        SystemFonts.MessageFontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
     private static readonly Pen OutlinePen = CreateFrozenPen();
 
     private Geometry? _geometry;
@@ -32,6 +31,13 @@ public sealed class OutlinedDanmakuText : FrameworkElement
         FontSize = Math.Max(1, fontSize);
         IsHitTestVisible = false;
         BuildVisualData(1.0);
+    }
+
+    private static Typeface ResolveTypeface()
+    {
+        var family = Application.Current?.TryFindResource(AppTypography.ResourceKey) as FontFamily
+            ?? SystemFonts.MessageFontFamily;
+        return new Typeface(family, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
     }
 
     public void UpdateForeground(Brush foreground)
@@ -64,7 +70,7 @@ public sealed class OutlinedDanmakuText : FrameworkElement
         {
             var shadow = new FormattedText(
                 Text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
-                DefaultTypeface, FontSize, OutlinePen.Brush, _lastDpi);
+                ResolveTypeface(), FontSize, OutlinePen.Brush, _lastDpi);
             dc.DrawText(shadow, new Point(StrokePad + 1, StrokePad + 1));
             dc.DrawText(_fallbackText, new Point(StrokePad, StrokePad));
         }
@@ -97,7 +103,7 @@ public sealed class OutlinedDanmakuText : FrameworkElement
             Text,
             CultureInfo.CurrentUICulture,
             FlowDirection.LeftToRight,
-            DefaultTypeface,
+            ResolveTypeface(),
             FontSize,
             Foreground,
             dpi);
