@@ -121,6 +121,8 @@ internal static class Program
             else if(args.Contains("--live-premium-audio")) AudioImagesFontsTests.Live();
             else if(args.Contains("--trackpad-scroll")) TrackpadScrollTests.Run(Check, Artifacts);
             else if(args.Contains("--web-player-layout")) WebPlayerLayoutTests.Run(Check, Artifacts);
+            else if(args.Contains("--portrait-layout")) PortraitLayoutTests.Run(Check, Artifacts);
+            else if(args.Contains("--tablet-mode")) TabletModeTests.Run(Check, Artifacts);
             else if(args.Contains("--live-mine-messages")) MineMessagesTests.Live();
             else if(args.Contains("--mine-messages")) MineMessagesTests.Run(Check, Artifacts);
             else if(args.Contains("--detail-theme")) DetailThemeTests.Run(Check, Artifacts);

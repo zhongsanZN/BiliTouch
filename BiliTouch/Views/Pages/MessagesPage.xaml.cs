@@ -12,6 +12,7 @@ public partial class MessagesPage : UserControl
     internal TabNavigationGestures ModuleGestures {get;}
  private MessagesViewModel? Vm=>DataContext as MessagesViewModel;
  private bool _scrollScheduled;
+ private bool _tabletShowingThread;
  private Window? _messageHost;
  public MessagesPage()
  {
@@ -19,9 +20,63 @@ public partial class MessagesPage : UserControl
         ModuleGestures = new TabNavigationGestures(this,ModuleContent,ModuleTabs,CreatePeerPreview);
         Helpers.ModuleGestures.Install(this,()=>Vm?.LoadAsync()??Task.CompletedTask,hintHost:ModuleContent,canPull:sv=>sv!=null && !ReferenceEquals(sv,MsgScroll));
   ContactSelection.Install(SessionScroll,item=>{if(item is MsgSession session)_=OpenSessionAsync(session);});
+  DraftBox.GotFocus+=(_,_)=>DraftBox.BringIntoView();
   DataContextChanged+=(_,e)=>{if(e.OldValue is MessagesViewModel old){old.Messages.CollectionChanged-=OnMessagesChanged;old.ChannelCacheUpdated-=OnChannelCacheUpdated;}if(e.NewValue is MessagesViewModel vm){vm.Messages.CollectionChanged+=OnMessagesChanged;vm.ChannelCacheUpdated+=OnChannelCacheUpdated;}ModuleGestures.InvalidatePeers();};
-  Loaded+=async(_,_)=>{Svc.MessageUnread.PropertyChanged+=OnUnreadChanged;_messageHost=Window.GetWindow(this);if(_messageHost!=null)_messageHost.Activated+=OnMessageHostActivated;if(Vm!=null)await Vm.EnsureLoadedAsync();if(Svc.MessageUnread.IsStarted)await Svc.MessageUnread.RefreshAsync(true);};
-  Unloaded+=(_,_)=>{Svc.MessageUnread.PropertyChanged-=OnUnreadChanged;if(_messageHost!=null)_messageHost.Activated-=OnMessageHostActivated;_messageHost=null;};
+  Loaded+=async(_,_)=>{Responsive.PostureChanged-=OnMessagesPostureChanged;Responsive.PostureChanged+=OnMessagesPostureChanged;ApplyTabletLayout(Responsive.GetPosture(this));Svc.MessageUnread.PropertyChanged+=OnUnreadChanged;_messageHost=Window.GetWindow(this);if(_messageHost!=null)_messageHost.Activated+=OnMessageHostActivated;if(Vm!=null)await Vm.EnsureLoadedAsync();if(Svc.MessageUnread.IsStarted)await Svc.MessageUnread.RefreshAsync(true);};
+  Unloaded+=(_,_)=>{Responsive.PostureChanged-=OnMessagesPostureChanged;Svc.MessageUnread.PropertyChanged-=OnUnreadChanged;if(_messageHost!=null)_messageHost.Activated-=OnMessageHostActivated;_messageHost=null;};
+ }
+
+ private void OnMessagesPostureChanged(FrameworkElement _,LayoutPosture posture)=>ApplyTabletLayout(posture);
+
+ internal bool IsTabletShowingThread => _tabletShowingThread && Responsive.GetPosture(this) == LayoutPosture.TabletPortrait;
+
+ internal bool TryGoBackTabletThread()
+ {
+  if (!IsTabletShowingThread) return false;
+  _tabletShowingThread = false;
+  ApplyTabletLayout(Responsive.GetPosture(this));
+  return true;
+ }
+
+ private void OnPrivateBackClick(object sender, RoutedEventArgs e) => TryGoBackTabletThread();
+
+ internal void ApplyTabletLayout(LayoutPosture posture)
+ {
+  var tablet = posture == LayoutPosture.TabletPortrait;
+  if (ShellPageTitle != null) ShellPageTitle.Margin = tablet ? new Thickness(16, 20, 16, 0) : PageHeaderMetrics.TitleMargin;
+  if (ModuleTabs != null) ModuleTabs.Margin = tablet ? new Thickness(16, 0, 16, 0) : PageHeaderMetrics.TabsMargin;
+  if (NotificationChannelGrid != null) NotificationChannelGrid.Margin = tablet ? new Thickness(12, 8, 12, 12) : new Thickness(24, 8, 24, 20);
+  if (tablet)
+  {
+   SessionScroll.Margin = new Thickness(8, 4, 8, 12);
+   PrivateThreadPane.Margin = new Thickness(8, 4, 8, 12);
+   if (_tabletShowingThread)
+   {
+    PrivateSessionCol.Width = new GridLength(0);
+    PrivateThreadCol.Width = new GridLength(1, GridUnitType.Star);
+    SessionScroll.Visibility = Visibility.Collapsed;
+    PrivateThreadPane.Visibility = Visibility.Visible;
+    BtnPrivateBack.Visibility = Visibility.Visible;
+   }
+   else
+   {
+    PrivateSessionCol.Width = new GridLength(1, GridUnitType.Star);
+    PrivateThreadCol.Width = new GridLength(0);
+    SessionScroll.Visibility = Visibility.Visible;
+    PrivateThreadPane.Visibility = Visibility.Collapsed;
+    BtnPrivateBack.Visibility = Visibility.Collapsed;
+   }
+  }
+  else
+  {
+   PrivateSessionCol.Width = new GridLength(252);
+   PrivateThreadCol.Width = new GridLength(1, GridUnitType.Star);
+   SessionScroll.Margin = new Thickness(12, 4, 0, 20);
+   PrivateThreadPane.Margin = new Thickness(12, 4, 24, 20);
+   SessionScroll.Visibility = Visibility.Visible;
+   PrivateThreadPane.Visibility = Visibility.Visible;
+   BtnPrivateBack.Visibility = Visibility.Collapsed;
+  }
  }
 
  private void OnChannelCacheUpdated() => Dispatcher.BeginInvoke(new Action(() => ModuleGestures.InvalidatePeers()));
@@ -242,7 +297,17 @@ public partial class MessagesPage : UserControl
  {if(e.PropertyName==nameof(MessageUnreadService.Total) && IsVisible && _messageHost?.IsActive==true && Vm is {Loading:false,ThreadLoading:false,NotificationLoading:false} vm)await vm.EnsureLoadedAsync();}
  private void OnMessagesChanged(object? sender,NotifyCollectionChangedEventArgs e){if(Vm?.LoadingOlder!=true)ScrollToBottom();}
  private void OnSessionClick(object sender,MouseButtonEventArgs e){if(e.ChangedButton==MouseButton.Left && sender is FrameworkElement {DataContext:MsgSession session})_=OpenSessionAsync(session);}
- private async Task OpenSessionAsync(MsgSession session){if(Vm==null)return;await Vm.LoadThreadAsync(session);ScrollToBottom();}
+ private async Task OpenSessionAsync(MsgSession session)
+ {
+  if(Vm==null)return;
+  if(Responsive.GetPosture(this)==LayoutPosture.TabletPortrait)
+  {
+   _tabletShowingThread=true;
+   ApplyTabletLayout(LayoutPosture.TabletPortrait);
+  }
+  await Vm.LoadThreadAsync(session);
+  ScrollToBottom();
+ }
  private void OnDraftKeyDown(object sender,KeyEventArgs e){if(e.Key==Key.Enter && Keyboard.Modifiers!=ModifierKeys.Shift){e.Handled=true;if(Vm?.SendCommand.CanExecute(null)==true)Vm.SendCommand.Execute(null);}}
  private void OnMessageImageClick(object sender,MouseButtonEventArgs e){e.Handled=true;if(sender is FrameworkElement {DataContext:MsgItem m} && m.ImageUrl.Length>0)MediaActions.ShowImage(m.ImageUrl,"私信图片",Window.GetWindow(this));}
  private void OnMessageCardClick(object sender,MouseButtonEventArgs e){e.Handled=true;if(sender is FrameworkElement {DataContext:MsgItem m})OpenCard(m);}

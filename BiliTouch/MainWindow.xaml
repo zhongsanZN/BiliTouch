@@ -134,6 +134,10 @@
             </VisualStateGroup>
         </VisualStateManager.VisualStateGroups>
 
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <!-- Auto 而不是 96: 轨宽由 NavRail 自己的 Width 决定(那是 double, 能平滑动画),
                  列宽自动跟随。写死 96 的话就得为 GridLength 写一个自定义动画类, 不值当。 -->
@@ -142,8 +146,8 @@
         </Grid.ColumnDefinitions>
 
 
-        <!-- ============ 左侧导航栏(通高) ============ -->
-        <Border x:Name="NavRail" Grid.Column="0" Width="96"
+        <!-- ============ 左侧导航栏(通高，平板竖屏态隐藏并切换至底部导航栏) ============ -->
+        <Border x:Name="NavRail" Grid.Row="0" Grid.RowSpan="2" Grid.Column="0" Width="96"
                 Background="{DynamicResource SideBarBackgroundBrush}" BorderThickness="0"
                 SnapsToDevicePixels="True" UseLayoutRounding="True">
             <Grid>
@@ -304,7 +308,7 @@
              与左侧导航项保持在同一条水平线上(见 NavRail 那段的说明)。
              ★ 2026-10-13 左上角 logo 已恢复, "内容区上移到最上沿"的结论不变:
                它当初是为了与 logo 对齐, 现在仍然与 logo 对齐。 -->
-        <Grid Grid.Column="1" ClipToBounds="True">
+        <Grid x:Name="MainContentGrid" Grid.Column="1" ClipToBounds="True">
             <helpers:SkinSurface x:Name="SharedHeaderSurface" Kind="Shared" Height="112" VerticalAlignment="Top"/>
             <ContentControl x:Name="PageHost" Focusable="False" />
 
@@ -389,8 +393,147 @@
                 往下压一个标题栏的高度, 页面标题就比左侧栏的 logo 低一截, 那正是这次要修的观感。
                 按钮自己带 IsHitTestVisibleInChrome(见 WindowButtons), 不写的话点在按钮上是拖窗口。
             -->
+            <!-- 平板竖屏态顶部快捷按钮（消息 + 主题切换，位于最小化/最大化/关闭左侧） -->
+            <StackPanel x:Name="TabletTopActions" Orientation="Horizontal"
+                        HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Margin="0,4,132,0" Panel.ZIndex="20" Visibility="Collapsed"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                <Button x:Name="TabletMessagesButton" Width="36" Height="36" Style="{StaticResource IconButtonStyle}"
+                        Click="OnSidebarMessages" ToolTip="消息" AutomationProperties.Name="消息">
+                    <Grid Width="26" Height="26">
+                        <Path Data="{StaticResource MessageIconGeometry}" Width="16" Height="16" Stretch="Uniform"
+                              Fill="Transparent"
+                              Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}"
+                              StrokeThickness="1.4" StrokeLineJoin="Round" />
+                        <Border Background="{DynamicResource UnreadDotBrush}" CornerRadius="8" MinWidth="15" Height="15"
+                                Padding="3,0" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-4,-4,0"
+                                IsHitTestVisible="False"
+                                Visibility="{Binding MessageUnread.HasUnread,Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="{Binding MessageUnread.BadgeText}" FontFamily="{DynamicResource AppFontFamily}"
+                                       Foreground="White" FontSize="9" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </Grid>
+                </Button>
+                <Button x:Name="TabletThemeButton" Width="36" Height="36" Margin="4,0,0,0" Style="{StaticResource IconButtonStyle}"
+                        PreviewMouseLeftButtonDown="OnSidebarThemeDown" Click="OnSidebarTheme"
+                        ToolTip="切换深浅主题" AutomationProperties.Name="切换深浅主题">
+                    <TextBlock x:Name="TabletThemeGlyph" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="16" />
+                </Button>
+            </StackPanel>
+
             <controls:WindowButtons HorizontalAlignment="Right" VerticalAlignment="Top"
                                     Margin="0,4,4,0" Panel.ZIndex="20" />
+
+            <!-- Surface 设备一次性平板模式引导提示（默认折叠，仅命中 Surface 且尚未开启/关闭过时显示） -->
+            <Border x:Name="SurfaceTabletHintBanner" Visibility="Collapsed" Panel.ZIndex="35"
+                    HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                    Margin="20,0,20,20" Padding="16,12" CornerRadius="12" MaxWidth="680"
+                    Background="{DynamicResource OverlaySurfaceBrush}"
+                    BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.22" Direction="270" Color="#000000" />
+                </Border.Effect>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="&#xE70A;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                               FontSize="18" VerticalAlignment="Center" Margin="0,0,12,0"
+                               Foreground="{DynamicResource AccentTextBrush}" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="检测到您正在使用 Surface 设备" FontSize="13.5" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource TextPrimaryBrush}" />
+                        <TextBlock Text="可开启「平板模式」，在竖屏手持时自动切换为安卓端布局。" FontSize="12" Margin="0,2,0,0"
+                                   TextWrapping="Wrap" Foreground="{DynamicResource TextSecondaryBrush}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="BtnEnableSurfaceTabletMode" Content="立即开启"
+                                Style="{StaticResource AccentButtonStyle}" MinHeight="36" Padding="14,6"
+                                Click="OnEnableSurfaceTabletModeClick" />
+                        <Button x:Name="BtnDismissSurfaceTabletHint" Content="暂不"
+                                Style="{StaticResource SubtleButtonStyle}" MinHeight="36" Padding="12,6" Margin="8,0,0,0"
+                                Click="OnDismissSurfaceTabletHintClick" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ============ 平板竖屏底部导航栏（沿用桌面 4 项：首页 / 动态 / 我的 / 设置） ============ -->
+        <Border x:Name="BottomNavBar" Grid.Row="1" Grid.ColumnSpan="2" Height="60"
+                Visibility="Collapsed"
+                Background="{DynamicResource SideBarBackgroundBrush}"
+                BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0"
+                SnapsToDevicePixels="True" UseLayoutRounding="True">
+            <Grid>
+                <helpers:SkinSurface Kind="Rail" />
+                <UniformGrid Columns="4" Margin="12,4">
+                    <UniformGrid.Resources>
+                        <Style TargetType="TextBlock" BasedOn="{x:Null}">
+                            <Setter Property="Foreground"
+                                    Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}" />
+                        </Style>
+                    </UniformGrid.Resources>
+                    <RadioButton x:Name="BottomNavHome" GroupName="BottomNavGroup" Style="{StaticResource NavRadioStyle}"
+                                 HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                 ToolTip="首页" Click="OnBottomNavClick"
+                                 Tag="{x:Static vm:PageKey.Home}"
+                                 IsChecked="{Binding Current, Converter={StaticResource EnumEquals}, ConverterParameter=Home, Mode=OneWay}">
+                        <StackPanel VerticalAlignment="Center">
+                            <helpers:SkinGlyph Kind="Home" IconSize="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock Text="&#xE80F;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="18" HorizontalAlignment="Center" />
+                            </helpers:SkinGlyph>
+                            <TextBlock Text="首页" FontSize="11" Margin="0,3,0,0" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="BottomNavFollow" GroupName="BottomNavGroup" Style="{StaticResource NavRadioStyle}"
+                                 HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                 ToolTip="动态" Click="OnBottomNavClick"
+                                 Tag="{x:Static vm:PageKey.Follow}"
+                                 IsChecked="{Binding Current, Converter={StaticResource EnumEquals}, ConverterParameter=Follow, Mode=OneWay}">
+                        <StackPanel VerticalAlignment="Center">
+                            <helpers:SkinGlyph Kind="Dynamic" IconSize="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Path Data="{StaticResource DynamicIconGeometry}"
+                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"
+                                      StrokeThickness="1.6" Width="18" Height="18" Stretch="Uniform" HorizontalAlignment="Center" />
+                            </helpers:SkinGlyph>
+                            <TextBlock Text="动态" FontSize="11" Margin="0,3,0,0" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="BottomNavMine" GroupName="BottomNavGroup" Style="{StaticResource NavRadioStyle}"
+                                 HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                 ToolTip="我的" Click="OnBottomNavClick"
+                                 Tag="{x:Static vm:PageKey.Mine}"
+                                 IsChecked="{Binding Current, Converter={StaticResource EnumEquals}, ConverterParameter=Mine, Mode=OneWay}">
+                        <StackPanel VerticalAlignment="Center">
+                            <helpers:SkinGlyph Kind="Mine" IconSize="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock Text="&#xE77B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="18" HorizontalAlignment="Center" />
+                            </helpers:SkinGlyph>
+                            <TextBlock Text="我的" FontSize="11" Margin="0,3,0,0" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="BottomNavSettings" GroupName="BottomNavGroup" Style="{StaticResource NavRadioStyle}"
+                                 HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                 ToolTip="设置" Click="OnBottomNavClick"
+                                 Tag="{x:Static vm:PageKey.Settings}"
+                                 IsChecked="{Binding Current, Converter={StaticResource EnumEquals}, ConverterParameter=Settings, Mode=OneWay}">
+                        <StackPanel VerticalAlignment="Center">
+                            <helpers:SkinGlyph Kind="Settings" IconSize="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <TextBlock Text="&#xE713;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="18" HorizontalAlignment="Center" />
+                            </helpers:SkinGlyph>
+                            <TextBlock Text="设置" FontSize="11" Margin="0,3,0,0" HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </RadioButton>
+                </UniformGrid>
+            </Grid>
+        </Border>
+
+        <!-- ============ 平板模式单窗口内嵌播放舞台（盖住底部导航与内容区，实色不透底） ============ -->
+        <Grid x:Name="EmbeddedPlayerHost" Grid.Row="0" Grid.RowSpan="2" Grid.ColumnSpan="2"
+              Panel.ZIndex="30" Visibility="Collapsed"
+              Background="{DynamicResource OverlaySurfaceBrush}">
+            <ContentPresenter x:Name="EmbeddedPlayerContent" />
         </Grid>
 
         <!-- ============ 分区面板(点左上角 logo 展开) ============

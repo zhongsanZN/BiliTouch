@@ -16,8 +16,15 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Restore solution
         run: dotnet restore BiliTouch.sln
-      - name: Build application and test harness
+      - name: Build application and test harness (x64)
         run: dotnet build BiliTouch.sln -c Release --no-restore
+      - name: Cross-build ARM64 target and verify native LibVLC
+        run: |
+          dotnet build BiliTouch/BiliTouch.csproj -c Release -r win-arm64
+          $armVlc = "BiliTouch/bin/Release/net10.0-windows/win-arm64/libvlc/win-arm64/libvlc.dll"
+          $x64Leak = "BiliTouch/bin/Release/net10.0-windows/win-arm64/libvlc/win-x64"
+          if (!(Test-Path $armVlc)) { throw "Missing ARM64 native libvlc.dll: $armVlc" }
+          if (Test-Path $x64Leak) { throw "Unexpected x64 libvlc leaked into ARM64 output: $x64Leak" }
       - name: Run unified offline CI suite
         run: |
           dotnet tests/TouchTests/bin/Release/net10.0-windows/TouchTests.dll --ci

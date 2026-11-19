@@ -580,6 +580,57 @@ public partial class SettingsViewModel : ObservableObject
         }
     }
 
+    public bool PortraitVideoOptimization
+    {
+        get => Svc.Settings.PortraitVideoOptimization;
+        set
+        {
+            if (value == Svc.Settings.PortraitVideoOptimization) return;
+            Svc.Settings.SetPortraitVideoOptimization(value);
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsTabletModeOff
+    {
+        get => Svc.Settings.TabletMode == TabletMode.Off;
+        set
+        {
+            if (!value || Svc.Settings.TabletMode == TabletMode.Off) return;
+            Svc.Settings.SetTabletMode(TabletMode.Off);
+            NotifyTabletModeChanged();
+        }
+    }
+
+    public bool IsTabletModeAuto
+    {
+        get => Svc.Settings.TabletMode == TabletMode.Auto;
+        set
+        {
+            if (!value || Svc.Settings.TabletMode == TabletMode.Auto) return;
+            Svc.Settings.SetTabletMode(TabletMode.Auto);
+            NotifyTabletModeChanged();
+        }
+    }
+
+    public bool IsTabletModeAlways
+    {
+        get => Svc.Settings.TabletMode == TabletMode.Always;
+        set
+        {
+            if (!value || Svc.Settings.TabletMode == TabletMode.Always) return;
+            Svc.Settings.SetTabletMode(TabletMode.Always);
+            NotifyTabletModeChanged();
+        }
+    }
+
+    private void NotifyTabletModeChanged()
+    {
+        OnPropertyChanged(nameof(IsTabletModeOff));
+        OnPropertyChanged(nameof(IsTabletModeAuto));
+        OnPropertyChanged(nameof(IsTabletModeAlways));
+    }
+
     /// <summary>卡片页每行显示几列(0 = 自动)</summary>
     public int CardColumns
     {

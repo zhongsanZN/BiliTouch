@@ -25,8 +25,16 @@
        两行都受限, 窗口再矮也不会把任何一块挤到窗口外。 -->
   <Grid.RowDefinitions><RowDefinition Height="*"/></Grid.RowDefinitions>
   <Grid x:Name="DetailColumns">
-   <Grid.ColumnDefinitions><ColumnDefinition Width="3*" MinWidth="260"/><ColumnDefinition Width="20"/><ColumnDefinition Width="2*" MinWidth="280"/></Grid.ColumnDefinitions>
-   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+   <Grid.RowDefinitions>
+    <RowDefinition x:Name="DetailTopRow" Height="0" />
+    <RowDefinition x:Name="DetailBottomRow" Height="*" />
+   </Grid.RowDefinitions>
+   <Grid.ColumnDefinitions>
+    <ColumnDefinition x:Name="DetailLeftCol" Width="3*" MinWidth="260"/>
+    <ColumnDefinition x:Name="DetailMidCol" Width="20"/>
+    <ColumnDefinition x:Name="DetailRightCol" Width="2*" MinWidth="280"/>
+   </Grid.ColumnDefinitions>
+   <ScrollViewer x:Name="DynamicBodyScroll" Grid.Row="1" Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
     <StackPanel>
      <controls:DynamicFeedCard DataContext="{Binding Item}" IsDetail="True" MaxWidth="800" CommentRequested="OnFocusComment" RepostRequested="OnFocusRepost" />
      <TextBlock Text="{Binding DetailError}" Visibility="{Binding DetailError, Converter={StaticResource StrToVis}}" TextWrapping="Wrap" Margin="12,6" Foreground="{DynamicResource DangerTextBrush}" />
@@ -96,8 +104,8 @@
      </Border>
     </StackPanel>
    </ScrollViewer>
-   <Border Grid.Column="1" Width="1" Background="{DynamicResource DividerBrush}" Margin="0,6,0,0" />
-   <Grid x:Name="CommentsPane" Grid.Column="2">
+   <Border x:Name="DetailDivider" Grid.Row="1" Grid.Column="1" Width="1" Background="{DynamicResource DividerBrush}" Margin="0,6,0,0" />
+   <Grid x:Name="CommentsPane" Grid.Row="1" Grid.Column="2">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <Grid Grid.Row="0" Margin="8,6,8,14">
      <controls:LoadingRing Width="18" Height="18" HorizontalAlignment="Left" Margin="50,0,0,0" Visibility="{Binding Loading,Converter={StaticResource BoolToVis}}"/>

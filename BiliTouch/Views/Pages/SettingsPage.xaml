@@ -27,7 +27,7 @@
                 </helpers:NavigationTabs>
         </Grid>
         <ScrollViewer x:Name="ModuleContent" FocusVisualStyle="{x:Null}" Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,8,0">
-        <StackPanel Margin="36,12,36,32">
+        <StackPanel x:Name="SettingsContentStack" Margin="36,12,36,32">
             <!-- ============ 内容区 ============
                  DataTriggers 选择 ContentTemplate；RetainedTemplateContent 保留各模板的控件，切回时复用。
                  ★ Content 必须保持是 **VM 本身**({Binding}): 模板里所有 Command / 属性绑定

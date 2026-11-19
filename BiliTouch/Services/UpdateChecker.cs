@@ -1,6 +1,7 @@
 using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -75,11 +76,8 @@ public sealed class UpdateInfo
     {
         get
         {
-            // ★ 写 this.Version 而不是裸 Version: 属性名与类型 System.Version 同名,
-            //   裸写虽然能编过(C# 的"Color Color"规则), 但读的人要停顿一下才分得清
-            //   那是"取属性"还是"访问类型"。加 this. 没有歧义。
             var v = this.Version;
-            return $"BiliTouch-{UpdateChecker.FormatVersion(v)}-setup.exe";
+            return UpdateChecker.SetupFileNameFor(v, RuntimeInformation.ProcessArchitecture);
         }
     }
 
@@ -151,18 +149,22 @@ public static class UpdateChecker
     //   国内访问 Releases 页/附件本来也只需要浏览器能开 GitHub。
 
     /// <summary>
-    /// 安装器附件名的**唯一**判据。三处必须同形(见 <see cref="UpdateInfo.SetupFileName"/>):
-    /// installer.iss 的 OutputBaseFilename、github_release.py 的 expected、以及这里的正则。
-    ///
-    /// ★ 为什么用正则而不是 EndsWith(".exe"): Release 里以后可能同时挂便携 zip、符号包、
-    ///   checksum 文件; 名字不带版本号就无法确认"这个附件是这一版" —— 拿到旧包会装出
-    ///   一个版本号倒退的程序, 那比"没有更新"糟得多。
-    /// ★ 版本段允许 "-beta"/".1" 这类后缀(github_release.py 的版本校验允许),
-    ///   但解析出来的**数字版本必须等于 tag 解析出的版本**, 后缀本身不参与比较。
+    /// 安装器附件名的唯一判据（双架构兼容）：
+    ///   · x64：BiliTouch-{version}-setup.exe（保持历史文件名，确保 v0.2.x~v0.3.5 老客户端无缝升级，也兼容 -setup-x64.exe）
+    ///   · ARM64：BiliTouch-{version}-setup-arm64.exe（后缀置于 -setup 之后，绝不会被老版 x64 客户端误匹配）
     /// </summary>
     private static readonly Regex SetupNamePattern = new(
-        @"^BiliTouch-(?<version>\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.]+)?)-setup\.exe$",
+        @"^BiliTouch-(?<version>\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.]+)?)-setup(?:-x64)?\.exe$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly Regex Arm64SetupNamePattern = new(
+        @"^BiliTouch-(?<version>\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.]+)?)-setup-arm64\.exe$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    internal static string SetupFileNameFor(Version version, Architecture architecture) =>
+        architecture == Architecture.Arm64
+            ? $"BiliTouch-{FormatVersion(version)}-setup-arm64.exe"
+            : $"BiliTouch-{FormatVersion(version)}-setup.exe";
 
     private static readonly HttpClient Http = new()
     {
@@ -301,19 +303,23 @@ public static class UpdateChecker
     }
 
     /// <summary>
-    /// 在 assets 数组里找这一版的安装器。
+    /// 在 assets 数组里找这一版与当前进程架构匹配的安装器。
     /// 找不到(或结构不认识)返回 null —— 调用方按"没有可自动安装的更新"处理, 不抛。
     /// </summary>
     private static InstallerAsset? FindInstallerAsset(JsonElement root, Version expected)
+        => FindInstallerAsset(root, expected, RuntimeInformation.ProcessArchitecture);
+
+    internal static InstallerAsset? FindInstallerAsset(JsonElement root, Version expected, Architecture architecture)
     {
         if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array) return null;
+        var pattern = architecture == Architecture.Arm64 ? Arm64SetupNamePattern : SetupNamePattern;
 
         foreach (var asset in assets.EnumerateArray())
         {
             if (asset.ValueKind != JsonValueKind.Object) continue;
             if (!asset.TryGetProperty("name", out var nameEl) || nameEl.ValueKind != JsonValueKind.String) continue;
 
-            var match = SetupNamePattern.Match(nameEl.GetString() ?? "");
+            var match = pattern.Match(nameEl.GetString() ?? "");
             if (!match.Success) continue;
 
             // ★ 名字里的版本必须与 tag 一致: Release 里可能还挂着历史附件(手动上传/改名遗漏),
@@ -505,7 +511,7 @@ public static class UpdateChecker
     /// (size 可能拿不到、digest 可能就是 null), 元组在调用点会变成
     /// <c>asset?.Sha256</c> 这种既难读又容易写错的下标访问。
     /// </summary>
-    private sealed class InstallerAsset
+    internal sealed class InstallerAsset
     {
         public string Url { get; init; } = "";
         public long Size { get; init; }

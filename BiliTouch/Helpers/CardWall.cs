@@ -245,7 +245,8 @@ public static class CardWall
     /// </summary>
     private static void ApplyTo(FrameworkElement wall, double avail)
     {
-        var cols = ColumnsFor(avail, (int)wall.GetValue(ColumnsProperty));
+        var posture = Responsive.GetPosture(wall);
+        var cols = ColumnsFor(avail, (int)wall.GetValue(ColumnsProperty), posture);
         wall.SetValue(ColumnsProperty, cols);
 
         // ★ 槽位宽必须**向下取整**, 而且还要留出**取整余量**。
@@ -351,9 +352,18 @@ public static class CardWall
     ///
     /// ★ 用户指定了固定列数时**直接返回它**, 不参与迟滞 —— 见 <see cref="FixedColumns"/>。
     /// </summary>
-    public static int ColumnsFor(double avail, int current)
+    public static int ColumnsFor(double avail, int current) => ColumnsFor(avail, current, LayoutPosture.Desktop);
+
+    public static int ColumnsFor(double avail, int current, LayoutPosture posture)
     {
         if (FixedColumns > 0) return FixedColumns;
+
+        if (posture == LayoutPosture.TabletPortrait)
+        {
+            // 安卓平板竖屏信息流密度：窄竖屏固定 2 列大卡，宽竖屏（>=760 DIP）3 列
+            if (avail < 760) return 2;
+            if (avail < 1040) return 3;
+        }
 
         // 平板/大屏档: 卡片跟着放大, 列数封顶, 保持和手机接近的信息密度
         var minItem = avail >= LargeScreenWidth ? MinItemWidthLarge : MinItemWidth;

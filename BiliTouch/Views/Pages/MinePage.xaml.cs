@@ -70,7 +70,28 @@ public partial class MinePage : UserControl, IHorizontalSwipeHost
         SectionHost.PreviewTouchMove += (_, e) => { if (SwipeMove(e.GetTouchPoint(null).Position)) e.Handled = true; };
         SectionHost.PreviewTouchUp += (_, e) => { if (SwipeUp()) e.Handled = true; };
         SectionHost.PreviewMouseLeftButtonUp += (_, e) => { if (_suppressClick) { e.Handled = true; _suppressClick = false; } };
-        Unloaded += (_, _) => { CompleteActiveSnap(); RestorePanning(); ClearPeerSection(); _armed = false; };
+        Loaded += (_, _) =>
+        {
+            Responsive.PostureChanged -= OnMinePostureChanged;
+            Responsive.PostureChanged += OnMinePostureChanged;
+            ApplyTabletLayout(Responsive.GetPosture(this));
+        };
+        Unloaded += (_, _) =>
+        {
+            Responsive.PostureChanged -= OnMinePostureChanged;
+            CompleteActiveSnap(); RestorePanning(); ClearPeerSection(); _armed = false;
+        };
+    }
+
+    private void OnMinePostureChanged(FrameworkElement _, LayoutPosture posture) => ApplyTabletLayout(posture);
+
+    internal void ApplyTabletLayout(LayoutPosture posture)
+    {
+        var tablet = posture == LayoutPosture.TabletPortrait;
+        if (ShellPageTitle != null)
+            ShellPageTitle.Margin = tablet ? new Thickness(16, 20, 16, 0) : PageHeaderMetrics.TitleMargin;
+        if (MineTabs != null)
+            MineTabs.Margin = tablet ? new Thickness(16, 0, 16, 0) : PageHeaderMetrics.TabsMargin;
     }
 
     private RadioButton[] Tabs => new[] { OverviewTab, HistoryTab, FavoritesTab, LaterTab, CacheTab };

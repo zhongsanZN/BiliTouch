@@ -50,6 +50,25 @@ public class SettingsStore
     public bool UseWebPlayerLayout { get; set; }
     public void SetWebPlayerLayout(bool enabled)
     {if(UseWebPlayerLayout==enabled)return;UseWebPlayerLayout=enabled;Save();LayoutChanged?.Invoke();}
+    public bool PortraitVideoOptimization { get; set; }
+    public void SetPortraitVideoOptimization(bool enabled)
+    {if(PortraitVideoOptimization==enabled)return;PortraitVideoOptimization=enabled;Save();LayoutChanged?.Invoke();}
+    public TabletMode TabletMode { get; set; } = TabletMode.Off;
+    public bool SurfaceTabletHintDismissed { get; set; }
+    public void SetTabletMode(TabletMode mode)
+    {
+        if (!Enum.IsDefined(typeof(TabletMode), mode)) mode = TabletMode.Off;
+        if (TabletMode == mode) return;
+        TabletMode = mode;
+        Save();
+        LayoutChanged?.Invoke();
+    }
+    public void DismissSurfaceTabletHint()
+    {
+        if (SurfaceTabletHintDismissed) return;
+        SurfaceTabletHintDismissed = true;
+        Save();
+    }
 
     /// <summary>
     /// 窗口背景材质的**可选定值**(设置页那四个胶囊; 顺序就是界面顺序)。
@@ -563,6 +582,9 @@ public class SettingsStore
         //   0 要保留(它的语义是"自动"), 所以只在 >0 时夹。
         FontId=AppTypography.Normalize(s.FontId);
         UseWebPlayerLayout = s.UseWebPlayerLayout;
+        PortraitVideoOptimization = s.PortraitVideoOptimization;
+        TabletMode = Enum.IsDefined(typeof(TabletMode), s.TabletMode) ? s.TabletMode : TabletMode.Off;
+        SurfaceTabletHintDismissed = s.SurfaceTabletHintDismissed;
         ExperimentalVideoEnhancement=s.ExperimentalVideoEnhancement;VideoEnhancementActive=s.VideoEnhancementActive;
         VideoEnhancementMode=s.VideoEnhancementMode=="视频处理器缩放"?s.VideoEnhancementMode:"自动厂商增强";
         VideoEnhancementHdr=s.VideoEnhancementHdr;EnhancementAdapterId=s.EnhancementAdapterId??"auto";
@@ -826,6 +848,9 @@ public class SettingsStore
         SkinUseAccent = SkinUseAccent,
         FontId=FontId,
         UseWebPlayerLayout = UseWebPlayerLayout,
+        PortraitVideoOptimization = PortraitVideoOptimization,
+        TabletMode = TabletMode,
+        SurfaceTabletHintDismissed = SurfaceTabletHintDismissed,
         ExperimentalVideoEnhancement=ExperimentalVideoEnhancement,VideoEnhancementActive=VideoEnhancementActive,
         VideoEnhancementMode=VideoEnhancementMode,VideoEnhancementHdr=VideoEnhancementHdr,EnhancementAdapterId=EnhancementAdapterId,
         TouchpadFeedSensitivity = TouchpadFeedSensitivity,

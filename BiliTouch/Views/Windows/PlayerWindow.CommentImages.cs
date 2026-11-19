@@ -33,7 +33,7 @@ public partial class PlayerWindow
         UpdateCommentPicturePlacement();
         _=_commentGallery.OpenAsync(urls,Math.Max(0,urls.IndexOf(picture.Url)));
     }
-    private bool InlineCommentPicture=>IsWebVideoLayout || (_commentGallery is {NaturalHeight:>0,NaturalWidth:>0} g ? g.NaturalHeight>g.NaturalWidth : _commentPicturePortrait);
+    private bool InlineCommentPicture=>UsesDetachedCommentsLayout || (_commentGallery is {NaturalHeight:>0,NaturalWidth:>0} g ? g.NaturalHeight>g.NaturalWidth : _commentPicturePortrait);
     private void UpdateCommentPicturePlacement()
     {
         if(_commentGallery==null || _closing)return;
@@ -106,7 +106,7 @@ public partial class PlayerWindow
     }
     private void UpdatePictureSplitGeometry()
     {
-        if(!_pictureSplitActive || IsWebVideoLayout || _closing)return;
+        if(!_pictureSplitActive || UsesDetachedCommentsLayout || _closing)return;
         var width=VideoColumn.ActualWidth;
         var height=Math.Min(width*9/16,Math.Max(1,PlayerStage.ActualHeight*0.34));
         PictureVideoSpacer.Height=height;
@@ -117,7 +117,7 @@ public partial class PlayerWindow
     {
         OriginalPicturePane.Visibility=Visibility.Collapsed;
         if(!_pictureSplitActive)return;_pictureSplitActive=false;
-        if(IsWebVideoLayout)return;
+        if(UsesDetachedCommentsLayout)return;
         VideoSurface.Width=VideoSurface.Height=double.NaN;VideoSurface.Margin=new Thickness(0);
         VideoSurface.HorizontalAlignment=HorizontalAlignment.Stretch;VideoSurface.VerticalAlignment=VerticalAlignment.Stretch;
     }

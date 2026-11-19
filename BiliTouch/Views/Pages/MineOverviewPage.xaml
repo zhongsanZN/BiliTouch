@@ -9,13 +9,13 @@
    <Button Content="登录" Command="{Binding LoginCommand}" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Center" MinHeight="44" Padding="28,8"/>
   </StackPanel>
   <ScrollViewer x:Name="ProfileScroll" VerticalScrollBarVisibility="Auto" ScrollChanged="OnScrollChanged" Visibility="{Binding IsLoggedIn,Converter={StaticResource BoolToVis}}">
-   <StackPanel Margin="36,8,36,28">
+   <StackPanel x:Name="OverviewStack" Margin="36,8,36,28">
     <Border Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="18" Padding="0" Margin="0,0,0,24">
       <helpers:SkinProfileLayout x:Name="ProfileSkinLayout">
-      <Grid Margin="26"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-      <Border Width="88" Height="88" CornerRadius="44" Background="{DynamicResource AccentSoftFillBrush}" VerticalAlignment="Top"><Border CornerRadius="44" helpers:Cover.Source="{Binding Face}"/></Border>
-      <StackPanel Grid.Column="1" Margin="22,0,0,0">
-       <TextBlock Text="{Binding Name}" FontSize="26" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap"/>
+      <Grid x:Name="ProfileCardGrid" Margin="26"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <Border x:Name="ProfileAvatarBox" Width="88" Height="88" CornerRadius="44" Background="{DynamicResource AccentSoftFillBrush}" VerticalAlignment="Top"><Border x:Name="ProfileAvatarInner" CornerRadius="44" helpers:Cover.Source="{Binding Face}"/></Border>
+      <StackPanel x:Name="ProfileInfoStack" Grid.Column="1" Margin="22,0,0,0">
+       <TextBlock x:Name="ProfileNameText" Text="{Binding Name}" FontSize="26" FontWeight="Bold" Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap"/>
        <TextBlock Text="{Binding Mid,StringFormat=UID：{0}}" Margin="0,6,0,0" Foreground="{DynamicResource TextTertiaryBrush}"/>
        <TextBlock Text="{Binding Sign}" TextWrapping="Wrap" Margin="0,12,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
        <WrapPanel Margin="-10,14,0,0">

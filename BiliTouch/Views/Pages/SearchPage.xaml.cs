@@ -67,11 +67,15 @@ public partial class SearchPage : UserControl
         // 历史增删与全局屏蔽仅在页面挂入可视树期间订阅，卸载时退订（避免独立搜索窗口泄漏）。
         Loaded += (_, _) =>
         {
+            Responsive.PostureChanged -= OnSearchPostureChanged;
+            Responsive.PostureChanged += OnSearchPostureChanged;
+            ApplyTabletLayout(Responsive.GetPosture(this));
             Svc.SearchHistory.Items.CollectionChanged -= OnSearchHistoryItemsChanged;
             Svc.SearchHistory.Items.CollectionChanged += OnSearchHistoryItemsChanged;
             FilterService.Instance.Changed -= OnFilterApplied;
             FilterService.Instance.Changed += OnFilterApplied;
         };
+        SizeChanged += (_, _) => ApplyTabletLayout(Responsive.GetPosture(this));
 
         // DataContext 是外面赋进来的, 构造时还拿不到 VM; 换 VM 就当作"换了一次展示", 把卡片收回原位。
         DataContextChanged += (_, e) =>
@@ -90,10 +94,51 @@ public partial class SearchPage : UserControl
         // 切到别的页时本页会被摘出可视树: 焦点跟着没了, 卡片也该收回去(不然后面切回来它是开着的)
         Unloaded += (_, _) =>
         {
+            Responsive.PostureChanged -= OnSearchPostureChanged;
             Svc.SearchHistory.Items.CollectionChanged -= OnSearchHistoryItemsChanged;
             FilterService.Instance.Changed -= OnFilterApplied;
             ResetCard();
         };
+    }
+
+    private double EffectiveSearchBoxW()
+    {
+        var w = ActualWidth;
+        if (double.IsNaN(w) || w <= 0) return SearchBoxW;
+        if (Responsive.GetPosture(this) == LayoutPosture.TabletPortrait)
+            return Math.Clamp(w - 16 - 224, 180, SearchBoxW);
+        return w >= 660 ? SearchBoxW : Math.Clamp(w - 220, 180, SearchBoxW);
+    }
+
+    private double EffectiveSearchCardW()
+    {
+        var w = ActualWidth;
+        if (double.IsNaN(w) || w <= 0 || w >= 580) return SearchCardW;
+        return Math.Clamp(w - 32, 260, SearchCardW);
+    }
+
+    private void OnSearchPostureChanged(FrameworkElement _, LayoutPosture posture) => ApplyTabletLayout(posture);
+
+    internal void ApplyTabletLayout(LayoutPosture posture)
+    {
+        var tablet = posture == LayoutPosture.TabletPortrait;
+        if (SearchKindTabs != null) SearchKindTabs.Margin = tablet ? new Thickness(12, 68, 12, 0) : new Thickness(24, 68, 0, 0);
+        if (UserResultsList != null) UserResultsList.Margin = tablet ? new Thickness(12, 4, 12, 0) : new Thickness(28, 4, 28, 0);
+        if (ArticleResultsList != null) ArticleResultsList.Margin = tablet ? new Thickness(12, 4, 12, 0) : new Thickness(28, 4, 28, 0);
+        if (!_open && !_closing && SearchCard != null)
+        {
+            SearchCard.Width = EffectiveSearchBoxW();
+            if (tablet)
+            {
+                SearchCard.HorizontalAlignment = HorizontalAlignment.Left;
+                SearchCard.Margin = new Thickness(16, 12, 0, 0);
+            }
+            else
+            {
+                SearchCard.HorizontalAlignment = HorizontalAlignment.Center;
+                SearchCard.Margin = new Thickness(0, 16, 0, 0);
+            }
+        }
     }
 
     private void OnSearchHistoryItemsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
@@ -290,8 +335,12 @@ public partial class SearchPage : UserControl
         var ms = TimeSpan.FromMilliseconds(SearchExpandMs);
 
         // 搜索框自己不用淡入: 它一直都在, 展开只是"下面多长出一个框"
+        SearchCard.HorizontalAlignment = HorizontalAlignment.Center;
+        SearchCard.Margin = Responsive.GetPosture(this) == LayoutPosture.TabletPortrait
+            ? new Thickness(0, 12, 0, 0)
+            : new Thickness(0, 16, 0, 0);
         SearchCard.BeginAnimation(FrameworkElement.WidthProperty,
-            new DoubleAnimation(SearchBoxW, SearchCardW, ms) { EasingFunction = ease });
+            new DoubleAnimation(EffectiveSearchBoxW(), EffectiveSearchCardW(), ms) { EasingFunction = ease });
 
         var height = new DoubleAnimation(SearchBoxH, ComputeOpenHeight(), ms) { EasingFunction = ease };
         height.Completed += (_, _) => OnOpened();
@@ -342,7 +391,7 @@ public partial class SearchPage : UserControl
 
         // 尺寸用关键帧: 前 SearchFadeOutMs 保持不动(让内容先淡完), 之后再缩回去
         SearchCard.BeginAnimation(FrameworkElement.WidthProperty, Keys(
-            K(0, w0), K(hold, w0), K(end, SearchBoxW, ease)));
+            K(0, w0), K(hold, w0), K(end, EffectiveSearchBoxW(), ease)));
 
         var height = Keys(K(0, h0), K(hold, h0), K(end, SearchBoxH, ease));
         height.Completed += (_, _) => ResetCard();
@@ -369,8 +418,9 @@ public partial class SearchPage : UserControl
         SearchInputRing.BeginAnimation(OpacityProperty, null);
 
         // 先清动画再落本地值, 否则会被残留的动画值顶掉
-        SearchCard.Width = SearchBoxW;
+        SearchCard.Width = EffectiveSearchBoxW();
         SearchCard.Height = SearchBoxH;
+        ApplyTabletLayout(Responsive.GetPosture(this));
         SearchContentBox.Opacity = 0;
         SearchContentBox.Visibility=Visibility.Collapsed;
         SearchKindTabs.Opacity=1;

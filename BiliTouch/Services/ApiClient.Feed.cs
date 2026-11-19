@@ -392,6 +392,7 @@ public partial class ApiClient
             //   真实状态改由 <see cref="GetCoinCountAsync"/> 单独查询, 调用方在拿到 aid 后拉一次。
             detail.Aid = GetLong(d, "aid");
             detail.Pubdate = GetLong(d, "pubdate");
+            (detail.VideoWidth, detail.VideoHeight) = ParseDimension(d);
 
             // 多分P: 全部解析, 不只取第一页。
             //
@@ -409,6 +410,7 @@ public partial class ApiClient
                 {
                     var cid = GetLong(p, "cid");
                     if (cid == 0) continue;   // 脏数据跳过, 别造出一个换不过去的空 P
+                    var (pw, ph) = ParseDimension(p);
                     detail.Pages.Add(new VideoPage
                     {
                         Cid = cid,
@@ -417,9 +419,16 @@ public partial class ApiClient
                         Part = p.TryGetProperty("part", out var pt) && pt.ValueKind == JsonValueKind.String
                             ? pt.GetString() ?? "" : "",
                         DurationSec = GetInt(p, "duration"),
+                        VideoWidth = pw,
+                        VideoHeight = ph,
                     });
                 }
                 detail.Cid = detail.Pages[0].Cid;
+                if (detail.VideoWidth <= 0 || detail.VideoHeight <= 0)
+                {
+                    detail.VideoWidth = detail.Pages[0].VideoWidth;
+                    detail.VideoHeight = detail.Pages[0].VideoHeight;
+                }
             }
             if (detail.Cid == 0) detail.Cid = GetLong(d, "cid");
 
@@ -442,6 +451,19 @@ public partial class ApiClient
     }
 
     // ---------------------------------------------------------------- 视频合集
+
+    /// <summary>解析 view/pages 里的 dimension 对象（rotate 为奇数或 90/270 时交换宽高）。</summary>
+    internal static (int Width, int Height) ParseDimension(JsonElement container)
+    {
+        if (!container.TryGetProperty("dimension", out var dim) || dim.ValueKind != JsonValueKind.Object)
+            return (0, 0);
+        var w = GetInt(dim, "width");
+        var h = GetInt(dim, "height");
+        if (w <= 0 || h <= 0) return (0, 0);
+        var rotate = GetInt(dim, "rotate");
+        if ((rotate & 1) == 1 || rotate == 90 || rotate == 270) (w, h) = (h, w);
+        return (w, h);
+    }
 
     /// <summary>
     /// 视频合集(ugc_season)。单独取一次合集信息时用它; 播放器的主路径是直接吃

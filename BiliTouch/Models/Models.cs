@@ -279,6 +279,10 @@ public class VideoDetail
     /// </summary>
     public SeasonInfo? Season { get; set; }
 
+    /// <summary>视频画面展示宽/高（已结合 dimension.rotate 校正；0 表示接口未返回）</summary>
+    public int VideoWidth { get; set; }
+    public int VideoHeight { get; set; }
+
     /// <summary>
     /// 该视频的全部分P。**只有一个 P 时也会有一项**(即 pages[0]), 由界面自己判断要不要露入口。
     ///
@@ -309,6 +313,8 @@ public sealed class VideoPage
     public string Part { get; set; } = "";
 
     public int DurationSec { get; set; }
+    public int VideoWidth { get; set; }
+    public int VideoHeight { get; set; }
     public string Duration => VideoItem.FormatSeconds(DurationSec);
 
     /// <summary>
@@ -1480,6 +1486,17 @@ public class BlockedUpEntry
     public long Mid { get; set; }
 }
 
+/// <summary>平板模式（竖屏安卓端布局）开关策略。默认关闭。</summary>
+public enum TabletMode
+{
+    /// <summary>关闭：始终使用桌面布局</summary>
+    Off = 0,
+    /// <summary>自动：检测到竖屏窗口/平板竖屏时切换为安卓端布局，横屏自动恢复桌面布局</summary>
+    Auto = 1,
+    /// <summary>始终开启：强制使用竖屏平板布局</summary>
+    Always = 2
+}
+
 /// <summary>应用设置</summary>
 public class AppSettings
 {
@@ -1491,6 +1508,9 @@ public class AppSettings
     public string EnhancementAdapterId {get;set;}="auto";
     public string FontId {get;set;}="System";
     public bool UseWebPlayerLayout { get; set; }
+    public bool PortraitVideoOptimization { get; set; }
+    public TabletMode TabletMode { get; set; } = TabletMode.Off;
+    public bool SurfaceTabletHintDismissed { get; set; }
     public int TouchpadFeedSensitivity { get; set; } = 100;
     public int FeedWheelScalePercent {get;set;}
 

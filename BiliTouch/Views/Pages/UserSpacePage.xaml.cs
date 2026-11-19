@@ -16,7 +16,11 @@ public partial class UserSpacePage : UserControl
         DataContextChanged += OnDataContextChanged;
         // ★ 本页每次打开都会 new 一个新实例(见 NavigationDispatcher.OpenUserSpace),
         //   所以订阅/退订必须成对: 不摘掉的话 FilterService 会一直攥着旧页面不放。
-        Unloaded += (_, _) => FilterService.Instance.Changed -= OnFilterApplied;
+        Unloaded += (_, _) =>
+        {
+            FilterService.Instance.Changed -= OnFilterApplied;
+            Responsive.PostureChanged -= OnSpacePostureChanged;
+        };
     }
 
     public UserSpacePage(long mid)
@@ -26,11 +30,34 @@ public partial class UserSpacePage : UserControl
         if (DataContext is UserSpaceViewModel vm) _ = vm.InitAsync(mid);
         Loaded += OnLoaded;
         DataContextChanged += OnDataContextChanged;
-        Unloaded += (_, _) => FilterService.Instance.Changed -= OnFilterApplied;
+        Unloaded += (_, _) =>
+        {
+            FilterService.Instance.Changed -= OnFilterApplied;
+            Responsive.PostureChanged -= OnSpacePostureChanged;
+        };
+    }
+
+    private void OnSpacePostureChanged(FrameworkElement _, LayoutPosture posture) => ApplyTabletLayout(posture);
+
+    internal void ApplyTabletLayout(LayoutPosture posture)
+    {
+        var tablet = posture == LayoutPosture.TabletPortrait;
+        if (SpaceHeaderGrid != null) SpaceHeaderGrid.Margin = tablet ? new Thickness(16, 14, 16, 14) : new Thickness(36, 22, 36, 18);
+        if (SpaceAvatarBox != null)
+        {
+            SpaceAvatarBox.Width = SpaceAvatarBox.Height = tablet ? 56 : 76;
+            SpaceAvatarBox.CornerRadius = new CornerRadius(tablet ? 28 : 38);
+        }
+        if (SpaceInfoStack != null) SpaceInfoStack.Margin = tablet ? new Thickness(12, 0, 10, 0) : new Thickness(18, 0, 12, 0);
+        if (SpaceTabsPanel != null) SpaceTabsPanel.Margin = tablet ? new Thickness(16, 10, 16, 4) : new Thickness(36, 14, 36, 4);
+        if (SpaceListStack != null) SpaceListStack.Margin = tablet ? new Thickness(16, 8, 16, 20) : new Thickness(36, 10, 36, 24);
     }
 
     private async void OnLoaded(object sender, System.Windows.RoutedEventArgs e)
     {
+        Responsive.PostureChanged -= OnSpacePostureChanged;
+        Responsive.PostureChanged += OnSpacePostureChanged;
+        ApplyTabletLayout(Responsive.GetPosture(this));
         if (DataContext is UserSpaceViewModel vm)
         {
             // 个人空间的投稿列表也纳入全局屏蔽(以前这里怎么屏蔽都不生效)

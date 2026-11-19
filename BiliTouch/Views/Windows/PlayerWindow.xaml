@@ -23,7 +23,11 @@
                             CornerRadius="0" GlassFrameThickness="0,0,0,1"
                             UseAeroCaptionButtons="False" />
     </shell:WindowChrome.WindowChrome>
-    <views:FluentWindow.Resources>
+    <!-- 根底色: 常规状态跟主题走; 全屏时 ApplyFullscreenLayout 会把它切成纯黑。
+         ★ 资源字典挂在 RootGrid 上而非 Window 上，确保平板单窗口模式把 RootGrid
+           整体托管进 MainWindow.EmbeddedPlayerHost 时所有 StaticResource 100% 自洽。 -->
+    <Grid x:Name="RootGrid" Background="{DynamicResource AppBackgroundBrush}">
+    <Grid.Resources>
         <!-- 简介折叠后的最大高度(2026-10-12)。12px 字号 × 行高 ≈ 18px, 这里约 6 行。
              ★ 抽成资源而不是写死数字: 折叠判据(要不要显示"展开")与 MaxHeight
                必须用**同一个值**, 否则会出现"明明没超却冒出展开按钮"或反之。
@@ -607,32 +611,36 @@
         </Style>
 
 
-</views:FluentWindow.Resources>
-    <!-- 根底色: 常规状态跟主题走; 全屏时 ApplyFullscreenLayout 会把它切成纯黑
-         (窗口自身 Background 在这层网格底下, 被它盖住 —— 只切窗口那一层是不够的,
-         浅色主题下这里就是用户看到的"全屏全白") -->
-    <Grid x:Name="RootGrid" Background="{DynamicResource AppBackgroundBrush}">
+    </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition x:Name="TopRow" Height="44" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- 顶栏(2026-09-26 用户要求): 左上角的"返回主界面"按钮已删, 现在只有 标题 + 全屏。
-             Esc 键关播放器的键盘路径不受影响(走 HandleBackRequest 那一套)。
-             浅底 + 细分隔线, 与主窗口的观感统一。 -->
+        <!-- 顶栏(2026-09-26 用户要求): 桌面独立窗口不显示左上角返回按钮;
+             平板单窗口内嵌态时显示 BtnEmbeddedBack 返回信息流。 -->
         <Border x:Name="TopBar" Grid.Row="0" Background="{DynamicResource AppBackgroundBrush}"
                 BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,0,1">
-            <Grid Margin="16,0">
+            <Grid Margin="12,0,16,0">
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <TextBlock x:Name="TitleText" Grid.Column="0" FontSize="13" FontWeight="SemiBold"
-                           Margin="0,0,14,0" VerticalAlignment="Center"
+                <Button x:Name="BtnEmbeddedBack" Grid.Column="0" Visibility="Collapsed"
+                        Style="{StaticResource IconButtonStyle}" Width="34" Height="34" Margin="0,0,8,0"
+                        VerticalAlignment="Center" Click="OnEmbeddedBackClick"
+                        ToolTip="返回主界面" AutomationProperties.Name="返回主界面"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <TextBlock Text="&#xE72B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14" />
+                </Button>
+
+                <TextBlock x:Name="TitleText" Grid.Column="1" FontSize="13" FontWeight="SemiBold"
+                           Margin="4,0,14,0" VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis" Text="播放器" />
 
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <!-- 「听视频」入口(2026-10-06 新增, 用户要求放播放器右上角, 设计参考 听视频.html)。
                          幽灵胶囊: 待命 = 透明底 + 1px 描边 + 耳机图标 + "听视频";
                          聆听中 = 琥珀实心 + "正在聆听 m:ss"(由 ApplyListenMode 切换)。
@@ -759,8 +767,12 @@
             </Grid>
         </Border>
 
-        <!-- 主区: 左右分割 -->
+        <!-- 主区: 桌面左右分割 / 平板竖屏上下三段 -->
         <Grid x:Name="PlayerStage" Grid.Row="1" ClipToBounds="True">
+            <Grid.RowDefinitions>
+                <RowDefinition x:Name="TabletVideoRow" Height="0" />
+                <RowDefinition x:Name="StageMainRow" Height="*" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <!-- 视频列下限从 480 降到 320: 竖屏副屏 864 DIP 宽时, 右栏 400 之后
                      仍要留出可用的画面宽度。窄到控件栏放不下时由代码收起次要按钮
@@ -782,13 +794,14 @@
                   - LoadingOverlay / FailOverlay 模态遮罩
                   - 覆盖 Grid 本身承担单击/双击/长按手势
             -->
-            <Grid x:Name="OriginalPicturePane" Grid.Column="0" Visibility="Collapsed" ClipToBounds="True">
+            <Grid x:Name="OriginalPicturePane" Grid.Row="1" Grid.Column="0" Visibility="Collapsed" ClipToBounds="True">
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                 <Border x:Name="PictureVideoSpacer"/>
                 <ContentControl x:Name="OriginalImageHost" Grid.Row="1" Margin="12"/>
             </Grid>
-            <Grid x:Name="WebLeftPane" Grid.Column="0" Visibility="Collapsed">
+            <Grid x:Name="WebLeftPane" Grid.Row="1" Grid.Column="0" Visibility="Collapsed">
                 <helpers:SkinSurface Kind="Content" />
+                <Border x:Name="WebLeftPaneDivider" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0" IsHitTestVisible="False" />
                 <ScrollViewer x:Name="WebLeftScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" ScrollChanged="OnWebLeftScrollChanged">
                     <StackPanel>
                         <Border x:Name="WebVideoPlaceholder" />
@@ -799,7 +812,7 @@
                 </ScrollViewer>
                 <Grid x:Name="WebCommentChrome" />
             </Grid>
-            <Grid x:Name="VideoSurface" Grid.Column="0" Background="Black" ClipToBounds="True">
+            <Grid x:Name="VideoSurface" Grid.Row="1" Grid.Column="0" Background="Black" ClipToBounds="True">
                 <!-- 实验性 vmem 输出宿主（默认 Collapsed）。开启后 VideoView 被藏掉，
                      解码帧由这个 Image 画成普通 WPF 元素，VideoAreaRoot 搬到它上面。 -->
                 <helpers:VmemVideoView x:Name="VmemView" Visibility="Collapsed" IsHitTestVisible="False" />
@@ -1484,6 +1497,19 @@
                                     </Grid>
                                 </StackPanel>
                             </Border>
+                            <!-- 竖屏平板沉浸全屏模式下的右侧评论入口按钮 -->
+                            <Button x:Name="BtnPortraitImmersiveComments" Visibility="Collapsed"
+                                    HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                    Margin="0,0,14,92" Padding="12,8" Panel.ZIndex="25"
+                                    Style="{StaticResource PlayerTextBtn}" Click="OnPortraitImmersiveCommentsClick"
+                                    ToolTip="展开评论抽屉" AutomationProperties.Name="展开评论抽屉">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="&#xE90A;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                               FontSize="15" Foreground="White" VerticalAlignment="Center" />
+                                    <TextBlock Text="评论" FontSize="12" Margin="6,0,0,0"
+                                               Foreground="White" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
                             <Border x:Name="TouchHelp" Visibility="Collapsed" Panel.ZIndex="100"
                                     HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="370"
                                     Background="#F0202226" CornerRadius="12" Padding="20" Margin="12">
@@ -1502,13 +1528,14 @@
                 </vlc:VideoView>
             </Grid>
 
-            <!-- ============ 右: 信息面板 ============ -->
+            <!-- ============ 右: 信息面板（平板竖屏态自动置于 Row 1 + ColumnSpan 2） ============ -->
             <!-- x:Name 供全屏退出时做淡入用(400px 的一大块"啪"地出现很跳) -->
-            <Grid x:Name="InfoPanel" Grid.Column="1" Background="{DynamicResource AppBackgroundBrush}">
+            <Grid x:Name="InfoPanel" Grid.Row="1" Grid.Column="1" Background="{DynamicResource AppBackgroundBrush}">
                 <helpers:SkinSurface Kind="Content" />
-                <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1,0,0,0">
+                <Border x:Name="InfoPanelBorder" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1,0,0,0">
                     <Grid x:Name="RightLayoutGrid" ClipToBounds="True"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                         <ContentControl x:Name="WebHeaderHost" Grid.Row="0" Margin="20,18,20,0" Visibility="Collapsed"/>
+                        <ContentControl x:Name="TabletTabHost" Grid.Row="0" Margin="16,0,16,0" Visibility="Collapsed"/>
                         <Border x:Name="WebDockAnchor" Grid.Row="1" Height="0" Margin="20,0,20,0" Visibility="Collapsed" Background="Black"/>
                     <ScrollViewer x:Name="InfoScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto"
                                   RenderOptions.ClearTypeHint="Enabled"
@@ -1777,7 +1804,7 @@
                             </StackPanel>
 
                             <!-- Tab 简介/评论 -->
-                            <Border Margin="0,18,0,0" BorderBrush="{DynamicResource DividerBrush}"
+                            <Border x:Name="ContentTabBar" Margin="0,18,0,0" BorderBrush="{DynamicResource DividerBrush}"
                                     BorderThickness="0,1,0,0" Padding="0,10,0,0">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -2677,6 +2704,36 @@
                      ★ MaxWidth 300: 右栏宽度 400, 给长文案留出省略空间而不是把面板撑开。 -->
                 <controls:DownloadProgressBanner Margin="0,52,12,0" />
                 <controls:ThemeReactionHost x:Name="ThemeReactions" Panel.ZIndex="90" />
+            </Grid>
+
+            <!-- 竖屏平板沉浸全屏模式下的底部半屏评论抽屉（纯 WPF vmem 合成，零 airspace 遮挡） -->
+            <Grid x:Name="PortraitCommentDrawerOverlay" Grid.Row="0" Grid.RowSpan="2" Grid.Column="0" Grid.ColumnSpan="2"
+                  Panel.ZIndex="45" Visibility="Collapsed">
+                <Border Background="#66000000" MouseLeftButtonUp="OnPortraitDrawerScrimClick" />
+                <Border x:Name="PortraitCommentDrawerSheet" VerticalAlignment="Bottom"
+                        CornerRadius="16,16,0,0" Background="{DynamicResource OverlaySurfaceBrush}"
+                        BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0" Margin="18,12,12,8">
+                            <TextBlock Text="评论" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextPrimaryBrush}" />
+                            <Button HorizontalAlignment="Right" Width="34" Height="34"
+                                    Style="{StaticResource IconButtonStyle}"
+                                    Click="OnPortraitDrawerCloseClick" ToolTip="收起评论" AutomationProperties.Name="收起评论">
+                                <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" />
+                            </Button>
+                        </Grid>
+                        <ScrollViewer x:Name="PortraitDrawerScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled" Padding="16,0,16,24">
+                            <ContentControl x:Name="PortraitDrawerCommentsHost" HorizontalContentAlignment="Stretch" />
+                        </ScrollViewer>
+                        <Grid x:Name="PortraitDrawerChrome" Grid.Row="1" />
+                    </Grid>
+                </Border>
             </Grid>
         </Grid>
 

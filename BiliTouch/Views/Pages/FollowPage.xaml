@@ -211,15 +211,141 @@
                            Margin="0,10,0,0" HorizontalAlignment="Center" />
             </StackPanel>
 
-            <!-- ===== 主体: 左 UP 列表 + 右内容 ===== -->
-            <Grid Visibility="{Binding ShowContent, Converter={StaticResource BoolToVis}}">
+            <!-- ===== 主体: 桌面左 UP 列表 + 右内容；平板竖屏顶部横向 UP 头像条 + 下方全宽动态流 ===== -->
+            <Grid x:Name="FollowMainGrid" Visibility="{Binding ShowContent, Converter={StaticResource BoolToVis}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="252" />
+                    <ColumnDefinition x:Name="ContactsColumn" Width="252" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
+                <!-- 平板竖屏顶部横向 UP 头像条（参照安卓端动态页 74dp 容器，默认折叠） -->
+                <Border x:Name="TabletUpStrip" Grid.Row="0" Grid.ColumnSpan="2" Visibility="Collapsed"
+                        Margin="12,0,12,6" Padding="8,8,8,6" CornerRadius="12"
+                        Background="{DynamicResource CardBackgroundBrush}"
+                        BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ScrollViewer x:Name="TabletUpStripScroll" Grid.Column="0"
+                                      HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled"
+                                      PanningMode="HorizontalFirst" ScrollChanged="TabletUpStrip_OnScrollChanged">
+                            <StackPanel Orientation="Horizontal">
+                                <!-- 全部动态 -->
+                                <Border Width="70" Padding="4,2" CornerRadius="10" Cursor="Hand"
+                                        Tag="AllDynamics" MouseLeftButtonUp="OnSelectAll">
+                                    <StackPanel HorizontalAlignment="Center">
+                                        <Border Width="48" Height="48" CornerRadius="24"
+                                                Background="{DynamicResource AccentSoftFillBrush}" BorderThickness="2">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="BorderBrush" Value="Transparent" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsAllSelected}" Value="True">
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <Path Data="{StaticResource DynamicIconGeometry}"
+                                                  Stroke="{DynamicResource AccentTextBrush}" StrokeThickness="1.7"
+                                                  Width="20" Height="20" Stretch="Uniform"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <TextBlock Text="全部动态" FontSize="11" Margin="0,5,0,0"
+                                                   HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="66">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsAllSelected}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+                                <!-- 关注的 UP 横向头像列表 -->
+                                <ItemsControl x:Name="TabletUpStripItems" ItemsSource="{Binding Users}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Width="70" Padding="4,2" CornerRadius="10" Cursor="Hand"
+                                                    MouseLeftButtonUp="OnSelectUp" ToolTip="{Binding Name}">
+                                                <Border.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="打开 UP 主页" Click="OnVisitClick" />
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
+                                                <StackPanel HorizontalAlignment="Center">
+                                                    <Grid Width="48" Height="48">
+                                                        <Border Width="48" Height="48" CornerRadius="24" BorderThickness="2"
+                                                                Background="{DynamicResource AccentSoftFillBrush}" Padding="1">
+                                                            <Border.Style>
+                                                                <Style TargetType="Border">
+                                                                    <Setter Property="BorderBrush" Value="Transparent" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Border.Style>
+                                                            <Border CornerRadius="22" ClipToBounds="True"
+                                                                    helpers:Cover.Source="{Binding Face}" />
+                                                        </Border>
+                                                        <Border Width="10" Height="10" CornerRadius="5"
+                                                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                                Margin="0,1,1,0"
+                                                                Background="{DynamicResource UnreadDotBrush}"
+                                                                BorderBrush="{DynamicResource CardBackgroundBrush}" BorderThickness="1.5"
+                                                                Visibility="{Binding HasNew, Converter={StaticResource BoolToVis}}" />
+                                                    </Grid>
+                                                    <TextBlock Text="{Binding Name}" FontSize="11" Margin="0,5,0,0"
+                                                               HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="64">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                        <Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}" />
+                                                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </ScrollViewer>
+                        <Button Grid.Column="1" VerticalAlignment="Center" Margin="4,0,0,0"
+                                Style="{StaticResource FollowMarkReadButtonStyle}"
+                                Command="{Binding MarkAllReadCommand}" IsEnabled="{Binding HasFollowUsers}"
+                                ToolTip="全部标记已读">
+                            <TextBlock Text="已读" FontSize="11.5"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                        </Button>
+                    </Grid>
+                </Border>
+
                 <!-- ===== 左: 全部动态 + UP 列表 ===== -->
-                <Grid x:Name="ContactsScroll" Grid.Column="0"
+                <Grid x:Name="ContactsScroll" Grid.Row="1" Grid.Column="0"
                               Margin="12,4,0,20">
                     <Grid Margin="8,0,8,0">
                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
@@ -318,7 +444,7 @@
                 </Grid>
 
                 <!-- ===== 右: 内容(两档排版, 右上角可切) ===== -->
-                <Grid x:Name="FollowFeedBody" Grid.Column="1" Margin="12,4,24,20" AutomationProperties.Name="{Binding SelectionTitle}">
+                <Grid x:Name="FollowFeedBody" Grid.Row="1" Grid.Column="1" Margin="12,4,24,20" AutomationProperties.Name="{Binding SelectionTitle}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />

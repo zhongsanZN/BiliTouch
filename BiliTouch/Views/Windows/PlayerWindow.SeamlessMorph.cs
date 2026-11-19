@@ -458,6 +458,7 @@ public partial class PlayerWindow
         }
         Show();
         if (_webLayoutMounted) UpdateWebMeasurements();
+        else if (_portraitLayoutMounted) UpdatePortraitMeasurements();
         Activate();
     }
 

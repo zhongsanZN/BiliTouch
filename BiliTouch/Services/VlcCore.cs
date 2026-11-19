@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using BiliTouch.Helpers;
@@ -28,9 +29,13 @@ public static class VlcCore
     private static int _livePlayers;
     private static readonly Dictionary<string,LibVLC> EnhancementInstances = new();
 
+    /// <summary>按进程架构映射 LibVLC 原生目录名（win-x64 或 win-arm64）。</summary>
+    internal static string LibVlcRidFor(Architecture architecture) =>
+        architecture == Architecture.Arm64 ? "win-arm64" : "win-x64";
+
     /// <summary>libvlc.dll / libvlccore.dll 所在目录</summary>
     public static string LibVlcDirectory =>
-        Path.Combine(AppContext.BaseDirectory, "libvlc", "win-x64");
+        Path.Combine(AppContext.BaseDirectory, "libvlc", LibVlcRidFor(RuntimeInformation.ProcessArchitecture));
 
     /// <summary>
     /// libvlc 插件目录(&lt;outdir&gt;/libvlc/win-x64/plugins/&lt;cat&gt;/*.dll)。

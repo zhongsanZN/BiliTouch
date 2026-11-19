@@ -174,8 +174,24 @@ public class FluentWindow : Window
             ThemeService.Instance.ThemeChanged += OnThemeChanged;
             Svc.Settings.AcrylicChanged += OnAcrylicChanged;
             Svc.Settings.LayoutChanged += OnLayoutChanged;
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnSystemDisplaySettingsChanged;
         }
         ApplyChrome();
+    }
+
+    private void OnSystemDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        if (!Dispatcher.HasShutdownStarted)
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(OnDisplaySettingsChanged));
+    }
+
+    /// <summary>屏幕旋转或分辨率变更时重新夹取工作区尺寸并刷新平板姿态。</summary>
+    protected virtual void OnDisplaySettingsChanged()
+    {
+        if (!IsLoaded) return;
+        SyncMaximizedContentInset();
+        if (WindowState == WindowState.Normal) ClampInitialSizeToWorkArea();
+        Responsive.RefreshAllPostures();
     }
 
     private void OnThemeChanged() => ApplyChrome();
@@ -446,7 +462,11 @@ public class FluentWindow : Window
             _wndProcSource.RemoveHook(WndProc);
             _wndProcSource = null;
         }
-        if (_hooked) ThemeService.Instance.ThemeChanged -= OnThemeChanged;
+        if (_hooked)
+        {
+            ThemeService.Instance.ThemeChanged -= OnThemeChanged;
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnSystemDisplaySettingsChanged;
+        }
         Svc.Settings.AcrylicChanged -= OnAcrylicChanged;
         Svc.Settings.LayoutChanged -= OnLayoutChanged;
         UiScale.Unregister(ScaleRoot);

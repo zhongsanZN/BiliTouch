@@ -37,6 +37,7 @@ public partial class FavoritesPage : UserControl
             { if(!vm.IsEditMode)vm.ToggleEditCommand.Execute(null);video.IsSelected=true; }
         });
         Loaded += OnLoaded;
+        Unloaded += (_, _) => Responsive.PostureChanged -= OnFavoritesPostureChanged;
         SizeChanged += (_, _) => ScheduleOverflowUpdate();
         // 纳入全局屏蔽(命中关键词的内容会被隐藏), 见 FilterService
         DataContextChanged += (_, e) =>
@@ -48,8 +49,22 @@ public partial class FavoritesPage : UserControl
         };
     }
 
+    private void OnFavoritesPostureChanged(FrameworkElement _, LayoutPosture posture) => ApplyTabletLayout(posture);
+
+    internal void ApplyTabletLayout(LayoutPosture posture)
+    {
+        var tablet = posture == LayoutPosture.TabletPortrait;
+        if (FavHeaderGrid != null) FavHeaderGrid.Margin = tablet ? new Thickness(16, 16, 16, 0) : new Thickness(36, 20, 36, 0);
+        if (FavFolderBarGrid != null) FavFolderBarGrid.Margin = tablet ? new Thickness(16, 10, 16, 8) : new Thickness(36, 14, 36, 10);
+        if (FavListScroll != null) FavListScroll.Margin = tablet ? new Thickness(12, 4, 12, 16) : new Thickness(36, 4, 36, 24);
+        ScheduleOverflowUpdate();
+    }
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        Responsive.PostureChanged -= OnFavoritesPostureChanged;
+        Responsive.PostureChanged += OnFavoritesPostureChanged;
+        ApplyTabletLayout(Responsive.GetPosture(this));
         if (Vm == null) return;
         HookFolderCollection();
         ScheduleOverflowUpdate();

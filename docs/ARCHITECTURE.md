@@ -33,10 +33,11 @@ BiliTouch/
   - `PlayerWindow.xaml.cs`：窗口生命周期、媒体状态契约（`PerMediaStateFields` / `PersistentFields` + Debug 自动覆盖度检查）、统一复位 `ResetForNewMedia()` 与资源清理 `OnClosed()`。
   - `PlayerWindow.Playback.cs`：在线起播链、离线缓存起播及后台无感在线增强（`LoadOfflineOnlineContextAsync`——联网时在后台静默加载评论与弹幕，绝不阻塞或干扰本地播放）、短视频本地合流、EOF 尾段纯视频单流收尾。
   - `PlayerWindow.SeekWatchdog.cs`：Seek 确认看门狗、尾部进度外推、音频自愈、Seek 静音与长按 2x 倍速。
-  - `PlayerWindow.Quality.cs` / `ListenMode.cs` / `FullscreenChrome.cs` / `InputAndPopups.cs` / `Danmaku.cs` / `Comments.cs` / `Actions.cs` / `Recovery.cs` / `SeamlessMorph.cs` / `WebLayout.cs`。
-- **双呈现路径**：支持传统原生 `HwndHost` 与低开销 `vmem`（`GpuVideoPresenter` D3D11→D3D9 共享纹理零拷贝合成）；支持按显卡偏好选择硬件解码与厂商超分。
+  - `PlayerWindow.Quality.cs` / `ListenMode.cs` / `FullscreenChrome.cs` / `InputAndPopups.cs` / `Danmaku.cs` / `Comments.cs` / `Actions.cs` / `Recovery.cs` / `SeamlessMorph.cs` / `WebLayout.cs` / `Host.cs`。
+- **双呈现路径与单窗口双宿主内嵌**：支持传统原生 `HwndHost` 与低开销 `vmem`（`GpuVideoPresenter` D3D11→D3D9 共享纹理零拷贝合成）；支持按显卡偏好选择硬件解码与厂商超分；桌面竖屏视频提供可选并排优化（左视频 + 右评论 + 最右信息栏）；平板竖屏态（`Responsive.Posture == TabletPortrait`）通过单树双宿主将 `PlayerWindow.RootGrid` 与 `LiveRoomWindow.Root` 直接挂载到 `MainWindow.EmbeddedPlayerHost` 实现单窗口安卓式三段播放与全屏半屏评论抽屉。
 
-### 2.4 输入、横滑与渲染统一基元
+### 2.4 输入、横滑、响应式姿态与渲染统一基元
+- **响应式宽度与平板姿态**：`Helpers/Responsive.cs` 维护窗口级 `WidthClass` 与正交 `LayoutPosture`（`Desktop` / `TabletPortrait`，默认关闭，带宽高比与宽度迟滞防抖，`DeviceProfile` 识别 Surface 一次性引导），驱动 `MainWindow` 底部导航壳、两列卡片墙及各页面竖屏重排；`FluentWindow` 监听 `DisplaySettingsChanged` 响应平板物理旋转。
 - **横滑统一内核**：`Helpers/IHorizontalSwipeHost.cs` 统一主窗口触控板/横向滚轮路由；`Helpers/HorizontalSwipePhysics.cs` 提供全站唯一的非线性橡胶阻尼、3/8 切页阈值与冻结 `CubicEase` 曲线。
 - **安全与可靠性基元**：
   - `Helpers/AtomicFile.cs`：唯一临时文件 + 原子覆盖重命名，用于会话、设置、封面缓存、混流与离线下载。

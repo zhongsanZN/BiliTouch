@@ -12,17 +12,30 @@
 #define MyAppName "BiliTouch"
 ; BiliTouch 独立版本，与 App.AppVersion / csproj 保持一致
 #ifndef MyAppVersion
-#define MyAppVersion "0.3.5"
+#define MyAppVersion "0.3.6"
 #endif
 // VersionInfoVersion 必须是纯数字四段 (a.b.c.d), 不能带 -touch
 #ifndef MyFileVersion
-#define MyFileVersion "0.3.5.0"
+#define MyFileVersion "0.3.6.0"
 #endif
 #define MyAppPublisher "中三"
 #define MyAppExeName "BiliTouch.exe"
 ; 指向发布脚本生成的框架依赖目录(相对本 .iss 所在目录)
 #ifndef MySourceDir
 #define MySourceDir "BiliTouch-安装器-files"
+#endif
+; 目标架构：x64（默认）或 arm64（用于 ARM 版 Surface 等设备）
+#ifndef MyArch
+#define MyArch "x64"
+#endif
+#if MyArch == "arm64"
+#define MyOutputBaseFilename "BiliTouch-" + MyAppVersion + "-setup-arm64"
+#define MyArchAllowed "arm64"
+#define MyDotNetRuntimeUrl "https://aka.ms/dotnet/10.0/windowsdesktop-runtime-win-arm64.exe"
+#else
+#define MyOutputBaseFilename "BiliTouch-" + MyAppVersion + "-setup"
+#define MyArchAllowed "x64"
+#define MyDotNetRuntimeUrl "https://aka.ms/dotnet/10.0/windowsdesktop-runtime-win-x64.exe"
 #endif
 
 [Setup]
@@ -37,16 +50,13 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=.
 ; 文件名用纯 ASCII: GitHub 会把非 ASCII 的资产名截掉(1.2.0 的 zip 在下载页显示成 "BiliTouch-1.2.0-.zip")
-OutputBaseFilename=BiliTouch-{#MyAppVersion}-setup
+OutputBaseFilename={#MyOutputBaseFilename}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-; 本仓用 Inno Setup 6.1.2 编译, 该版本只认 x64(6.3+ 才把 x64 改名成 x64os)。
-; 语义一致: 要求 64 位 OS, 并以 64 位模式安装(包内含 x64 原生 LibVLC 插件)。
-; 别改成 x64compatible(6.3+): 那个会允许在 ARM64 上以模拟方式安装, 本包未验证。
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
-; 应用是 x64-only
+; 按 MyArch 分别限定原生 x64 或原生 arm64，避免跨架构误装。
+ArchitecturesAllowed={#MyArchAllowed}
+ArchitecturesInstallIn64BitMode={#MyArchAllowed}
 PrivilegesRequired=admin
 SetupIconFile=..\BiliTouch\Assets\app.ico
 UninstallDisplayIcon={app}\Assets\BiliTouch-{#MyAppVersion}.ico
@@ -103,8 +113,13 @@ end;
 
 function IsDesktopRuntimeInstalled(): Boolean;
 begin
+#if MyArch == "arm64"
+  // ARM64 原生应用仅认原生 ARM64 Program Files 下的 .NET 10+ 桌面运行时，不回退到 x86/x64 模拟目录
+  Result := HasWindowsDesktopAtLeast10(ExpandConstant('{pf}\dotnet\shared\Microsoft.WindowsDesktop.App'));
+#else
   Result := HasWindowsDesktopAtLeast10(ExpandConstant('{pf}\dotnet\shared\Microsoft.WindowsDesktop.App'))
          or HasWindowsDesktopAtLeast10(ExpandConstant('{pf32}\dotnet\shared\Microsoft.WindowsDesktop.App'));
+#endif
 end;
 
 function InitializeSetup(): Boolean;
@@ -115,10 +130,9 @@ begin
   Result := True;
   if IsDesktopRuntimeInstalled() then Exit;
 
-  // 引导装 .NET 10(当前 LTS): .NET 8 桌面运行时 2026-11 就停止支持了, 别把新用户往 8 上引。
-  // aka.ms 常链始终指向该大版本的最新补丁, 不会像"thank-you 页"URL 那样随版本下线失效。
-  Url := 'https://aka.ms/dotnet/10.0/windowsdesktop-runtime-win-x64.exe';
-  if MsgBox('检测到尚未安装 .NET 桌面运行时（.NET 10 或更高版本），它是本应用运行所必需的。' + #13#10 +
+  // 引导装对应架构的 .NET 10 桌面运行时（x64 或 ARM64）
+  Url := '{#MyDotNetRuntimeUrl}';
+  if MsgBox('检测到尚未安装对应架构（{#MyArchAllowed}）的 .NET 桌面运行时（.NET 10 或更高版本），它是本应用运行所必需的。' + #13#10 +
             '点击「是」将下载 .NET 10 桌面运行时（约 55MB），安装完成后重新运行本安装程序。',
             mbConfirmation, MB_YESNO) = IDYES then
   begin

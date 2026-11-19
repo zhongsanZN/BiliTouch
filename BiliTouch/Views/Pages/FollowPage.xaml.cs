@@ -47,6 +47,9 @@ public partial class FollowPage : UserControl, IHorizontalSwipeHost
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        Responsive.PostureChanged -= OnFollowPostureChanged;
+        Responsive.PostureChanged += OnFollowPostureChanged;
+        ApplyTabletLayout(Responsive.GetPosture(this));
         if (DataContext is FollowViewModel vm)
         {
             vm.PropertyChanged -= OnFeedStateChanged;
@@ -59,6 +62,27 @@ public partial class FollowPage : UserControl, IHorizontalSwipeHost
             // 检查有没有新动态(有就浮一条「N 条新动态」, 不打断当前列表)
             _ = vm.CheckNewDynamicsAsync();
         }
+    }
+
+    private void OnFollowPostureChanged(FrameworkElement _, LayoutPosture posture) => ApplyTabletLayout(posture);
+
+    internal void ApplyTabletLayout(LayoutPosture posture)
+    {
+        var tablet = posture == LayoutPosture.TabletPortrait;
+        if (ContactsColumn != null) ContactsColumn.Width = new GridLength(tablet ? 0 : 252);
+        if (ContactsScroll != null) ContactsScroll.Visibility = tablet ? Visibility.Collapsed : Visibility.Visible;
+        if (TabletUpStrip != null) TabletUpStrip.Visibility = tablet ? Visibility.Visible : Visibility.Collapsed;
+        if (FollowHeader != null) FollowHeader.Margin = tablet ? new Thickness(16, 18, 16, 4) : PageHeaderMetrics.TitleMargin;
+        if (FollowFeedBody != null) FollowFeedBody.Margin = tablet ? new Thickness(8, 4, 8, 8) : new Thickness(12, 4, 24, 20);
+    }
+
+    private void TabletUpStrip_OnScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (DataContext is not FollowViewModel vm) return;
+        if (vm.LoadingUsers || !vm.HasMoreUsers || vm.Users.Count == 0) return;
+        if (sender is not ScrollViewer sv || e.HorizontalChange <= 0) return;
+        if (sv.ScrollableWidth - sv.HorizontalOffset <= 180)
+            _ = vm.LoadMoreAsync();
     }
 
     private void OnFeedStateChanged(object? sender, PropertyChangedEventArgs e)
@@ -89,6 +113,7 @@ public partial class FollowPage : UserControl, IHorizontalSwipeHost
     {
         // 页面实例不会跟着导航销毁(MainWindow 缓存), 定时器必须自己停:
         // 否则用户在别的页面上, 这边还在定时打接口。
+        Responsive.PostureChanged -= OnFollowPostureChanged;
         if (DataContext is FollowViewModel vm) vm.PropertyChanged -= OnFeedStateChanged;
         _liveBoardTimer?.Stop();
         _unreadTimer?.Stop();

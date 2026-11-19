@@ -29,32 +29,32 @@
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="44" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1" UseAeroCaptionButtons="False"/>
     </shell:WindowChrome.WindowChrome>
-    <views:FluentWindow.Resources>
-        <!-- 直播间自己的圆按钮 = 全局 PlayerRoundBtn 的别名。
-             ★ 必须 BasedOn 全局那份而不是重写模板: 一旦重写, 播放器的暂停键和这里的
-               暂停键又会慢慢长成两个样子(这正是用户这次报的问题)。 -->
-        <Style x:Key="LiveControl" TargetType="Button" BasedOn="{StaticResource PlayerRoundBtn}">
-            <Setter Property="MinHeight" Value="40"/>
-            <Setter Property="MinWidth" Value="40"/>
-        </Style>
+    <Grid x:Name="Root" Background="{DynamicResource CardBackgroundBrush}" helpers:Responsive.Source="True">
+        <Grid.Resources>
+            <!-- 直播间自己的圆按钮 = 全局 PlayerRoundBtn 的别名。
+                 ★ 必须 BasedOn 全局那份而不是重写模板: 一旦重写, 播放器的暂停键和这里的
+                   暂停键又会慢慢长成两个样子(这正是用户这次报的问题)。 -->
+            <Style x:Key="LiveControl" TargetType="Button" BasedOn="{StaticResource PlayerRoundBtn}">
+                <Setter Property="MinHeight" Value="40"/>
+                <Setter Property="MinWidth" Value="40"/>
+            </Style>
 
-        <DataTemplate x:Key="ChatTemplate">
-            <Border x:Name="MessageBody" Padding="12,7" CornerRadius="8" Margin="2,2">
-                <StackPanel>
-                    <DockPanel LastChildFill="True">
-                        <TextBlock DockPanel.Dock="Right" Text="{Binding TimeText}" FontSize="10" Foreground="{DynamicResource TextTertiaryBrush}" Margin="8,0,0,0"/>
-                        <TextBlock Text="{Binding User}" FontWeight="SemiBold" Foreground="{DynamicResource AccentTextOnCardBrush}" TextTrimming="CharacterEllipsis"/>
-                    </DockPanel>
-                    <TextBlock Text="{Binding Identity}" FontSize="10" Foreground="{DynamicResource TextTertiaryBrush}" Visibility="{Binding Identity,Converter={StaticResource StrToVis}}"/>
-                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" Margin="0,3,0,0" Foreground="{DynamicResource TextPrimaryBrush}"/>
-                </StackPanel>
-            </Border>
-            <DataTemplate.Triggers>
-                <DataTrigger Binding="{Binding Kind}" Value="SuperChat"><Setter TargetName="MessageBody" Property="Background" Value="{DynamicResource AccentSoftFillStrongBrush}"/></DataTrigger>
-            </DataTemplate.Triggers>
-        </DataTemplate>
-    </views:FluentWindow.Resources>
-    <Grid x:Name="Root" Background="{DynamicResource CardBackgroundBrush}">
+            <DataTemplate x:Key="ChatTemplate">
+                <Border x:Name="MessageBody" Padding="12,7" CornerRadius="8" Margin="2,2">
+                    <StackPanel>
+                        <DockPanel LastChildFill="True">
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding TimeText}" FontSize="10" Foreground="{DynamicResource TextTertiaryBrush}" Margin="8,0,0,0"/>
+                            <TextBlock Text="{Binding User}" FontWeight="SemiBold" Foreground="{DynamicResource AccentTextOnCardBrush}" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                        <TextBlock Text="{Binding Identity}" FontSize="10" Foreground="{DynamicResource TextTertiaryBrush}" Visibility="{Binding Identity,Converter={StaticResource StrToVis}}"/>
+                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" Margin="0,3,0,0" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                    </StackPanel>
+                </Border>
+                <DataTemplate.Triggers>
+                    <DataTrigger Binding="{Binding Kind}" Value="SuperChat"><Setter TargetName="MessageBody" Property="Background" Value="{DynamicResource AccentSoftFillStrongBrush}"/></DataTrigger>
+                </DataTemplate.Triggers>
+            </DataTemplate>
+        </Grid.Resources>
         <Grid.RowDefinitions><RowDefinition x:Name="ChromeRow" Height="44"/><RowDefinition x:Name="HeaderRow" Height="92"/><RowDefinition Height="*"/></Grid.RowDefinitions>
 
         <!-- ============ 顶栏: 标题 + 铺满窗口 + 三大金刚键(与播放器同一套) ============ -->
@@ -63,9 +63,17 @@
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Text="BiliTouch  /  直播" VerticalAlignment="Center"
-                       Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"
-                       TextTrimming="CharacterEllipsis"/>
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="BtnLiveEmbeddedBack" Visibility="Collapsed" Width="34" Height="34" Margin="0,0,8,0"
+                        Style="{StaticResource IconButtonStyle}" Click="OnLiveEmbeddedBackClick"
+                        ToolTip="返回（Esc）" AutomationProperties.Name="返回主界面"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <TextBlock Text="&#xE72B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14" />
+                </Button>
+                <TextBlock Text="BiliTouch  /  直播" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"
+                           TextTrimming="CharacterEllipsis"/>
+            </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True">
                 <!-- 直播热度胶囊: 播放页这个位置是"听视频/稍后再看"这类即时状态, 直播间放"在看人数"。
@@ -113,13 +121,14 @@
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
                 <Border Width="40" Height="40" CornerRadius="20" Margin="0,0,10,0" helpers:Cover.Source="{Binding Face}"/>
-<TextBlock Text="{Binding Anchor}" VerticalAlignment="Center" Margin="0,0,14,0" Foreground="{DynamicResource TextPrimaryBrush}"/>
+<TextBlock x:Name="RoomHeaderRightAnchor" Text="{Binding Anchor}" VerticalAlignment="Center" Margin="0,0,14,0" Foreground="{DynamicResource TextPrimaryBrush}"/>
 <Button x:Name="FollowButton" Content="{Binding FollowText}" Style="{StaticResource AccentButtonStyle}" Click="FollowClick" MinWidth="76"/>
                 <Button Content="↗" Style="{StaticResource SubtleButtonStyle}" Click="OpenBrowserClick" ToolTip="在浏览器打开直播间" Margin="8,0,0,0" FontSize="20"/>
             </StackPanel>
         </Grid>
 
         <Grid Grid.Row="2" x:Name="RoomLayout">
+            <Grid.RowDefinitions><RowDefinition x:Name="VideoRow" Height="*"/><RowDefinition x:Name="ChatRow" Height="0"/></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition x:Name="ChatColumn" Width="360"/></Grid.ColumnDefinitions>
             <Grid Background="#101116" x:Name="VideoPanel">
                 <vlc:VideoView x:Name="LiveVideo" Background="Black" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">

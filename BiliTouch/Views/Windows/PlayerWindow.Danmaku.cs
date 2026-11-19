@@ -992,7 +992,7 @@ public partial class PlayerWindow
         var usable = CanUseOnlineDanmaku;
         BtnDanmaku.IsEnabled = usable;
         BtnDanmaku.Opacity = usable ? 1.0 : 0.4;
-        if (DanmakuComposer != null) DanmakuComposer.Visibility = usable ? Visibility.Visible : Visibility.Collapsed;
+        UpdateDanmakuComposerVisibility();
 
         var blockedByTypes = _danmakuOn && !Svc.Settings.HasVisibleDanmakuTypes;
         DanmakuOffSlash.Visibility = _danmakuOn && !blockedByTypes ? Visibility.Collapsed : Visibility.Visible;

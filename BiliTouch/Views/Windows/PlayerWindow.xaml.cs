@@ -576,6 +576,8 @@ public partial class PlayerWindow : FluentWindow
         InitializeComponent();
         InitializeTouch();
         InitializeAlternatePlayerLayout();
+        if (CommentDraft != null) CommentDraft.GotFocus += (_, _) => CommentDraft.BringIntoView();
+        if (DanmakuInput != null) DanmakuInput.GotFocus += (_, _) => DanmakuInput.BringIntoView();
         PlayerStage.SizeChanged+=(_,_)=>UpdatePictureSplitGeometry();
         UiScale.Register(OriginalImageHost);
         VideoAreaRoot.SetResourceReference(System.Windows.Documents.TextElement.FontFamilyProperty,AppTypography.ResourceKey);
@@ -1179,6 +1181,7 @@ public partial class PlayerWindow : FluentWindow
         nameof(_likeDownTick), nameof(_likePressCancelAt), nameof(_likePressStartTick),
         nameof(_likePressCommitted), nameof(_likeConfirmed), nameof(_activeLikeTouchId),
         nameof(_followBusy),
+        nameof(_detectedVideoWidth), nameof(_detectedVideoHeight), nameof(_videoSizeFromMetadata),
     };
 
     /// <summary>
@@ -1266,6 +1269,11 @@ public partial class PlayerWindow : FluentWindow
         nameof(_listenSwitching),
         nameof(_modalResizeInProgress),
         nameof(_backdropSuspendQueued),
+        nameof(_portraitLayoutMounted),
+        nameof(_isEmbeddedInMain),
+        nameof(_tabletPortraitLayoutMounted),
+        nameof(_tabletPortraitVideoCompact),
+        nameof(_portraitDrawerOpen),
     };
 
     /// <summary>
@@ -1737,6 +1745,7 @@ public partial class PlayerWindow : FluentWindow
     {
         _pinchWheelIdle?.Stop();
         _closing = true;
+        if (_isEmbeddedInMain) DetachFromMainWindow(pausePlayback: false);
         _overlayWheelSource?.RemoveHook(OnVideoOverlayHorizontalWheel);
         _overlayWheelSource = null;
         if (_overlayKeyboardWindow != null)

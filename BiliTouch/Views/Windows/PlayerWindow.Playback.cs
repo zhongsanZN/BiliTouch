@@ -196,7 +196,20 @@ public partial class PlayerWindow
     /// </summary>
     private void OnInfoScrollChanged(object sender, ScrollChangedEventArgs e)
     {
-        if (!IsWebVideoLayout && sender is ScrollViewer commentsScroll) PrefetchCommentPage(commentsScroll, e);
+        if (!UsesDetachedCommentsLayout && sender is ScrollViewer commentsScroll) PrefetchCommentPage(commentsScroll, e);
+        if (_tabletPortraitLayoutMounted && IsPortraitVideoDetected && sender is ScrollViewer tabletScroll && ReferenceEquals(e.OriginalSource, tabletScroll))
+        {
+            if (tabletScroll.VerticalOffset > 64 && !_tabletPortraitVideoCompact)
+            {
+                _tabletPortraitVideoCompact = true;
+                UpdateTabletPortraitMeasurements();
+            }
+            else if (tabletScroll.VerticalOffset < 20 && _tabletPortraitVideoCompact)
+            {
+                _tabletPortraitVideoCompact = false;
+                UpdateTabletPortraitMeasurements();
+            }
+        }
         if (_closing || _webDockSpacingPrepared || _webRendering || _vmemTracking || _relatedShown >= _relatedAll.Count) return;
         // 换片后 _relatedAll 是空的, 上面的闸门已经挡住; 这里再确认面板是显示的,
         // 免得在"简介 tab"下也补(相关视频属于简介 tab, 评论 tab 下整块是隐藏的)。
@@ -661,9 +674,13 @@ public partial class PlayerWindow
 
             // During active shared-element entry (~250ms), keep network/decode pipeline running at full speed
             // while deferring heavy right-rail visual tree binds until the entry surface lands.
+            var pageDim = detail.Pages.FirstOrDefault(p => p.Cid == _currentCid);
+            var detailW = pageDim is { VideoWidth: > 0, VideoHeight: > 0 } ? pageDim.VideoWidth : detail.VideoWidth;
+            var detailH = pageDim is { VideoWidth: > 0, VideoHeight: > 0 } ? pageDim.VideoHeight : detail.VideoHeight;
             RunOrDeferAfterSeamlessEntry(() =>
             {
                 if (_closing || gen != _loadGen) return;
+                if (detailW > 0 && detailH > 0) UpdateDetectedVideoSize(detailW, detailH, fromMetadata: true);
                 UpdateUiFromDetail(detail);
                 ApplySeason(detail.Season);
                 ApplyPages(detail.Pages);
@@ -701,6 +718,8 @@ public partial class PlayerWindow
             }
             _totalMs = durMs;
             UpdateTotalDurationText();
+            if (remux is { VideoWidth: > 0, VideoHeight: > 0 } && !_videoSizeFromMetadata)
+                UpdateDetectedVideoSize(remux.VideoWidth, remux.VideoHeight, fromMetadata: false);
             _qualities.Clear();
             _qualities.AddRange(qualities);
             FillQualityMenu(actualQn);
@@ -862,6 +881,8 @@ public partial class PlayerWindow
             Panel.SetZIndex(areaRoot, 10);
             VideoSurface.Children.Insert(1, areaRoot);   // 0 = VmemView
             VmemView.Visibility = Visibility.Visible;
+            VmemView.VideoSizeChanged -= OnVmemVideoSizeChanged;
+            VmemView.VideoSizeChanged += OnVmemVideoSizeChanged;
             WriteLibVLCDebug("[Vmem] mounted: video host = VmemVideoView\n");
             return true;
         }
@@ -955,6 +976,7 @@ public partial class PlayerWindow
             //     排一拍常常还是太早。重试上限 10 次 × 120ms ≈ 1.2s, 足够覆盖;
             //     命中后立刻停, 不常驻。
             StartVideoBackdropFix();
+            ProbeMediaVideoSizeFromPlayer();
             UpdatePlayButton();
             StartControlsHideCountdown();   // 播放中才开始倒计时自动隐藏
             // 聆听态: 起播后把文案里的秒数对齐到真实位置(切流前后 _mp.Time 会有几十毫秒偏差),
@@ -1050,11 +1072,62 @@ public partial class PlayerWindow
                         WriteLibVLCDebug("[Vout] vout 重建, 强制揭幕手势层\n");
                     }
                     StartVideoBackdropFix();
+                    ProbeMediaVideoSizeFromPlayer();
                 }));
             }
             catch { /* 窗口正在销毁 */ }
         };
 
+    }
+
+    private void OnVmemVideoSizeChanged(uint width, uint height)
+    {
+        if (_closing || _isLive || width == 0 || height == 0) return;
+        try
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_closing || _isLive) return;
+                ProbeMediaVideoSizeFromPlayer();
+                if (!_videoSizeFromMetadata && _detectedVideoWidth <= 0)
+                    UpdateDetectedVideoSize((int)width, (int)height, fromMetadata: false);
+            }));
+        }
+        catch { }
+    }
+
+    private void ProbeMediaVideoSizeFromPlayer()
+    {
+        if (_closing || _isLive || _videoSizeFromMetadata || _mp == null) return;
+        uint w = 0, h = 0;
+        try
+        {
+            var tracks = _mp.Media?.Tracks;
+            if (tracks != null)
+            {
+                foreach (var t in tracks)
+                {
+                    if (t.TrackType != TrackType.Video) continue;
+                    var v = t.Data.Video;
+                    if (v.Width > 0 && v.Height > 0)
+                    {
+                        w = v.Width;
+                        h = v.Height;
+                        if (v.Orientation is VideoOrientation.LeftTop or VideoOrientation.RightTop
+                            or VideoOrientation.RightBottom or VideoOrientation.LeftBottom)
+                            (w, h) = (h, w);
+                        break;
+                    }
+                }
+            }
+            if ((w == 0 || h == 0) && _vmemMode && VmemView != null)
+                (w, h) = VmemView.VideoSize;
+            if (w == 0 || h == 0)
+                _mp.Size(0, ref w, ref h);
+        }
+        catch { return; }
+        if (w > 0 && h > 0)
+            UpdateDetectedVideoSize((int)w, (int)h, fromMetadata: false);
     }
 
     private bool PlayMedia(Media media)

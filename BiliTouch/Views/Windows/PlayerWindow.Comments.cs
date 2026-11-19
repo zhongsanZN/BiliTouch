@@ -30,7 +30,7 @@ public partial class PlayerWindow
 
     private void TabIntro_Checked(object sender, RoutedEventArgs e)
     {
-        if(IsWebVideoLayout){SelectWebInfoPage(recommended: false);return;}
+        if(UsesDetachedCommentsLayout){SelectWebInfoPage(recommended: false);return;}
         IntroPanel.Visibility = Visibility.Visible;
         CommentsPanel.Visibility = Visibility.Collapsed;
         // 点 tab 也走滑动入场(横滑翻页时由翻页动画接管)
@@ -44,7 +44,7 @@ public partial class PlayerWindow
 
     private async void TabComments_Checked(object sender, RoutedEventArgs e)
     {
-        if(IsWebVideoLayout){IntroPanel.Visibility=CommentsPanel.Visibility=Visibility.Visible;UpdateCommentComposer();await LoadCommentsAsync();return;}
+        if(UsesDetachedCommentsLayout){IntroPanel.Visibility=CommentsPanel.Visibility=Visibility.Visible;UpdateCommentComposer();await LoadCommentsAsync();return;}
         IntroPanel.Visibility = Visibility.Collapsed;
         CommentsPanel.Visibility = Visibility.Visible;
         AnimatePageEntrance(CommentsPanel, fromRight: true);

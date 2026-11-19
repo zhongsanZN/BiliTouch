@@ -22,14 +22,22 @@
   </Grid>
   <Grid x:Name="ModuleContent" Grid.Row="2">
    <controls:FeedStatusOverlay Panel.ZIndex="2" VerticalAlignment="Top" Margin="20,8" ErrorText="{Binding Error}" RetryCommand="{Binding RefreshCommand}"/>
-   <Grid Visibility="{Binding IsPrivateChannel,Converter={StaticResource BoolToVis}}"><Grid.ColumnDefinitions><ColumnDefinition Width="252"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+   <Grid x:Name="PrivateChannelGrid" Visibility="{Binding IsPrivateChannel,Converter={StaticResource BoolToVis}}"><Grid.ColumnDefinitions><ColumnDefinition x:Name="PrivateSessionCol" Width="252"/><ColumnDefinition x:Name="PrivateThreadCol" Width="*"/></Grid.ColumnDefinitions>
     <ScrollViewer x:Name="SessionScroll" Grid.Column="0" Margin="12,4,0,20" VerticalScrollBarVisibility="Auto">
      <StackPanel Margin="8,0,8,0"><controls:LoadingRing HorizontalAlignment="Center" Margin="0,12" Visibility="{Binding Loading,Converter={StaticResource BoolToVis}}"/>
       <ItemsControl x:Name="SessionList" ItemsSource="{Binding Sessions}"><ItemsControl.ItemTemplate><DataTemplate><controls:ContactListRow Title="{Binding DisplayName}" Subtitle="{Binding Preview}" Avatar="{Binding Face}" IsSelected="{Binding IsSelected}" HasUnread="{Binding HasUnread}" MouseLeftButtonUp="OnSessionClick"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
      </StackPanel>
     </ScrollViewer>
-    <Grid Grid.Column="1" Margin="12,4,24,20"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-     <TextBlock Text="{Binding CurrentTitle}" FontSize="15" FontWeight="SemiBold" Margin="8,0,8,10" TextTrimming="CharacterEllipsis"/>
+    <Grid x:Name="PrivateThreadPane" Grid.Column="1" Margin="12,4,24,20"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+     <StackPanel Orientation="Horizontal" Margin="8,0,8,10" VerticalAlignment="Center">
+      <Button x:Name="BtnPrivateBack" Visibility="Collapsed" Style="{StaticResource SubtleButtonStyle}" MinHeight="36" Padding="10,4" Margin="0,0,8,0" Click="OnPrivateBackClick" ToolTip="返回会话列表" AutomationProperties.Name="返回会话列表">
+       <StackPanel Orientation="Horizontal">
+        <TextBlock Text="&#xE72B;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center"/>
+        <TextBlock Text="会话" FontSize="12.5" Margin="5,0,0,0" VerticalAlignment="Center"/>
+       </StackPanel>
+      </Button>
+      <TextBlock Text="{Binding CurrentTitle}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+     </StackPanel>
      <Grid Grid.Row="1">
       <ScrollViewer x:Name="MsgScroll" VerticalScrollBarVisibility="Auto" ScrollChanged="OnThreadScroll" Padding="8,8,8,8">
        <StackPanel><controls:LoadingRing Width="18" Height="18" HorizontalAlignment="Center" Margin="0,8" Visibility="{Binding LoadingOlder,Converter={StaticResource BoolToVis}}"/>
@@ -64,7 +72,7 @@
      </Grid>
     </Grid>
    </Grid>
-   <Grid Visibility="{Binding IsNotificationChannel,Converter={StaticResource BoolToVis}}" Margin="24,8,24,20">
+   <Grid x:Name="NotificationChannelGrid" Visibility="{Binding IsNotificationChannel,Converter={StaticResource BoolToVis}}" Margin="24,8,24,20">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
      <StackPanel>
       <ItemsControl ItemsSource="{Binding Notifications}"><ItemsControl.ItemTemplate><DataTemplate>

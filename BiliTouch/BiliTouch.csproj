@@ -16,8 +16,14 @@
     <AssemblyTitle>BiliTouch</AssemblyTitle>
     <Product>BiliTouch</Product>
     <Authors>中三</Authors>
-    <Version>0.3.5</Version>
-    <PlatformTarget>x64</PlatformTarget>
+    <Version>0.3.6</Version>
+    <!-- 按目标 RID/Platform 选择架构：默认 x64；指定 -r win-arm64 或 Platform=ARM64 时切换原生 ARM64（面向 ARM 版 Surface） -->
+    <IsArm64Target>false</IsArm64Target>
+    <IsArm64Target Condition="'$(RuntimeIdentifier)' == 'win-arm64' OR '$(Platform)' == 'ARM64'">true</IsArm64Target>
+    <PlatformTarget Condition="'$(IsArm64Target)' != 'true'">x64</PlatformTarget>
+    <PlatformTarget Condition="'$(IsArm64Target)' == 'true'">ARM64</PlatformTarget>
+    <_VlcRid Condition="'$(IsArm64Target)' != 'true'">win-x64</_VlcRid>
+    <_VlcRid Condition="'$(IsArm64Target)' == 'true'">win-arm64</_VlcRid>
     <!--
       RollForward=Major: 框架依赖版(安装器)在机器上没有 .NET 10 桌面运行时、
       但装了更高大版本(如 .NET 11)时, 允许直接跑在上面, 不再强求用户装对应版本的
@@ -35,33 +41,13 @@
     <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
 
     <!--
-      关闭 LibVLC 的 x86 原生库（约 126.7MB 纯冗余）。
-      VideoLAN.LibVLC.Windows 的 targets 按 $(Platform) 判别，$(Platform) 为 AnyCPU 时默认开启 x86；
-      本工程是 x64-only（PlatformTarget=x64），因此显式关闭 x86 与 arm64，并显式开启 x64。
+      显式按目标架构开关 LibVLC 原生库，绝不依赖 targets 的 AnyCPU 推导（避免 'Any CPU' 空格导致零复制，也防止跨架构 ~90MB 冗余库混入）。
     -->
     <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
-    <!--
-      ★★★ 必须显式打开 x64 那一份, 不能再靠 targets 自己推导(2026-10-11 修的"视频无法播放")。
-      为什么: VideoLAN.LibVLC.Windows 的 targets 判据是
-          '$(Platform)' == 'x64' OR '$(Platform)' == 'AnyCPU'
-      注意它写的是 **AnyCPU(无空格)**。而本仓库的构建命令一直写
-          dotnet build ... -p:Platform="Any CPU"   ← 带空格
-      ⇒ $(Platform) 变成 'Any CPU', 与 'AnyCPU' 不相等, 两个开关都落空
-      ⇒ 原生库**一个都不复制**, 输出目录里没有 libvlc/, 程序一开视频就报
-         "Failed to load required native libraries"。
-      ★ 危害在于它**静默**: 构建成功(0 错误 0 警告), 只是产物少了一整个目录;
-        而且不同构建入口结果还不一样 —— 用 .sln 构建时 Platform 会被映射成 AnyCPU(正常),
-        直接构建 .csproj 或被别的工程 ProjectReference 带出来时才是 'Any CPU'(异常)。
-      所以这里把 x64 显式写死(本工程是 x64-only, PlatformTarget=x64),
-      无论外面怎么拼 Platform, 原生库都照常复制。
-      ★ 别把它"顺手"删掉改回依赖推导 —— 那就是把这个错误再种一遍。
-    -->
-    <VlcWindowsX64Enabled>true</VlcWindowsX64Enabled>
-    <!--
-      ★ 3.0.24 的 targets 新增了 ARM64 那一份, 默认判据与 x86 相同(AnyCPU 时自动开) ——
-      不显式关掉它, 90MB 的 arm64 原生库会被静默带进发布包(1.5.0 首发踩过:
-      setup 20.7MB → 46.4MB), 本工程 x64-only, 与上面的 x86 开关同款处理。    -->
-    <VlcWindowsArm64Enabled>false</VlcWindowsArm64Enabled>
+    <VlcWindowsX64Enabled Condition="'$(IsArm64Target)' != 'true'">true</VlcWindowsX64Enabled>
+    <VlcWindowsX64Enabled Condition="'$(IsArm64Target)' == 'true'">false</VlcWindowsX64Enabled>
+    <VlcWindowsArm64Enabled Condition="'$(IsArm64Target)' == 'true'">true</VlcWindowsArm64Enabled>
+    <VlcWindowsArm64Enabled Condition="'$(IsArm64Target)' != 'true'">false</VlcWindowsArm64Enabled>
   </PropertyGroup>
 
   <!--
@@ -116,57 +102,57 @@
   </Target>
   <Target Name="TrimLibVLCPlugins" AfterTargets="Publish">
     <ItemGroup>
-      <_VlcTrimDir Include="$(PublishDir)libvlc\win-x64\plugins\gui;
-                          $(PublishDir)libvlc\win-x64\plugins\visualization;
-                          $(PublishDir)libvlc\win-x64\plugins\stream_out;
-                          $(PublishDir)libvlc\win-x64\plugins\access_output;
-                          $(PublishDir)libvlc\win-x64\plugins\services_discovery;
-                          $(PublishDir)libvlc\win-x64\plugins\lua;
-                          $(PublishDir)libvlc\win-x64\plugins\mux;
-                          $(PublishDir)libvlc\win-x64\plugins\meta_engine;
-                          $(PublishDir)libvlc\win-x64\lua;
-                          $(PublishDir)libvlc\win-x64\hrtfs" />
-      <_VlcTrimFile Include="$(PublishDir)libvlc\win-x64\plugins\codec\libx264_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\codec\libx26410b_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\codec\libx265_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\codec\libaom_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\codec\libtwolame_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\codec\libshine_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\codec\libschroedinger_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\codec\libtheora_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\codec\libzvbi_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\codec\libaribsub_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\libaccess_srt_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\libvnc_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\libdcp_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\liblibbluray_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\libbluray-j2se-1.3.2.jar;
-                           $(PublishDir)libvlc\win-x64\plugins\access\libdshow_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\libdtv_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\libsftp_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\libcdda_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\librtp_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\liblive555_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\libnfs_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\libdvdnav_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\access\libdvdread_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\demux\libsid_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\demux\libgme_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\demux\libmod_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\audio_filter\libspatialaudio_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\audio_filter\libmad_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\video_output\libcaca_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\spu\libremoteosd_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\plugins\misc\libxml_plugin.dll;
-                           $(PublishDir)libvlc\win-x64\libvlc.lib;
-                           $(PublishDir)libvlc\win-x64\libvlccore.lib;
-                           $(PublishDir)libvlc\win-x64\libvlc.exp;
-                           $(PublishDir)libvlc\win-x64\libvlccore.exp;
+      <_VlcTrimDir Include="$(PublishDir)libvlc\$(_VlcRid)\plugins\gui;
+                          $(PublishDir)libvlc\$(_VlcRid)\plugins\visualization;
+                          $(PublishDir)libvlc\$(_VlcRid)\plugins\stream_out;
+                          $(PublishDir)libvlc\$(_VlcRid)\plugins\access_output;
+                          $(PublishDir)libvlc\$(_VlcRid)\plugins\services_discovery;
+                          $(PublishDir)libvlc\$(_VlcRid)\plugins\lua;
+                          $(PublishDir)libvlc\$(_VlcRid)\plugins\mux;
+                          $(PublishDir)libvlc\$(_VlcRid)\plugins\meta_engine;
+                          $(PublishDir)libvlc\$(_VlcRid)\lua;
+                          $(PublishDir)libvlc\$(_VlcRid)\hrtfs" />
+      <_VlcTrimFile Include="$(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libx264_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libx26410b_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libx265_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libaom_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libtwolame_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libshine_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libschroedinger_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libtheora_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libzvbi_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libaribsub_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\libaccess_srt_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\libvnc_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\libdcp_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\liblibbluray_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\libbluray-j2se-1.3.2.jar;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\libdshow_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\libdtv_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\libsftp_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\libcdda_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\librtp_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\liblive555_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\libnfs_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\libdvdnav_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\access\libdvdread_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\demux\libsid_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\demux\libgme_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\demux\libmod_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\audio_filter\libspatialaudio_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\audio_filter\libmad_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\video_output\libcaca_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\spu\libremoteosd_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\plugins\misc\libxml_plugin.dll;
+                           $(PublishDir)libvlc\$(_VlcRid)\libvlc.lib;
+                           $(PublishDir)libvlc\$(_VlcRid)\libvlccore.lib;
+                           $(PublishDir)libvlc\$(_VlcRid)\libvlc.exp;
+                           $(PublishDir)libvlc\$(_VlcRid)\libvlccore.exp;
                            $(PublishDir)BiliTouch.pdb" />
     </ItemGroup>
     <RemoveDir Directories="@(_VlcTrimDir)" />
     <Delete Files="@(_VlcTrimFile)" />
-    <Message Text="LibVLC 插件已裁剪，仅保留播放必需模块" Importance="high" />
+    <Message Text="LibVLC 插件已裁剪（$(_VlcRid)），仅保留播放必需模块" Importance="high" />
   </Target>
 
   <ItemGroup>

@@ -92,6 +92,7 @@ public sealed class VmemVideoView : Image, IDisposable
     public bool UsesGpuPresentation => _gpuAvailable && Volatile.Read(ref _format)?.Nv12 == true;
     public string PresentationMode => UsesGpuPresentation ? "显卡合成" : "兼容合成";
     public bool UseCompatibleColorConversion { get; set; }
+    public event Action<uint, uint>? VideoSizeChanged;
     public (uint Width, uint Height) VideoSize
     {
         get { var format = Volatile.Read(ref _format); return format == null ? (0u, 0u) : ((uint)format.Width, (uint)format.Height); }
@@ -166,6 +167,7 @@ public sealed class VmemVideoView : Image, IDisposable
             }
             opaque = GCHandle.ToIntPtr(format.Handle);
             Volatile.Write(ref _format, format);
+            try { VideoSizeChanged?.Invoke(width, height); } catch { }
             return 1;
         }
         catch { return 0; } // Never propagate managed allocation/overflow exceptions through native code.

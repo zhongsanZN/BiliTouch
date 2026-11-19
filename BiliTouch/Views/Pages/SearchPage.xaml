@@ -138,7 +138,7 @@
                              ★ 单列纵向排列, 不套 CardWallPanel: 用户卡是"一行一条"的信息条
                                (头像+昵称+粉丝+签名), 排成多列网格会让签名被压成一行残句。
                                B 站官方 PC 端的用户搜索结果也是单列列表。 -->
-                        <ItemsControl ItemsSource="{Binding UserResults}"
+                        <ItemsControl x:Name="UserResultsList" ItemsSource="{Binding UserResults}"
                                       Visibility="{Binding IsUserSearch, Converter={StaticResource BoolToVis}}"
                                       Margin="28,4,28,0">
                             <ItemsControl.ItemTemplate>
@@ -149,7 +149,7 @@
                         </ItemsControl>
 
                         <!-- 专栏结果列表 -->
-                        <ItemsControl ItemsSource="{Binding ArticleResults}"
+                        <ItemsControl x:Name="ArticleResultsList" ItemsSource="{Binding ArticleResults}"
                                       Visibility="{Binding IsArticleSearch, Converter={StaticResource BoolToVis}}"
                                       Margin="28,4,28,0">
                             <ItemsControl.ItemTemplate>

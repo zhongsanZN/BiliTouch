@@ -17,7 +17,7 @@
                     头部因此撑到 62 高: 标题贴顶(和左侧 logo 同一水平线), 右侧操作按钮
                     贴底 —— 它们的顶边落在 44, 正好让开窗口按钮, 谁也不压谁。
                 -->
-        <Grid Grid.Row="0" Margin="36,20,36,0" MinHeight="62">
+        <Grid x:Name="FavHeaderGrid" Grid.Row="0" Margin="36,20,36,0" MinHeight="62">
             <!-- [ 普通模式 ] 标题 + 条数 -->
             <StackPanel Orientation="Horizontal" VerticalAlignment="Top"
                         Visibility="{Binding IsEditMode, Converter={StaticResource InvBoolToVis}}">
@@ -79,7 +79,7 @@
                两个集合 —— 主条不裁剪、不残留, 窗口缩放/夹数增删都会重算。
                (第一版"裁剪 + 视觉树量宽"被删掉: 删除夹子后重算时视觉树给的是过期
                 宽度, 表现为"主条整个空了只剩按钮", 不可救药, 换集合划分。) -->
-        <Grid Grid.Row="1" Margin="36,14,36,10"
+        <Grid x:Name="FavFolderBarGrid" Grid.Row="1" Margin="36,14,36,10"
               IsEnabled="{Binding CanOperate}"
               Visibility="{Binding Folders.Count, Converter={StaticResource CountToVis}}">
             <Grid x:Name="FolderBarHost">
@@ -198,7 +198,7 @@
             </StackPanel>
 
             <!-- 视频网格 -->
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="36,4,36,24"
+            <ScrollViewer x:Name="FavListScroll" VerticalScrollBarVisibility="Auto" Margin="36,4,36,24"
                           ScrollChanged="OnListScrollChanged"
                           Visibility="{Binding Error, Converter={StaticResource InvStrToVis}}">
                 <StackPanel>

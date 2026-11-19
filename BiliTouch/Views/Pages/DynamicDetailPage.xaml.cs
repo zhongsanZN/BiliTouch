@@ -15,7 +15,17 @@ public partial class DynamicDetailPage : UserControl
     {
         InitializeComponent();
         ViewModel=new(item,repost);DataContext=ViewModel;
-        Loaded+=async (_,_)=>{await ViewModel.InitializeAsync();ScheduleCommentsPrefetch();};
+        Loaded+=async (_,_)=>
+        {
+            Responsive.PostureChanged -= OnDetailPostureChanged;
+            Responsive.PostureChanged += OnDetailPostureChanged;
+            ApplyTabletLayout(Responsive.GetPosture(this));
+            await ViewModel.InitializeAsync();
+            ScheduleCommentsPrefetch();
+        };
+        Unloaded += (_, _) => Responsive.PostureChanged -= OnDetailPostureChanged;
+        SizeChanged += (_, _) => { if (Responsive.GetPosture(this) == LayoutPosture.TabletPortrait) UpdatePortraitBodyCap(); };
+        Composer.GotFocus += (_, _) => Composer.BringIntoView();
         ViewModel.PropertyChanged+=(_,e)=>{if(e.PropertyName==nameof(ViewModel.Loading) && !ViewModel.Loading)ScheduleCommentsPrefetch();};
         ViewModel.CaptchaRequested += url => Svc.Navigate?.OpenWebViewWindow(url, "评论人机验证");
         ViewModel.CommentPosted += c => CommentList.ScrollIntoView(c);
@@ -33,6 +43,55 @@ public partial class DynamicDetailPage : UserControl
             Composer.Focus();
         };
     }
+    private void OnDetailPostureChanged(FrameworkElement _, LayoutPosture posture) => ApplyTabletLayout(posture);
+
+    internal void ApplyTabletLayout(LayoutPosture posture)
+    {
+        var tablet = posture == LayoutPosture.TabletPortrait;
+        if (tablet)
+        {
+            DetailBody.Margin = new Thickness(12, 8, 12, 12);
+            DetailLeftCol.MinWidth = 0;
+            DetailLeftCol.Width = new GridLength(1, GridUnitType.Star);
+            DetailMidCol.Width = new GridLength(0);
+            DetailRightCol.MinWidth = 0;
+            DetailRightCol.Width = new GridLength(0);
+            DetailDivider.Visibility = Visibility.Collapsed;
+            DetailTopRow.Height = GridLength.Auto;
+            UpdatePortraitBodyCap();
+            Grid.SetRow(DynamicBodyScroll, 0);
+            Grid.SetColumn(DynamicBodyScroll, 0);
+            Grid.SetColumnSpan(DynamicBodyScroll, 3);
+            Grid.SetRow(CommentsPane, 1);
+            Grid.SetColumn(CommentsPane, 0);
+            Grid.SetColumnSpan(CommentsPane, 3);
+        }
+        else
+        {
+            DetailBody.Margin = new Thickness(24, 12, 24, 20);
+            DetailTopRow.MaxHeight = double.PositiveInfinity;
+            DetailTopRow.Height = new GridLength(0);
+            DetailLeftCol.MinWidth = 260;
+            DetailLeftCol.Width = new GridLength(3, GridUnitType.Star);
+            DetailMidCol.Width = new GridLength(20);
+            DetailRightCol.MinWidth = 280;
+            DetailRightCol.Width = new GridLength(2, GridUnitType.Star);
+            DetailDivider.Visibility = Visibility.Visible;
+            Grid.SetRow(DynamicBodyScroll, 1);
+            Grid.SetColumn(DynamicBodyScroll, 0);
+            Grid.SetColumnSpan(DynamicBodyScroll, 1);
+            Grid.SetRow(CommentsPane, 1);
+            Grid.SetColumn(CommentsPane, 2);
+            Grid.SetColumnSpan(CommentsPane, 1);
+        }
+    }
+
+    private void UpdatePortraitBodyCap()
+    {
+        var h = DetailColumns.ActualHeight > 0 ? DetailColumns.ActualHeight : ActualHeight;
+        DetailTopRow.MaxHeight = h > 0 ? Math.Max(220, Math.Round(h * 0.45)) : 380;
+    }
+
     private bool _prefetchScheduled;
     private static ScrollViewer? FindScroll(DependencyObject parent)
     {

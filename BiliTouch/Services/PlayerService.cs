@@ -83,8 +83,29 @@ public class PlayerService
     }
 
     private bool _closing;
-    /// <summary>应用退出时不再预热/新建窗口</summary>
-    public void MarkClosing() => _closing = true;
+    /// <summary>应用退出时不再预热/新建窗口，并解除主窗内嵌播放挂载。</summary>
+    public void MarkClosing()
+    {
+        _closing = true;
+        if (_window is { IsEmbeddedInMain: true } embedded)
+            try { embedded.DetachFromMainWindow(pausePlayback: true); } catch { }
+        if (_liveWindow is { IsEmbeddedInMain: true } embeddedLive)
+            try { embeddedLive.DetachFromMainWindow(stopPlayback: true); } catch { }
+    }
+
+    public bool TryHandleEmbeddedBack()
+    {
+        if (_window is { IsEmbeddedInMain: true } embedded && embedded.HandleEmbeddedBack()) return true;
+        if (_liveWindow is { IsEmbeddedInMain: true } embeddedLive && embeddedLive.HandleEmbeddedBack()) return true;
+        return false;
+    }
+
+    private static MainWindow? ActiveTabletMainHost()
+        => Application.Current?.MainWindow is MainWindow main
+           && main.IsVisible
+           && main.IsTabletPortraitPosture
+            ? main
+            : null;
 
     /// <summary>播放视频(复用窗口)</summary>
     public void PlayVideo(string bvid, string? title = null)
@@ -106,6 +127,14 @@ public class PlayerService
                 live.Closed += (_, _) => { if (ReferenceEquals(_liveWindow, live)) _liveWindow = null; };
             }
             var window = _liveWindow;
+            var tabletHost = ActiveTabletMainHost();
+            if (tabletHost != null && window.AttachToMainWindow(tabletHost))
+            {
+                window.OpenRoom(roomId, title);
+                tabletHost.Activate();
+                return;
+            }
+            if (window.IsEmbeddedInMain) window.DetachFromMainWindow(stopPlayback: false);
             window.WindowState = WindowState.Maximized;
             if (!window.IsVisible) window.Show();
             window.OpenRoom(roomId, title); window.Activate();
@@ -146,8 +175,20 @@ public class PlayerService
         if (_closing) return;
         var generation = ++_openGeneration;
         var live = _liveWindow; _liveWindow = null; live?.Close();
-        var win = GetOrCreateWindow(seamlessBvid);
+        var tabletHost = ActiveTabletMainHost();
+        var win = GetOrCreateWindow(tabletHost != null ? null : seamlessBvid, forEmbeddedHost: tabletHost != null);
         if (win == null) return;
+
+        if (tabletHost != null && win.CanEmbedInMainWindow && win.AttachToMainWindow(tabletHost))
+        {
+            if (generation != _openGeneration || win.IsClosing) return;
+            start(win);
+            if (!string.IsNullOrEmpty(title)) win.Title = title + " - BiliTouch";
+            tabletHost.Activate();
+            return;
+        }
+
+        if (win.IsEmbeddedInMain) win.DetachFromMainWindow(pausePlayback: false);
 
         win.PresentPrepared(() =>
         {
@@ -188,7 +229,7 @@ public class PlayerService
         return r.IntersectsWith(virtualScreen) && r.Width > 0 && r.Height > 0;
     }
 
-    private PlayerWindow? GetOrCreateWindow(string? seamlessBvid)
+    private PlayerWindow? GetOrCreateWindow(string? seamlessBvid, bool forEmbeddedHost = false)
     {
         // 关键: 正在关闭的窗口不能复用。
         // 关闭流程是"先隐藏窗口 -> 后台拆解原生资源 -> 最后才真正 Close()"。
@@ -196,6 +237,8 @@ public class PlayerService
         // 刚打开的新视频一起关掉 —— 表现为"点了视频又立刻自动退出"。
         if (_window is { } reuse && !reuse.IsClosing)
         {
+            if (forEmbeddedHost) return reuse;
+            if (reuse.IsEmbeddedInMain) reuse.DetachFromMainWindow(pausePlayback: false);
             // ★★★ 2026-11-04 修"一直以来根本没有默认最大化"的**根因**:
             //
             //   原来 `WindowState = Maximized` 只写在**新建窗口**那条路径里(见下面)。
@@ -248,6 +291,7 @@ public class PlayerService
 
         AttachLifecycle(win);
         _window = win;
+        if (forEmbeddedHost) return win;
         // ★ 进详情页默认最大化(用户要求): 平板/大屏上视频页本来就该占满可用空间。
         //   这是**窗口最大化**, 不是视频全屏 —— 右栏、控制栏都还在, 用户随时可以还原。
         //   ★ 必须放在 Show() 之前: Show 之后再改 WindowState 会先按 1280×760 布局一帧再跳,

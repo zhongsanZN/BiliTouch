@@ -5,7 +5,7 @@
  <Grid>
   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
   <helpers:SkinSurface Kind="Home" Grid.RowSpan="2"/>
-  <Grid Margin="36,20,36,12" MinHeight="62">
+  <Grid x:Name="CacheHeaderGrid" Margin="36,20,36,12" MinHeight="62">
    <StackPanel>
     <TextBlock x:Name="ShellPageTitle" Text="离线缓存" Style="{StaticResource PageTitleStyle}"/>
     <TextBlock Text="{Binding Summary}" Margin="0,8,0,0" Foreground="{DynamicResource TextSecondaryBrush}"/>
@@ -16,7 +16,7 @@
     <Button Content="管理" Command="{Binding ToggleEditCommand}" Style="{StaticResource SubtleButtonStyle}" MinHeight="40"/>
    </StackPanel>
   </Grid>
-  <Grid Grid.Row="1" Margin="36,0,36,12">
+  <Grid x:Name="CacheTabGrid" Grid.Row="1" Margin="36,0,36,12">
    <StackPanel Visibility="{Binding IsOverview,Converter={StaticResource BoolToVis}}">
     <StackPanel Orientation="Horizontal">
      <RadioButton Content="已缓存" IsChecked="{Binding IsCompletedTab}" GroupName="OfflineState" Style="{StaticResource SettingsTabStyle}"/>
@@ -38,7 +38,7 @@
     </StackPanel>
    </Grid>
   </Grid>
-  <DockPanel Grid.Row="2" Margin="36,0,36,24">
+  <DockPanel x:Name="CacheBodyDock" Grid.Row="2" Margin="36,0,36,24">
    <Border DockPanel.Dock="Top" Background="{DynamicResource CardBackgroundBrush}" BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="12" Margin="0,0,0,12" Visibility="{Binding IsEditMode,Converter={StaticResource BoolToVis}}">
     <WrapPanel VerticalAlignment="Center">
      <TextBlock Text="{Binding SelectedText}" VerticalAlignment="Center" Margin="0,0,16,0" Foreground="{DynamicResource TextPrimaryBrush}"/>

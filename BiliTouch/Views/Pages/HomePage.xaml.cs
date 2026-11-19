@@ -75,9 +75,16 @@ public partial class HomePage : UserControl
             {
                 // 首次摆放(不带动画)。布局前 ActualWidth 还是 0, 所以必须等布局跑完。
                 MoveTabIndicator(CurrentTabFromVm() ?? HomeTabKind.Recommend, animate: false);
+                RelayoutSearchCard();
             }));
+            Responsive.PostureChanged -= OnHomePostureChanged;
+            Responsive.PostureChanged += OnHomePostureChanged;
         };
-        Unloaded += (_, _) => StopHomePreparation();
+        Unloaded += (_, _) =>
+        {
+            StopHomePreparation();
+            Responsive.PostureChanged -= OnHomePostureChanged;
+        };
         // 屏蔽把一屏内容筛空后要补下一页, 否则底部会留一大片空白(刷新不会触发滚动事件)
         FilterService.Instance.Changed += OnFilterApplied;
         // 窗口缩放时若搜索卡正开着, 要让它重新对中(RenderTransform 是绝对位移, 不跟布局走)
@@ -622,6 +629,36 @@ public partial class HomePage : UserControl
     // BeginAnimation 会**立刻**把值顶到新动画的 From(BeginTime 只推迟开始, 不推迟生效),
     // 前一段会被截断 —— 这条在滚动弹幕上踩过, 见 PlayerWindow 里弹幕的注释。
 
+    private double EffectiveSearchBoxW()
+    {
+        var w = ActualWidth;
+        if (double.IsNaN(w) || w <= 0) return SearchBoxW;
+        var tablet = Responsive.GetPosture(this) == LayoutPosture.TabletPortrait;
+        if (tablet)
+        {
+            // 左侧给「首页」标题留 108 DIP，右侧给 TabletTopActions(76) + WindowButtons(132) + 间隙(16) = 224 DIP
+            return Math.Clamp(w - 108 - 224, 150, 380);
+        }
+        if (w >= 980) return SearchBoxW;
+        return Math.Clamp(w - 280, 170, SearchBoxW);
+    }
+
+    private double EffectiveSearchCardW()
+    {
+        var w = ActualWidth;
+        if (double.IsNaN(w) || w <= 0 || w >= 600) return SearchCardW;
+        return Math.Clamp(w - 32, 260, SearchCardW);
+    }
+
+    internal void ScrollToTopOrRefresh()
+    {
+        var scroll = ScrollOf(CurrentTabFromVm() ?? HomeTabKind.Recommend);
+        if (scroll != null && scroll.VerticalOffset > 8)
+            OnBackToTopClick(this, new RoutedEventArgs());
+        else
+            OnRefreshClick(this, new RoutedEventArgs());
+    }
+
     private const double SearchBoxW = 440;
     private const double SearchBoxH = 48;
     private const double SearchCardW = 520;
@@ -669,10 +706,12 @@ public partial class HomePage : UserControl
     {
         // 用局部变量判"要不要临时改宽", 而不是拿 SearchCard.Width 直接比 —— 动画档位下它未必等于
         // 本地值, 但这里只在"没在动"的时候被调用(展开前 / 展开完后 / 内容变化后)。
-        var needRemeasure = Math.Abs(SearchCard.Width - SearchCardW) > 0.5;
+        var openW = EffectiveSearchCardW();
+        var closedW = EffectiveSearchBoxW();
+        var needRemeasure = Math.Abs(SearchCard.Width - openW) > 0.5;
         if (needRemeasure)
         {
-            SearchCard.Width = SearchCardW;
+            SearchCard.Width = openW;
             SearchCard.UpdateLayout();
         }
 
@@ -680,7 +719,7 @@ public partial class HomePage : UserControl
 
         if (needRemeasure)
         {
-            SearchCard.Width = SearchBoxW;
+            SearchCard.Width = closedW;
             SearchCard.UpdateLayout();
         }
 
@@ -804,14 +843,21 @@ public partial class HomePage : UserControl
         SearchCardScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Hidden;
 
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        var w1 = SearchCardW;
+        var w0 = EffectiveSearchBoxW();
+        var w1 = EffectiveSearchCardW();
         var h1 = ComputeOpenHeight();
         var expand = SearchExpandMs;
+
+        // 展开态始终居中，收起态在平板竖屏下避让顶部右侧快捷按钮
+        SearchCard.HorizontalAlignment = HorizontalAlignment.Center;
+        SearchCard.Margin = Responsive.GetPosture(this) == LayoutPosture.TabletPortrait
+            ? new Thickness(0, 12, 0, 0)
+            : new Thickness(0, 16, 0, 0);
 
         // 居中对齐: 中心天然不动, 只有宽度/高度在长(顶部固定, 卡片往下长高)。
         // SearchCardTrans 恒为 0, 不再有 X 平移段。
         SearchCard.BeginAnimation(FrameworkElement.WidthProperty, Keys(
-            K(0, SearchBoxW), K(expand, w1, ease)));
+            K(0, w0), K(expand, w1, ease)));
 
         var height = Keys(K(0, SearchBoxH), K(expand, h1, ease));
         height.Completed += (_, _) => OnSearchOpened();
@@ -866,7 +912,7 @@ public partial class HomePage : UserControl
 
         // 居中对齐: 收起只有尺寸在缩, 没有位移
         SearchCard.BeginAnimation(FrameworkElement.WidthProperty, Keys(
-            K(0, w0), K(hold, w0), K(end, SearchBoxW, ease)));
+            K(0, w0), K(hold, w0), K(end, EffectiveSearchBoxW(), ease)));
 
         var height = Keys(K(0, h0), K(hold, h0), K(end, SearchBoxH, ease));
         height.Completed += (_, _) => ResetSearchCard();
@@ -895,9 +941,10 @@ public partial class HomePage : UserControl
         SearchInputRing.BeginAnimation(OpacityProperty, null);
 
         // 先清动画再落本地值, 否则会被残留的动画值顶掉
-        SearchCard.Width = SearchBoxW;
+        SearchCard.Width = EffectiveSearchBoxW();
         SearchCard.Height = SearchBoxH;
         SearchCardTrans.X = 0;   // 居中对齐后恒为 0(保留元素本身, 动画代码仍会碰它)
+        RelayoutSearchCard();
         SearchContentBox.Opacity = 0;
         SearchContentBox.Visibility=Visibility.Collapsed;
         SearchCardScroll.Opacity = 0;
@@ -910,11 +957,31 @@ public partial class HomePage : UserControl
     }
 
     /// <summary>
-    /// 窗口尺寸变了: 卡片开着也不需要补偿 —— 居中对齐跟着布局走,
-    /// 中心永远在页面正中(保留空实现是给 SizeChanged 的订阅留个语义清晰的落点)。
+    /// 窗口尺寸或姿态变了: 在竖屏平板/窄窗下自适应收窄搜索栏并隐藏问候语，避免与标题/右侧按钮重叠。
     /// </summary>
+    private void OnHomePostureChanged(FrameworkElement _, LayoutPosture __) => RelayoutSearchCard();
+
     private void RelayoutSearchCard()
     {
+        var tablet = Responsive.GetPosture(this) == LayoutPosture.TabletPortrait;
+        var narrow = ActualWidth > 0 && ActualWidth < 920;
+        if (HomeGreetingPanel != null)
+            HomeGreetingPanel.Visibility = tablet || narrow ? Visibility.Collapsed : Visibility.Visible;
+        if (!_searchOpen && !_searchClosing && SearchCard != null)
+        {
+            var boxW = EffectiveSearchBoxW();
+            if (Math.Abs(SearchCard.Width - boxW) > 0.5) SearchCard.Width = boxW;
+            if (tablet)
+            {
+                SearchCard.HorizontalAlignment = HorizontalAlignment.Left;
+                SearchCard.Margin = new Thickness(108, 12, 0, 0);
+            }
+            else
+            {
+                SearchCard.HorizontalAlignment = HorizontalAlignment.Center;
+                SearchCard.Margin = new Thickness(0, 16, 0, 0);
+            }
+        }
     }
 
     // ---------------- 输入框 / 遮罩的交互 ----------------

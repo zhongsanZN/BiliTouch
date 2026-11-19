@@ -340,12 +340,41 @@
             </Border>
             <ContentControl ContentTemplate="{StaticResource SectionHeaderTemplate}" Content="视频详情" />
             <Border Style="{StaticResource SettingsCardStyle}">
+                <StackPanel>
+                    <StackPanel Margin="0,14">
+                        <TextBlock Text="视频详情布局" Style="{StaticResource SettingsRowTitleStyle}" />
+                        <TextBlock Text="网页布局将评论放在视频下方；向上浏览评论时，视频平滑移到右侧简介上方。" Style="{StaticResource SettingsRowDescStyle}" />
+                        <WrapPanel Margin="0,12,0,0">
+                            <RadioButton Content="并排布局" GroupName="PlayerLayout" Style="{StaticResource SegmentRadioStyle}" MinHeight="44" IsChecked="{Binding IsSplitPlayerLayout,Mode=TwoWay}" />
+                            <RadioButton Content="网页布局" GroupName="PlayerLayout" Style="{StaticResource SegmentRadioStyle}" MinHeight="44" Margin="8,0,0,0" IsChecked="{Binding IsWebPlayerLayout,Mode=TwoWay}" />
+                        </WrapPanel>
+                    </StackPanel>
+                    <Border Style="{StaticResource SettingsRowDivider}" />
+                    <Grid Style="{StaticResource SettingsRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                            <TextBlock Text="竖屏优化" Style="{StaticResource SettingsRowTitleStyle}" />
+                            <TextBlock Text="检测到竖屏视频时，视频靠左竖向展示，评论区并排放在视频右侧。" Style="{StaticResource SettingsRowDescStyle}" />
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
+                                  VerticalAlignment="Center"
+                                  AutomationProperties.Name="竖屏优化"
+                                  IsChecked="{Binding PortraitVideoOptimization, Mode=TwoWay}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+            <ContentControl ContentTemplate="{StaticResource SectionHeaderTemplate}" Content="平板模式" />
+            <Border Style="{StaticResource SettingsCardStyle}">
                 <StackPanel Margin="0,14">
-                    <TextBlock Text="视频详情布局" Style="{StaticResource SettingsRowTitleStyle}" />
-                    <TextBlock Text="网页布局将评论放在视频下方；向上浏览评论时，视频平滑移到右侧简介上方。" Style="{StaticResource SettingsRowDescStyle}" />
+                    <TextBlock Text="竖屏平板布局（安卓端形态）" Style="{StaticResource SettingsRowTitleStyle}" />
+                    <TextBlock Text="面向 Windows 平板竖屏手持场景。设为「竖屏自动」后，窗口处于竖屏姿态时切换为底部导航与纵向布局，横屏自动恢复桌面布局。" Style="{StaticResource SettingsRowDescStyle}" />
                     <WrapPanel Margin="0,12,0,0">
-                        <RadioButton Content="并排布局" GroupName="PlayerLayout" Style="{StaticResource SegmentRadioStyle}" MinHeight="44" IsChecked="{Binding IsSplitPlayerLayout,Mode=TwoWay}" />
-                        <RadioButton Content="网页布局" GroupName="PlayerLayout" Style="{StaticResource SegmentRadioStyle}" MinHeight="44" Margin="8,0,0,0" IsChecked="{Binding IsWebPlayerLayout,Mode=TwoWay}" />
+                        <RadioButton Content="关闭" GroupName="TabletMode" Style="{StaticResource SegmentRadioStyle}" MinHeight="44" IsChecked="{Binding IsTabletModeOff, Mode=TwoWay}" />
+                        <RadioButton Content="竖屏自动" GroupName="TabletMode" Style="{StaticResource SegmentRadioStyle}" MinHeight="44" Margin="8,0,0,0" IsChecked="{Binding IsTabletModeAuto, Mode=TwoWay}" />
+                        <RadioButton Content="始终开启" GroupName="TabletMode" Style="{StaticResource SegmentRadioStyle}" MinHeight="44" Margin="8,0,0,0" IsChecked="{Binding IsTabletModeAlways, Mode=TwoWay}" />
                     </WrapPanel>
                 </StackPanel>
             </Border>
@@ -446,7 +475,7 @@
                             <TextBlock Text="解码显卡" FontWeight="SemiBold"/>
                             <TextBlock Text="选择用于播放视频的显卡，更改后重启应用生效。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
                         </StackPanel>
-                        <ComboBox Grid.Column="1" Width="300" ItemsSource="{Binding DecoderAdapters}" DisplayMemberPath="Name" SelectedValuePath="Id"
+                        <ComboBox Grid.Column="1" Width="220" ItemsSource="{Binding DecoderAdapters}" DisplayMemberPath="Name" SelectedValuePath="Id"
                                   SelectedValue="{Binding DecoderAdapterId,Mode=TwoWay}" Style="{StaticResource SettingsComboStyle}"/>
                     </Grid>
                     <TextBlock Text="{Binding DecodeStatus.Status}" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>

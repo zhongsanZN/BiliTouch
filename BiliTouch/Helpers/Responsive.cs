@@ -1,6 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Windows;
+using BiliTouch.Models;
+using BiliTouch.Services;
 
 namespace BiliTouch.Helpers;
 
@@ -12,6 +16,12 @@ namespace BiliTouch.Helpers;
 ///   (GoToElementState 找不到状态就返回 false)，所以探针里有专门一条断言把这三个名字钉住。
 /// </summary>
 public enum WidthClass { Compact, Medium, Wide }
+
+/// <summary>
+/// 窗口级形态姿态（与 <see cref="WidthClass"/> 正交）。
+/// 枚举名同样与 XAML 中 PostureStates 的 VisualState x:Name 保持逐字一致。
+/// </summary>
+public enum LayoutPosture { Desktop, TabletPortrait }
 
 /// <summary>
 /// 主窗口的"响应式布局"机制 —— 把窗口宽度归成三档，档位一变就让挂了 VisualState 的元素切状态。
@@ -58,6 +68,39 @@ public static class Responsive
 
     /// <summary>Wide → Medium 的**退出**阈值</summary>
     public const double WideExit = 1520;
+
+    /// <summary>竖屏平板进入最大宽度（DIP）：覆盖 10"–13" 平板常见竖屏工作区。</summary>
+    public const double PortraitMaxEnterWidth = 1040;
+
+    /// <summary>竖屏平板退出宽度（DIP）：40 DIP 迟滞死区防临界抖动。</summary>
+    public const double PortraitMaxExitWidth = 1080;
+
+    /// <summary>竖屏宽高比迟滞阈值：进入要求高 > 宽×1.05，退出要求宽 > 高×1.05。</summary>
+    public const double PortraitAspectHysteresis = 1.05;
+
+    /// <summary>
+    /// 按窗口宽高、当前姿态与平板模式设置计算目标形态姿态（纯函数 + 迟滞防抖）。
+    /// </summary>
+    public static LayoutPosture ClassifyPosture(double width, double height, LayoutPosture current, TabletMode mode)
+    {
+        if (mode == TabletMode.Off) return LayoutPosture.Desktop;
+        if (mode == TabletMode.Always) return LayoutPosture.TabletPortrait;
+        if (double.IsNaN(width) || double.IsNaN(height) || width <= 0 || height <= 0)
+            return current;
+
+        return current switch
+        {
+            LayoutPosture.Desktop =>
+                height > width * PortraitAspectHysteresis && width < PortraitMaxEnterWidth
+                    ? LayoutPosture.TabletPortrait
+                    : LayoutPosture.Desktop,
+
+            _ =>
+                width > height * PortraitAspectHysteresis || width >= PortraitMaxExitWidth
+                    ? LayoutPosture.Desktop
+                    : LayoutPosture.TabletPortrait
+        };
+    }
 
     /// <summary>
     /// 按宽度和当前档位算下一档。**纯函数** —— 可以在离屏探针里把整条拖动路径跑一遍验证不抖。
@@ -118,6 +161,48 @@ public static class Responsive
     /// <summary>读当前档位。页面 code-behind 也可以用它做"布局之外"的调整（例如改一段几何常量）。</summary>
     public static WidthClass GetClass(DependencyObject d) => (WidthClass)d.GetValue(ClassProperty);
 
+    /// <summary>
+    /// 当前窗口形态姿态（Desktop / TabletPortrait）。Inherits = true，整棵可视树共享单一真相源。
+    /// </summary>
+    public static readonly DependencyProperty PostureProperty =
+        DependencyProperty.RegisterAttached(
+            "Posture", typeof(LayoutPosture), typeof(Responsive),
+            new FrameworkPropertyMetadata(LayoutPosture.Desktop, FrameworkPropertyMetadataOptions.Inherits));
+
+    public static LayoutPosture GetPosture(DependencyObject d) => (LayoutPosture)d.GetValue(PostureProperty);
+
+    /// <summary>真相源姿态真正发生变化时触发，供窗口宿主同步 MinWidth/导航结构。</summary>
+    public static event Action<FrameworkElement, LayoutPosture>? PostureChanged;
+
+    private static readonly List<WeakReference<FrameworkElement>> _sources = new();
+    private static bool _settingsHooked;
+
+    private static void EnsureSettingsHooked()
+    {
+        if (_settingsHooked) return;
+        _settingsHooked = true;
+        Svc.Settings.LayoutChanged += RefreshAllPostures;
+    }
+
+    public static void RefreshAllPostures()
+    {
+        List<FrameworkElement> alive;
+        lock (_sources)
+        {
+            _sources.RemoveAll(r => !r.TryGetTarget(out _));
+            alive = _sources
+                .Select(r => r.TryGetTarget(out var el) ? el : null)
+                .Where(el => el != null)
+                .Select(el => el!)
+                .ToList();
+        }
+        foreach (var el in alive)
+        {
+            if (el.Dispatcher.CheckAccess()) UpdatePosture(el);
+            else el.Dispatcher.BeginInvoke(new Action(() => UpdatePosture(el)));
+        }
+    }
+
     // 内部用的两个记账位（不对外）
     private static readonly DependencyProperty SubscribedProperty =
         DependencyProperty.RegisterAttached("Subscribed", typeof(bool), typeof(Responsive),
@@ -132,14 +217,57 @@ public static class Responsive
     private static void OnSourceChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is not FrameworkElement el) return;
-        if ((bool)e.NewValue) el.SizeChanged += OnSourceSizeChanged;
-        else el.SizeChanged -= OnSourceSizeChanged;
+        if ((bool)e.NewValue)
+        {
+            EnsureSettingsHooked();
+            lock (_sources)
+            {
+                _sources.RemoveAll(r => !r.TryGetTarget(out var t) || ReferenceEquals(t, el));
+                _sources.Add(new WeakReference<FrameworkElement>(el));
+            }
+            el.SizeChanged += OnSourceSizeChanged;
+            el.Loaded += OnSourceLoaded;
+        }
+        else
+        {
+            lock (_sources) _sources.RemoveAll(r => !r.TryGetTarget(out var t) || ReferenceEquals(t, el));
+            el.SizeChanged -= OnSourceSizeChanged;
+            el.Loaded -= OnSourceLoaded;
+        }
         UpdateClass(el);
+        UpdatePosture(el);
+    }
+
+    private static void OnSourceLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement el)
+        {
+            UpdateClass(el);
+            UpdatePosture(el);
+        }
     }
 
     private static void OnSourceSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (sender is FrameworkElement el) UpdateClass(el);
+        if (sender is FrameworkElement el)
+        {
+            UpdateClass(el);
+            UpdatePosture(el);
+        }
+    }
+
+    private static void UpdatePosture(FrameworkElement el)
+    {
+        var current = GetPosture(el);
+        var mode = Svc.Settings.TabletMode;
+        var w = el.ActualWidth;
+        var h = el.ActualHeight;
+        // 首次布局之前 ActualWidth/Height 为 0，此时仅在非 Auto 模式下落位
+        if (mode == TabletMode.Auto && (double.IsNaN(w) || double.IsNaN(h) || w <= 0 || h <= 0)) return;
+        var next = ClassifyPosture(w, h, current, mode);
+        if (next == current) return;
+        el.SetValue(PostureProperty, next);
+        PostureChanged?.Invoke(el, next);
     }
 
     /// <summary>
@@ -214,6 +342,9 @@ public static class Responsive
         DependencyPropertyDescriptor
             .FromProperty(ClassProperty, typeof(FrameworkElement))
             ?.AddValueChanged(el, OnClassChanged);
+        DependencyPropertyDescriptor
+            .FromProperty(PostureProperty, typeof(FrameworkElement))
+            ?.AddValueChanged(el, OnClassChanged);
     }
 
     private static void Unsubscribe(FrameworkElement el)
@@ -223,11 +354,15 @@ public static class Responsive
         DependencyPropertyDescriptor
             .FromProperty(ClassProperty, typeof(FrameworkElement))
             ?.RemoveValueChanged(el, OnClassChanged);
+        DependencyPropertyDescriptor
+            .FromProperty(PostureProperty, typeof(FrameworkElement))
+            ?.RemoveValueChanged(el, OnClassChanged);
     }
 
     private static void Apply(FrameworkElement el, bool animate)
     {
         // 没有对应状态组的元素照样调 —— GoToElementState 找不到就返回 false，不会抛也不会改任何东西
         VisualStateManager.GoToElementState(el, GetClass(el).ToString(), animate);
+        VisualStateManager.GoToElementState(el, GetPosture(el).ToString(), animate);
     }
 }

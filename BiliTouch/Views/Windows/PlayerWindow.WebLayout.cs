@@ -19,7 +19,11 @@ namespace BiliTouch.Views;
 /// </summary>
 public partial class PlayerWindow
 {
-    private bool _webInitialized, _webLayoutMounted, _webLayoutQueued, _webChangingLayout, _webRendering;
+    private enum AlternateLayoutMode { Split, Web, Portrait, TabletPortrait }
+
+    private bool _webInitialized, _webLayoutMounted, _portraitLayoutMounted, _webLayoutQueued, _webChangingLayout, _webRendering;
+    private int _detectedVideoWidth, _detectedVideoHeight;
+    private bool _videoSizeFromMetadata;
     private bool _webPreviousComments, _webHasMounted;
     private bool _webRecommendedSelected;
     private int _webRelatedIndex;
@@ -64,6 +68,15 @@ public partial class PlayerWindow
     private readonly StackPanel _webHeaderStack = new();
     private ScrollViewer? _webHeaderScroll;
     private bool IsWebVideoLayout => _webLayoutMounted;
+    private bool IsPortraitVideoLayout => _portraitLayoutMounted;
+    private bool UsesDetachedCommentsLayout => _webLayoutMounted || _portraitLayoutMounted;
+    private AlternateLayoutMode ActiveLayoutMode =>
+        _tabletPortraitLayoutMounted ? AlternateLayoutMode.TabletPortrait :
+        _portraitLayoutMounted ? AlternateLayoutMode.Portrait :
+        _webLayoutMounted ? AlternateLayoutMode.Web :
+        AlternateLayoutMode.Split;
+    private bool IsPortraitVideoDetected =>
+        _detectedVideoWidth > 0 && _detectedVideoHeight > 0 && _detectedVideoHeight > _detectedVideoWidth * 1.05;
 
     /// <summary>过渡遮罩里那个品牌块的缩放/位移动画(纯 WPF, 每帧只改矩阵)</summary>
     private readonly ScaleTransform _webCoverScale = new(1, 1);
@@ -111,6 +124,7 @@ public partial class PlayerWindow
         }
         WebLeftScroll.PreviewTouchDown += (_, _) => StopWebScrollAnimation();
         WebLeftScroll.AddHandler(Mouse.PreviewMouseWheelEvent, new MouseWheelEventHandler((_, _) => StopWebScrollAnimation()), true);
+        PlayerStage.SizeChanged += (_, _) => QueueAlternateLayout();
         WebLeftPane.SizeChanged += (_, _) => QueueAlternateLayout();
         RightLayoutGrid.SizeChanged += (_, _) => QueueAlternateLayout();
         VideoSurface.SizeChanged += (_, _) =>
@@ -145,20 +159,91 @@ public partial class PlayerWindow
         Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
         {
             _webLayoutQueued = false;
-            if (!_closing) { ApplyAlternateLayoutPreference(); if (_webLayoutMounted) UpdateWebMeasurements(); }
+            if (!_closing)
+            {
+                ApplyAlternateLayoutPreference(allowPreLoad: _isEmbeddedInMain);
+                if (_webLayoutMounted) UpdateWebMeasurements();
+                else if (_portraitLayoutMounted) UpdatePortraitMeasurements();
+                else if (_tabletPortraitLayoutMounted) UpdateTabletPortraitMeasurements();
+            }
         }));
     }
 
+    private bool ShouldUseTabletPortraitLayout =>
+        IsTabletPortraitPostureActive
+        && !_isFullscreen && !_isFillWindow && !_isLive && !_isListenMode;
+
+    private bool ShouldUsePortraitPlayerLayout =>
+        !ShouldUseTabletPortraitLayout
+        && Svc.Settings.PortraitVideoOptimization
+        && IsPortraitVideoDetected
+        && !_isFullscreen && !_isFillWindow && !_isLive && !_isListenMode;
+
     private bool ShouldUseWebPlayerLayout =>
-        Svc.Settings.UseWebPlayerLayout && !_isFullscreen && !_isFillWindow && !_isLive && !_isListenMode;
+        !ShouldUseTabletPortraitLayout
+        && !ShouldUsePortraitPlayerLayout
+        && Svc.Settings.UseWebPlayerLayout
+        && !_isFullscreen && !_isFillWindow && !_isLive && !_isListenMode;
+
+    private AlternateLayoutMode DesiredLayoutMode =>
+        ShouldUseTabletPortraitLayout ? AlternateLayoutMode.TabletPortrait :
+        ShouldUsePortraitPlayerLayout ? AlternateLayoutMode.Portrait :
+        ShouldUseWebPlayerLayout ? AlternateLayoutMode.Web :
+        AlternateLayoutMode.Split;
+
+    internal void UpdateDetectedVideoSize(int width, int height, bool fromMetadata = false)
+    {
+        if (_closing || width <= 0 || height <= 0) return;
+        if (!fromMetadata && _videoSizeFromMetadata && _detectedVideoWidth > 0 && _detectedVideoHeight > 0) return;
+        var changed = _detectedVideoWidth != width || _detectedVideoHeight != height || (fromMetadata && !_videoSizeFromMetadata);
+        _detectedVideoWidth = width;
+        _detectedVideoHeight = height;
+        if (fromMetadata) _videoSizeFromMetadata = true;
+        if (!changed) return;
+        if (_webInitialized && (IsLoaded || _isEmbeddedInMain))
+        {
+            ApplyAlternateLayoutPreference(allowPreLoad: _isEmbeddedInMain);
+            if (_webLayoutMounted) UpdateWebMeasurements();
+            else if (_portraitLayoutMounted) UpdatePortraitMeasurements();
+            else if (_tabletPortraitLayoutMounted) UpdateTabletPortraitMeasurements();
+            UpdatePortraitImmersiveOverlay();
+        }
+        else
+        {
+            QueueAlternateLayout();
+        }
+    }
 
     private void ApplyAlternateLayoutPreference(bool allowPreLoad = false)
     {
-        if (!_webInitialized || _closing || _webChangingLayout || (!allowPreLoad && !IsLoaded)) return;
-        bool use = ShouldUseWebPlayerLayout;
-        if (use == _webLayoutMounted) return;
+        if (!_webInitialized || _closing || _webChangingLayout || (!allowPreLoad && !IsLoaded && !_isEmbeddedInMain)) return;
+        var current = ActiveLayoutMode;
+        var target = DesiredLayoutMode;
+        if (current == target) return;
         _webChangingLayout = true;
-        try { if (use) MountWebLayout(); else UnmountWebLayout(); }
+        try
+        {
+            var fromSplit = current is AlternateLayoutMode.Split or AlternateLayoutMode.TabletPortrait;
+            var keepExplicitSurface = target is AlternateLayoutMode.Web or AlternateLayoutMode.Portrait;
+            // Transitioning from Web -> Portrait drops the top video placeholder above comments,
+            // so convert the scroll offset into the comments-only coordinate space.
+            var webPlaceholderDrop = current == AlternateLayoutMode.Web && target == AlternateLayoutMode.Portrait
+                ? Math.Max(0, WebVideoPlaceholder.ActualHeight > 0 ? WebVideoPlaceholder.ActualHeight : (double.IsNaN(WebVideoPlaceholder.Height) ? 0 : WebVideoPlaceholder.Height))
+                : 0;
+            if (keepExplicitSurface) PinVideoSurfaceSize();
+            if (current == AlternateLayoutMode.Web)
+                UnmountWebLayout(restoreVideoStretch: !keepExplicitSurface, restoreRightTabs: !keepExplicitSurface);
+            else if (current == AlternateLayoutMode.Portrait)
+                UnmountPortraitLayout(restoreVideoStretch: !keepExplicitSurface, restoreRightTabs: !keepExplicitSurface);
+            else if (current == AlternateLayoutMode.TabletPortrait)
+                UnmountTabletPortraitLayout(restoreVideoStretch: !keepExplicitSurface);
+
+            if (webPlaceholderDrop > 0) _webSavedScroll = Math.Max(0, _webSavedScroll - webPlaceholderDrop);
+
+            if (target == AlternateLayoutMode.Web) MountWebLayout(fromSplit);
+            else if (target == AlternateLayoutMode.Portrait) MountPortraitLayout(fromSplit);
+            else if (target == AlternateLayoutMode.TabletPortrait) MountTabletPortraitLayout();
+        }
         finally { _webChangingLayout = false; }
     }
 
@@ -178,19 +263,14 @@ public partial class PlayerWindow
         { page.BeginAnimation(OpacityProperty, null); page.Opacity = 1; page.RenderTransform = Transform.Identity; }
     }
 
-    private void MountWebLayout()
+    private void AttachDetachedCommentsAndRecommendations(bool fromSplit)
     {
-        // ★★ 必须在**动任何子元素之前**抓尺寸(2026-11-08): 下面要摘挂一堆元素、改可见性,
-        //   一旦开始, VideoSurface 的 ActualWidth/ActualHeight 会在重排过程中变成 0,
-        //   那时再"钉"就晚了 —— 实测钉到的是 0, 于是 Left/Top + NaN 依旧量成 0×0。
-        PinVideoSurfaceSize();
-        _webPreviousComments = TabComments.IsChecked == true; _webLegacyInfoScroll = InfoScroll.VerticalOffset;
-        _webLayoutMounted = true;
-        // vmem carries its own letterbox and rounded clip. An opaque placeholder
-        // would leave a stationary black rectangle behind during the return gesture.
-        WebDockAnchor.Background = _vmemMode ? Brushes.Transparent : Brushes.Black;
+        if (fromSplit)
+        {
+            _webPreviousComments = TabComments.IsChecked == true;
+            _webLegacyInfoScroll = InfoScroll.VerticalOffset;
+        }
         ResetWebPageAnimations();
-        foreach (var part in _webHeaderParts) { DetachWebElement(part); _webHeaderStack.Children.Add(part); }
         DetachWebElement(CommentsPanel); WebCommentsHost.Content = CommentsPanel;
         _webRelatedIndex = IntroPanel.Children.IndexOf(RelatedPanel);
         _webRelatedMargin = RelatedPanel.Margin;
@@ -205,12 +285,72 @@ public partial class PlayerWindow
         }
         foreach (var control in new FrameworkElement[] { BtnBackToComments, CommentFab, CommentComposerPanel })
         { DetachWebElement(control); WebCommentChrome.Children.Add(control); }
-        InfoContentStack.Margin = new Thickness(20, 0, 20, 24);
-        WebLeftPane.Visibility = WebHeaderHost.Visibility = WebDockAnchor.Visibility = Visibility.Visible;
         TabComments.Visibility = Visibility.Collapsed; TabRecommended.Visibility = Visibility.Visible;
         if (_webRecommendedSelected) TabRecommended.IsChecked = true; else TabIntro.IsChecked = true;
         SelectWebInfoPage(_webRecommendedSelected, animate: false);
         UiScale.Register(WebCommentsScaleRoot); UiScale.Register(WebCommentChrome);
+    }
+
+    private void DetachCommentsAndRecommendations(bool restoreVideoStretch, bool restoreRightTabs)
+    {
+        DetachWebElement(CommentsPanel); PageHost.Children.Add(CommentsPanel);
+        DetachWebElement(RelatedPanel);
+        IntroPanel.Children.Insert(Math.Clamp(_webRelatedIndex, 0, IntroPanel.Children.Count), RelatedPanel);
+        RelatedPanel.Margin = _webRelatedMargin;
+        RelatedHeading.Text = "相关视频";
+        RelatedHeading.Visibility = Visibility.Visible;
+        if (RelatedHeaderBorder != null)
+        {
+            RelatedHeaderBorder.BorderThickness = new Thickness(0, 1, 0, 0);
+            RelatedHeaderBorder.Padding = new Thickness(0, 12, 0, 0);
+        }
+        WebRecommendationsPanel.Visibility = TabRecommended.Visibility = Visibility.Collapsed;
+        foreach (var control in new FrameworkElement[] { BtnBackToComments, CommentFab, CommentComposerPanel })
+        { DetachWebElement(control); InfoPanel.Children.Add(control); }
+        WebLeftPane.Visibility = Visibility.Collapsed;
+        WebLeftPane.Margin = new Thickness(0);
+        WebVideoPlaceholder.Visibility = Visibility.Visible;
+        if (WebLeftPaneDivider != null) WebLeftPaneDivider.BorderThickness = new Thickness(0);
+        TabComments.Visibility = Visibility.Visible;
+        if (restoreVideoStretch)
+        {
+            Grid.SetColumnSpan(VideoSurface, 1); Panel.SetZIndex(VideoSurface, 0);
+            // ★ 卸载这一侧同样会经过"Left/Top + NaN"：先把对齐方式改回 Stretch，再清 Width/Height。
+            //   反过来的话（先清成 NaN 再改对齐），中间那一刻就是 0×0 ⇒ 同样会把 vout 弄没。
+            //   Stretch + NaN 是正常的"按父级拉伸"，所以顺序只能是这一个。
+            VideoSurface.HorizontalAlignment = HorizontalAlignment.Stretch; VideoSurface.VerticalAlignment = VerticalAlignment.Stretch;
+            VideoSurface.Width = VideoSurface.Height = double.NaN; VideoSurface.Margin = new Thickness(0);
+        }
+        ResetWebPageAnimations();
+        if (restoreRightTabs)
+        {
+            var comments = _webPreviousComments || IsCommentDetailOpen;
+            IntroPanel.Visibility = comments ? Visibility.Collapsed : Visibility.Visible; CommentsPanel.Visibility = comments ? Visibility.Visible : Visibility.Collapsed;
+            if (comments) TabComments.IsChecked = true; else TabIntro.IsChecked = true;
+            InfoScroll.ScrollToVerticalOffset(_webLegacyInfoScroll);
+        }
+        UpdateCommentComposer(); UpdateAlternateVideoControls();
+        if (_vmemMode) ResetVmemMorph(docked: false);
+        UpdateCommentPicturePlacement();
+    }
+
+    private void MountWebLayout(bool fromSplit = true)
+    {
+        // ★★ 必须在**动任何子元素之前**抓尺寸(2026-11-08): 下面要摘挂一堆元素、改可见性,
+        //   一旦开始, VideoSurface 的 ActualWidth/ActualHeight 会在重排过程中变成 0,
+        //   那时再"钉"就晚了 —— 实测钉到的是 0, 于是 Left/Top + NaN 依旧量成 0×0。
+        PinVideoSurfaceSize();
+        _webLayoutMounted = true;
+        // vmem carries its own letterbox and rounded clip. An opaque placeholder
+        // would leave a stationary black rectangle behind during the return gesture.
+        WebDockAnchor.Background = _vmemMode ? Brushes.Transparent : Brushes.Black;
+        foreach (var part in _webHeaderParts) { DetachWebElement(part); _webHeaderStack.Children.Add(part); }
+        AttachDetachedCommentsAndRecommendations(fromSplit);
+        InfoContentStack.Margin = new Thickness(20, 0, 20, 24);
+        WebLeftPane.Margin = new Thickness(0);
+        WebVideoPlaceholder.Visibility = Visibility.Visible;
+        if (WebLeftPaneDivider != null) WebLeftPaneDivider.BorderThickness = new Thickness(0);
+        WebLeftPane.Visibility = WebHeaderHost.Visibility = WebDockAnchor.Visibility = Visibility.Visible;
         // ★★★ 2026-11-08 修「退出全屏后视频变黑」（用户报的第二个问题，与闪退同源）：
         //   下面两行会把 VideoSurface 从 Stretch 改成 Left/Top，而它的 Width/Height 此时是
         //   **NaN**（UnmountWebLayout 里被清成 NaN 了）。Left/Top + NaN ⇒ 元素按内容量尺寸，
@@ -238,52 +378,197 @@ public partial class PlayerWindow
         UpdateCommentPicturePlacement();
     }
 
-    private void UnmountWebLayout()
+    private void UnmountWebLayout(bool restoreVideoStretch = true, bool restoreRightTabs = true)
     {
         _webSavedScroll = WebLeftScroll.VerticalOffset; _webSavedBodyScroll = InfoScroll.VerticalOffset;
         StopWebVideoAnimation(); StopWebScrollAnimation(); _webLayoutMounted = false;
-        DetachWebElement(CommentsPanel); PageHost.Children.Add(CommentsPanel);
-        DetachWebElement(RelatedPanel);
-        IntroPanel.Children.Insert(Math.Clamp(_webRelatedIndex, 0, IntroPanel.Children.Count), RelatedPanel);
-        RelatedPanel.Margin = _webRelatedMargin;
-        RelatedHeading.Text = "相关视频";
-        RelatedHeading.Visibility = Visibility.Visible;
-        if (RelatedHeaderBorder != null)
-        {
-            RelatedHeaderBorder.BorderThickness = new Thickness(0, 1, 0, 0);
-            RelatedHeaderBorder.Padding = new Thickness(0, 12, 0, 0);
-        }
-        WebRecommendationsPanel.Visibility = TabRecommended.Visibility = Visibility.Collapsed;
         for (int i = 0; i < _webHeaderParts.Length; i++) { DetachWebElement(_webHeaderParts[i]); InfoContentStack.Children.Insert(i, _webHeaderParts[i]); }
-        foreach (var control in new FrameworkElement[] { BtnBackToComments, CommentFab, CommentComposerPanel })
-        { DetachWebElement(control); InfoPanel.Children.Add(control); }
         InfoContentStack.Margin = new Thickness(20, 18, 20, 24);
-        WebLeftPane.Visibility = WebHeaderHost.Visibility = WebDockAnchor.Visibility = Visibility.Collapsed;
-        WebDockAnchor.Height = 0; TabComments.Visibility = Visibility.Visible;
-        Grid.SetColumnSpan(VideoSurface, 1); Panel.SetZIndex(VideoSurface, 0);
-        // ★ 卸载这一侧同样会经过"Left/Top + NaN"：先把对齐方式改回 Stretch，再清 Width/Height。
-        //   反过来的话（先清成 NaN 再改对齐），中间那一刻就是 0×0 ⇒ 同样会把 vout 弄没。
-        //   Stretch + NaN 是正常的"按父级拉伸"，所以顺序只能是这一个。
-        VideoSurface.HorizontalAlignment = HorizontalAlignment.Stretch; VideoSurface.VerticalAlignment = VerticalAlignment.Stretch;
-        VideoSurface.Width = VideoSurface.Height = double.NaN; VideoSurface.Margin = new Thickness(0);
-        ResetWebPageAnimations();
-        var comments = _webPreviousComments || IsCommentDetailOpen;
-        IntroPanel.Visibility = comments ? Visibility.Collapsed : Visibility.Visible; CommentsPanel.Visibility = comments ? Visibility.Visible : Visibility.Collapsed;
-        if (comments) TabComments.IsChecked = true; else TabIntro.IsChecked = true;
-        InfoScroll.ScrollToVerticalOffset(_webLegacyInfoScroll);
-        UpdateCommentComposer(); UpdateAlternateVideoControls();
+        WebHeaderHost.Visibility = WebDockAnchor.Visibility = Visibility.Collapsed;
+        WebDockAnchor.Height = 0;
+        DetachCommentsAndRecommendations(restoreVideoStretch, restoreRightTabs);
+    }
+
+    private void MountPortraitLayout(bool fromSplit = true)
+    {
+        PinVideoSurfaceSize();
+        _portraitLayoutMounted = true;
+        _webDockProgress = _webAnimationTo = 0;
+        DockTransitionCover.Visibility = Visibility.Collapsed;
+        AttachDetachedCommentsAndRecommendations(fromSplit);
+        InfoContentStack.Margin = new Thickness(20, 18, 20, 24);
+        WebHeaderHost.Visibility = WebDockAnchor.Visibility = Visibility.Collapsed;
+        WebDockAnchor.Height = 0;
+        WebVideoPlaceholder.Visibility = Visibility.Collapsed;
+        WebVideoPlaceholder.Height = 0;
+        if (WebLeftPaneDivider != null) WebLeftPaneDivider.BorderThickness = new Thickness(1, 0, 0, 0);
+        WebLeftPane.Visibility = Visibility.Visible;
+        Grid.SetColumnSpan(VideoSurface, 1); VideoSurface.HorizontalAlignment = HorizontalAlignment.Left; VideoSurface.VerticalAlignment = VerticalAlignment.Top; Panel.SetZIndex(VideoSurface, 0);
         if (_vmemMode) ResetVmemMorph(docked: false);
+        UpdatePortraitMeasurements();
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            if (!_portraitLayoutMounted || _closing) return;
+            WebLeftScroll.ScrollToVerticalOffset(_webSavedScroll);
+            InfoScroll.ScrollToVerticalOffset(_webHasMounted ? _webSavedBodyScroll : 0);
+            _webHasMounted = true; UpdatePortraitMeasurements();
+        }));
+        UpdateCommentComposer();
+        if (_aid > 0) _ = LoadCommentsAsync();
         UpdateCommentPicturePlacement();
+    }
+
+    private void UnmountPortraitLayout(bool restoreVideoStretch = true, bool restoreRightTabs = true)
+    {
+        _webSavedScroll = WebLeftScroll.VerticalOffset; _webSavedBodyScroll = InfoScroll.VerticalOffset;
+        StopWebScrollAnimation(); _portraitLayoutMounted = false;
+        DetachCommentsAndRecommendations(restoreVideoStretch, restoreRightTabs);
+    }
+
+    private void MountTabletPortraitLayout()
+    {
+        PinVideoSurfaceSize();
+        _tabletPortraitLayoutMounted = true;
+        _tabletPortraitVideoCompact = false;
+        _webDockProgress = _webAnimationTo = 0;
+        DockTransitionCover.Visibility = Visibility.Collapsed;
+        WebLeftPane.Visibility = WebHeaderHost.Visibility = WebDockAnchor.Visibility = Visibility.Collapsed;
+        WebDockAnchor.Height = 0;
+        TabComments.Visibility = Visibility.Visible;
+        TabRecommended.Visibility = Visibility.Collapsed;
+        if (RightColumn != null) RightColumn.Width = new GridLength(0);
+        if (VideoColumn != null) VideoColumn.MinWidth = 0;
+
+        Grid.SetRow(VideoSurface, 0);
+        Grid.SetColumn(VideoSurface, 0);
+        Grid.SetColumnSpan(VideoSurface, 2);
+        Panel.SetZIndex(VideoSurface, 0);
+        VideoSurface.HorizontalAlignment = HorizontalAlignment.Stretch;
+        VideoSurface.VerticalAlignment = VerticalAlignment.Stretch;
+        VideoSurface.Width = VideoSurface.Height = double.NaN;
+        VideoSurface.Margin = new Thickness(0);
+
+        Grid.SetRow(InfoPanel, 1);
+        Grid.SetColumn(InfoPanel, 0);
+        Grid.SetColumnSpan(InfoPanel, 2);
+        InfoPanel.Visibility = Visibility.Visible;
+        if (InfoPanelBorder != null) InfoPanelBorder.BorderThickness = new Thickness(0, 1, 0, 0);
+
+        // 对齐安卓端 B 站播放页结构：
+        // 1) 「简介 | 评论」标签栏固定吸顶在视频正下方（TabletTabHost）
+        // 2) UP主 / 标题 / 播放数据 / 操作栏全部收进「简介」面板内，切到「评论」时评论区紧贴标签栏铺开
+        if (ContentTabBar != null && TabletTabHost != null)
+        {
+            DetachWebElement(ContentTabBar);
+            TabletTabHost.Content = ContentTabBar;
+            TabletTabHost.Visibility = Visibility.Visible;
+            ContentTabBar.Margin = new Thickness(0);
+            ContentTabBar.BorderThickness = new Thickness(0, 0, 0, 1);
+            ContentTabBar.Padding = new Thickness(0, 8, 0, 6);
+        }
+        for (int i = 0; i < _webHeaderParts.Length; i++)
+        {
+            DetachWebElement(_webHeaderParts[i]);
+            IntroPanel.Children.Insert(i, _webHeaderParts[i]);
+        }
+        if (ActionBar != null) ActionBar.Margin = new Thickness(0, 14, 0, 14);
+        PageHost.Margin = new Thickness(0);
+        InfoContentStack.Margin = new Thickness(16, 12, 16, 24);
+
+        if (_vmemMode) ResetVmemMorph(docked: false);
+        UpdateTabletPortraitMeasurements();
+        UpdateCommentComposer();
+        UpdateAlternateVideoControls();
+        UpdateCommentPicturePlacement();
+    }
+
+    private void UnmountTabletPortraitLayout(bool restoreVideoStretch = true)
+    {
+        _tabletPortraitLayoutMounted = false;
+        _tabletPortraitVideoCompact = false;
+        if (TabletVideoRow != null) TabletVideoRow.Height = new GridLength(0);
+        Grid.SetRow(VideoSurface, 1);
+        Grid.SetColumn(VideoSurface, 0);
+        Grid.SetColumnSpan(VideoSurface, 1);
+        Grid.SetRow(InfoPanel, 1);
+        Grid.SetColumn(InfoPanel, 1);
+        Grid.SetColumnSpan(InfoPanel, 1);
+        if (InfoPanelBorder != null) InfoPanelBorder.BorderThickness = new Thickness(1, 0, 0, 0);
+
+        // 归还 UP主 / 标题 / 播放数据 / 操作栏与「简介 | 评论」标签栏回桌面原始位置
+        for (int i = 0; i < _webHeaderParts.Length; i++)
+        {
+            DetachWebElement(_webHeaderParts[i]);
+            InfoContentStack.Children.Insert(Math.Clamp(i, 0, InfoContentStack.Children.Count), _webHeaderParts[i]);
+        }
+        if (ActionBar != null) ActionBar.Margin = new Thickness(0, 14, 0, 0);
+        if (ContentTabBar != null && TabletTabHost != null)
+        {
+            TabletTabHost.Visibility = Visibility.Collapsed;
+            DetachWebElement(ContentTabBar);
+            InfoContentStack.Children.Insert(Math.Clamp(_webHeaderParts.Length, 0, InfoContentStack.Children.Count), ContentTabBar);
+            ContentTabBar.Margin = new Thickness(0, 18, 0, 0);
+            ContentTabBar.BorderThickness = new Thickness(0, 1, 0, 0);
+            ContentTabBar.Padding = new Thickness(0, 10, 0, 0);
+        }
+        PageHost.Margin = new Thickness(0, 12, 0, 0);
+        InfoContentStack.Margin = new Thickness(20, 18, 20, 24);
+        if (restoreVideoStretch)
+        {
+            Panel.SetZIndex(VideoSurface, 0);
+            VideoSurface.HorizontalAlignment = HorizontalAlignment.Stretch;
+            VideoSurface.VerticalAlignment = VerticalAlignment.Stretch;
+            VideoSurface.Width = VideoSurface.Height = double.NaN;
+            VideoSurface.Margin = new Thickness(0);
+        }
+        var hide = _isFullscreen || _isFillWindow;
+        var hostW = _embeddedHost?.ActualWidth ?? ActualWidth;
+        if (RightColumn != null) RightColumn.Width = new GridLength(hide ? 0 : InfoPanelWidthFor(hostW));
+        if (VideoColumn != null) VideoColumn.MinWidth = hide ? 0 : VideoColumnNormalMinWidth;
+        UpdateCommentComposer();
+        UpdateAlternateVideoControls();
+        UpdateCommentPicturePlacement();
+    }
+
+    private double CalculateTabletPortraitVideoHeight(double stageW, double stageH)
+    {
+        if (stageW <= 0 || stageH <= 0) return 260;
+        double h;
+        if (IsPortraitVideoDetected)
+        {
+            // 安卓竖屏详情页：默认给 56%~60% 屏高大画幅，下滑浏览评论时收拢至 34% 吸顶
+            h = _tabletPortraitVideoCompact
+                ? Math.Clamp(stageH * 0.34, 210, 340)
+                : Math.Clamp(stageH * 0.56, 300, stageH * 0.62);
+        }
+        else
+        {
+            // 横屏视频：全宽 16:9 吸顶（竖屏下 stageW < stageH，上限放宽到 56% 避免被提前压扁）
+            h = Math.Clamp(stageW * 9.0 / 16.0, 210, stageH * 0.56);
+        }
+        return Math.Max(180, Math.Round(h));
+    }
+
+    private void UpdateTabletPortraitMeasurements()
+    {
+        if (!_tabletPortraitLayoutMounted || _closing || TabletVideoRow == null) return;
+        var stageW = PlayerStage.ActualWidth > 0 ? PlayerStage.ActualWidth : (_embeddedHost?.ActualWidth ?? ActualWidth);
+        var stageH = PlayerStage.ActualHeight > 0 ? PlayerStage.ActualHeight : Math.Max(400, (_embeddedHost?.ActualHeight ?? ActualHeight) - 44);
+        if (stageW <= 1 || stageH <= 1) return;
+        var targetH = CalculateTabletPortraitVideoHeight(stageW, stageH);
+        if (Math.Abs(TabletVideoRow.Height.Value - targetH) > 0.5)
+            TabletVideoRow.Height = new GridLength(targetH);
+        UpdateAlternateVideoControls();
     }
 
     private void TabRecommended_Checked(object sender, RoutedEventArgs e)
     {
-        if (_webLayoutMounted) SelectWebInfoPage(recommended: true);
+        if (UsesDetachedCommentsLayout) SelectWebInfoPage(recommended: true);
     }
 
     private void SelectWebInfoPage(bool recommended, bool animate = true)
     {
-        if (!_webLayoutMounted) return;
+        if (!UsesDetachedCommentsLayout) return;
         _webRecommendedSelected = recommended;
         IntroPanel.Visibility = recommended ? Visibility.Collapsed : Visibility.Visible;
         WebRecommendationsPanel.Visibility = recommended ? Visibility.Visible : Visibility.Collapsed;
@@ -362,10 +647,65 @@ public partial class PlayerWindow
 
     private double InlineWebVideoHeight(double width) => Math.Min(width * 9 / 16, Math.Max(1, WebLeftPane.ActualHeight));
 
+    private double CalculatePortraitVideoWidth(double availableWidth, double stageHeight)
+    {
+        if (availableWidth <= 0 || stageHeight <= 0) return 0;
+        var aspect = _detectedVideoWidth > 0 && _detectedVideoHeight > 0
+            ? (double)_detectedVideoWidth / _detectedVideoHeight
+            : 9.0 / 16.0;
+        var ideal = stageHeight * aspect;
+        var minComments = Math.Min(320, availableWidth * 0.50);
+        var maxVideo = Math.Max(180, Math.Min(availableWidth - minComments, availableWidth * 0.56));
+        var minVideo = Math.Min(260, maxVideo);
+        var width = Math.Clamp(ideal, minVideo, maxVideo);
+        var dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        if (dpi <= 0) dpi = 1;
+        return Math.Max(1, Math.Round(width * dpi) / dpi);
+    }
+
+    private void UpdatePortraitMeasurements()
+    {
+        if (!_portraitLayoutMounted || _closing || PlayerStage.ActualWidth <= 0) return;
+        var availableWidth = VideoColumn.ActualWidth > 0
+            ? VideoColumn.ActualWidth
+            : Math.Max(0, PlayerStage.ActualWidth - (RightColumn?.ActualWidth ?? 0));
+        var stageHeight = PlayerStage.ActualHeight;
+        if (availableWidth <= 1 || stageHeight <= 1) return;
+
+        var dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        if (dpi <= 0) dpi = 1;
+        var videoWidth = CalculatePortraitVideoWidth(availableWidth, stageHeight);
+        var videoHeight = Math.Max(1, Math.Round(stageHeight * dpi) / dpi);
+
+        if (WebVideoPlaceholder.Visibility != Visibility.Collapsed)
+            WebVideoPlaceholder.Visibility = Visibility.Collapsed;
+        if (!Nearly(WebVideoPlaceholder.Height, 0))
+            WebVideoPlaceholder.Height = 0;
+
+        var paneMargin = new Thickness(videoWidth, 0, 0, 0);
+        if (WebLeftPane.Margin != paneMargin)
+            WebLeftPane.Margin = paneMargin;
+
+        var scale = UiScale.Percent / 100.0;
+        WebCommentsScaleRoot.MinHeight = Math.Max(120, stageHeight / scale);
+
+        if (!Nearly(VideoSurface.Width, videoWidth) || !Nearly(VideoSurface.Height, videoHeight))
+        {
+            VideoSurface.Width = videoWidth;
+            VideoSurface.Height = videoHeight;
+        }
+        var zeroMargin = new Thickness(0);
+        if (VideoSurface.Margin != zeroMargin)
+            VideoSurface.Margin = zeroMargin;
+
+        UpdateAlternateVideoControls();
+    }
+
     private void OnWebLeftScrollChanged(object sender, ScrollChangedEventArgs e)
     {
-        if (!ReferenceEquals(e.OriginalSource, WebLeftScroll) || !_webLayoutMounted) return;
+        if (!ReferenceEquals(e.OriginalSource, WebLeftScroll) || !UsesDetachedCommentsLayout) return;
         PrefetchCommentPage(WebLeftScroll, e);
+        if (!_webLayoutMounted) return;
         if (e.ViewportWidthChange != 0 || e.ViewportHeightChange != 0)
             UpdateWebMeasurements();
         else if (e.VerticalChange != 0 && WebVideoPlaceholder.Height > 0)
@@ -859,7 +1199,7 @@ public partial class PlayerWindow
         // Hide danmaku before capture starts and restore only after the surface settles.
         DanmakuCanvas.Visibility = moving && !_vmemMode ? Visibility.Hidden : Visibility.Visible;
         var compact = _webLayoutMounted && _webDockProgress > 0.1 && VideoSurface.Width < 560;
-        ControlBar.Visibility = !moving && !compact ? Visibility.Visible : Visibility.Collapsed;
+        ControlBar.Visibility = !moving && !compact && !_portraitDrawerOpen ? Visibility.Visible : Visibility.Collapsed;
         WebMiniControls.Visibility = !moving && compact && !_controlsHidden ? Visibility.Visible : Visibility.Collapsed;
         if (WebCommentsHeading != null) WebCommentsHeading.Text = IsCommentDetailOpen ? "评论详情" : "评论";
     }
@@ -901,10 +1241,18 @@ public partial class PlayerWindow
         if (!_webInitialized) return;
         CloseCommentPicture();
         _webSavedScroll = 0;
+        _detectedVideoWidth = 0;
+        _detectedVideoHeight = 0;
+        _videoSizeFromMetadata = false;
         if (_webLayoutMounted)
         {
             StopWebVideoAnimation(); StopWebScrollAnimation(); WebLeftScroll.ScrollToTop();
             _webDockProgress = _webAnimationTo = 0; ApplyWebVideoBounds();
+            if (_vmemMode) ResetVmemMorph(docked: false);
+        }
+        else if (_portraitLayoutMounted)
+        {
+            StopWebScrollAnimation(); WebLeftScroll.ScrollToTop();
             if (_vmemMode) ResetVmemMorph(docked: false);
         }
         QueueAlternateLayout();
@@ -913,6 +1261,7 @@ public partial class PlayerWindow
     private void DisposeAlternatePlayerLayout()
     {
         CloseCommentPicture();
+        if (VmemView != null) VmemView.VideoSizeChanged -= OnVmemVideoSizeChanged;
         AppTypography.Changed -= OnPlayerFontChanged;
         UiScale.Unregister(OriginalImageHost);
         Svc.Settings.LayoutChanged -= OnAlternateLayoutSettingChanged; StopWebVideoAnimation(); StopWebScrollAnimation();

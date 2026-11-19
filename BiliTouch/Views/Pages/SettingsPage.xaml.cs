@@ -20,8 +20,10 @@ public partial class SettingsPage : UserControl
         ModuleGestures = new TabNavigationGestures(this, ModuleContent, ModuleTabs, CreatePeerPreview);
         Loaded += OnLoaded;
         IsVisibleChanged += (_, _) => { if (IsVisible && IsLoaded) PrepareRetainedTabs(); else _retainedPreparation?.Stop(); };
+        SizeChanged += (_, _) => ApplyTabletLayout(Responsive.GetPosture(this));
         Unloaded += (_, _) =>
         {
+            Responsive.PostureChanged -= OnSettingsPostureChanged;
             _retainedPreparation?.Stop();
             if (_subscribed && _vm != null)
             {
@@ -31,8 +33,24 @@ public partial class SettingsPage : UserControl
         };
     }
 
+    private void OnSettingsPostureChanged(FrameworkElement _, LayoutPosture posture) => ApplyTabletLayout(posture);
+
+    internal void ApplyTabletLayout(LayoutPosture posture)
+    {
+        var tablet = posture == LayoutPosture.TabletPortrait;
+        if (ShellPageTitle != null)
+            ShellPageTitle.Margin = tablet ? new Thickness(16, 20, 16, 0) : PageHeaderMetrics.TitleMargin;
+        if (ModuleTabs != null)
+            ModuleTabs.Margin = tablet ? new Thickness(16, 0, 16, 0) : PageHeaderMetrics.TabsMargin;
+        if (SettingsContentStack != null)
+            SettingsContentStack.Margin = tablet ? new Thickness(14, 10, 14, 24) : new Thickness(36, 12, 36, 32);
+    }
+
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        Responsive.PostureChanged -= OnSettingsPostureChanged;
+        Responsive.PostureChanged += OnSettingsPostureChanged;
+        ApplyTabletLayout(Responsive.GetPosture(this));
         var nextVm = DataContext as SettingsViewModel;
         if (!ReferenceEquals(_vm, nextVm))
         {

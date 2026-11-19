@@ -62,7 +62,7 @@ public partial class LiveRoomWindow : FluentWindow
 
     public LiveRoomWindow()
     {
-        InitializeComponent(); DataContext = Model;
+        InitializeComponent(); DataContext = Model; Root.DataContext = Model;
         _liveCore = VlcCore.Get();
         _player = new MediaPlayer(_liveCore) { EnableHardwareDecoding = VideoDecode.HardwareEnabled };
         VlcCore.RegisterPlayer(); LiveVideo.MediaPlayer = _player;
@@ -87,10 +87,13 @@ public partial class LiveRoomWindow : FluentWindow
         PreviewKeyDown += OnKeyDown;
         PreviewMouseDown += OnPreviewMouseDown;
         PreviewTouchDown += OnPreviewTouchDown;
-        Loaded += (_, _) => { Model.Start(); _health.Start(); SyncVolumeGlyph(); EnsureVolumePopupAnchor(); };
+        ChatInput.GotFocus += (_, _) => ChatInput.BringIntoView();
+        SyncLiveTabletConstraints();
+        Responsive.PostureChanged += OnLivePostureChanged;
+        Loaded += (_, _) => { Model.Start(); _health.Start(); SyncVolumeGlyph(); EnsureVolumePopupAnchor(); SyncLiveTabletConstraints(); ApplyChatLayout(); };
         SizeChanged += (_, _) =>
         {
-            if (!_full && _chatVisible && !_fillWindow) ChatColumn.Width = new GridLength(ActualWidth < 1100 ? 300 : 360);
+            ApplyChatLayout();
             // 窗口变窄时把"弹幕设置"文字收成图标宽度, 避免挤掉全屏按钮(播放器用同样策略)
             LiveSettingsButton.MinWidth = RoomLayout.ActualWidth < 760 ? 40 : 56;
             if (VolumePopup.IsOpen) EnsureVolumePopupAnchor();
@@ -756,8 +759,64 @@ public partial class LiveRoomWindow : FluentWindow
     private void ApplyChatLayout()
     {
         var show = !_full && !_fillWindow && _chatVisible;
+        var stacked = !_full && IsTabletPortraitPostureActive;
+        var wasStacked = _tabletStackedLayout;
+        _tabletStackedLayout = stacked;
+
+        if (stacked)
+        {
+            if (BtnFillWindow != null) BtnFillWindow.Visibility = Visibility.Collapsed;
+            HeaderRow.Height = GridLength.Auto;
+            RoomHeader.Margin = new Thickness(14, 4, 14, 8);
+            if (RoomHeaderRightAnchor != null) RoomHeaderRightAnchor.Visibility = Visibility.Collapsed;
+
+            var stageW = RoomLayout.ActualWidth > 0
+                ? RoomLayout.ActualWidth
+                : (_isEmbeddedInMain && _embeddedHost != null ? _embeddedHost.ActualWidth : ActualWidth);
+            var stageH = RoomLayout.ActualHeight > 0
+                ? RoomLayout.ActualHeight
+                : (_isEmbeddedInMain && _embeddedHost != null ? Math.Max(320, _embeddedHost.ActualHeight - 130) : Math.Max(320, ActualHeight - 130));
+            var videoH = stageW > 0 ? Math.Round(stageW * 9.0 / 16.0) : 340;
+            if (stageH > 260) videoH = Math.Min(videoH, Math.Round(stageH * 0.48));
+            videoH = Math.Max(200, videoH);
+
+            VideoRow.Height = new GridLength(videoH);
+            ChatRow.Height = show ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+            ChatColumn.Width = new GridLength(0);
+            Grid.SetRow(VideoPanel, 0);
+            Grid.SetColumn(VideoPanel, 0);
+            Grid.SetColumnSpan(VideoPanel, 2);
+            Grid.SetRow(ChatPanel, 1);
+            Grid.SetColumn(ChatPanel, 0);
+            Grid.SetColumnSpan(ChatPanel, 2);
+            ChatPanel.BorderThickness = new Thickness(0, 1, 0, 0);
+            ChatPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            LiveSettingsButton.MinWidth = stageW < 760 ? 40 : 56;
+            return;
+        }
+
+        if (wasStacked)
+        {
+            if (BtnFillWindow != null) BtnFillWindow.Visibility = _full ? Visibility.Collapsed : Visibility.Visible;
+            if (!_full)
+            {
+                HeaderRow.Height = new GridLength(92);
+                RoomHeader.Margin = new Thickness(20, 6, 20, 12);
+                if (RoomHeaderRightAnchor != null) RoomHeaderRightAnchor.Visibility = Visibility.Visible;
+            }
+            VideoRow.Height = new GridLength(1, GridUnitType.Star);
+            ChatRow.Height = new GridLength(0);
+            Grid.SetRow(VideoPanel, 0);
+            Grid.SetColumn(VideoPanel, 0);
+            Grid.SetColumnSpan(VideoPanel, 1);
+            Grid.SetRow(ChatPanel, 0);
+            Grid.SetColumn(ChatPanel, 1);
+            Grid.SetColumnSpan(ChatPanel, 1);
+            ChatPanel.BorderThickness = new Thickness(1, 0, 0, 0);
+        }
         ChatPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        ChatColumn.Width = new GridLength(show ? (ActualWidth < 1100 ? 300 : 360) : 0);
+        var hostW = _isEmbeddedInMain && _embeddedHost != null ? _embeddedHost.ActualWidth : ActualWidth;
+        ChatColumn.Width = new GridLength(show ? (hostW < 1100 ? 300 : 360) : 0);
     }
 
     /// <summary>
@@ -805,6 +864,15 @@ public partial class LiveRoomWindow : FluentWindow
         if (IsClosing) return;
         SuspendLiveBackdropForResize();
         _full = !_full;
+        if (_isEmbeddedInMain)
+        {
+            TitleBar.Visibility = RoomHeader.Visibility = _full ? Visibility.Collapsed : Visibility.Visible;
+            ChromeRow.Height = new GridLength(_full ? 0 : 44);
+            HeaderRow.Height = new GridLength(_full ? 0 : 92);
+            ApplyChatLayout();
+            StartControlsCountdown();
+            return;
+        }
         if (_full) { _previousState = WindowState; _previousResize = ResizeMode; ResizeMode = ResizeMode.NoResize; MaximizeCoversTaskbar = true; SuppressAcrylicActivationSwap = true; DwmInterop.SuppressCaptionForFullscreen(this); }
         else { MaximizeCoversTaskbar = false; ResizeMode = _previousResize; SuppressAcrylicActivationSwap = false; DwmInterop.RestoreCaption(this); }
         TitleBar.Visibility = RoomHeader.Visibility = _full ? Visibility.Collapsed : Visibility.Visible;
@@ -821,7 +889,8 @@ public partial class LiveRoomWindow : FluentWindow
         {
             case Key.F: ToggleFullscreen(); break;
             case Key.Escape:
-                if (LiveSettingsPopup?.IsOpen == true) CloseLiveSettingsPopup();
+                if (_isEmbeddedInMain) HandleEmbeddedBack();
+                else if (LiveSettingsPopup?.IsOpen == true) CloseLiveSettingsPopup();
                 else if (_full) ToggleFullscreen();
                 else Close();
                 break;
@@ -842,6 +911,8 @@ public partial class LiveRoomWindow : FluentWindow
             if (!IsClosing)
             {
                 IsClosing = true; ++_request; ++_streamRequest; _health.Stop(); _controlsTimer.Stop();
+                Responsive.PostureChanged -= OnLivePostureChanged;
+                DetachFromMainWindow(stopPlayback: false);
                 _volumeCloseTimer?.Stop();
                 _liveBackdropGuard?.Stop();
                 _liveBackdropResumeTimer?.Stop();

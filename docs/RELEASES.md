@@ -1,12 +1,13 @@
 # 版本归档索引
 
-当前推荐版本：[0.3.5 安装包](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.5/BiliTouch-0.3.5-setup.exe)。[全部 Release](https://github.com/zhongsanZN/BiliTouch/releases)。
+当前推荐版本：[0.3.6 安装包 (x64 · Intel/AMD)](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.6/BiliTouch-0.3.6-setup.exe) · [0.3.6 安装包 (ARM64 · Surface 等 ARM 设备)](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.6/BiliTouch-0.3.6-setup-arm64.exe)。[全部 Release](https://github.com/zhongsanZN/BiliTouch/releases)。
 
-下载附件只保留 setup.exe；源码见各版本 Git 标签和 GitHub 自动提供的源码下载。便携包与构建验证文件留在本机归档。
+下载附件保留 x64 与 ARM64 两份 setup.exe；源码见各版本 Git 标签和 GitHub 自动提供的源码下载。便携包与构建验证文件留在本机归档。
 
 | 版本 | 归档状态 |
 | --- | --- |
-| 0.3.5 | 当前版本：离线缓存联网后台加载评论与弹幕（零阻塞本地起播）；全站 `UserStateBus` 弱引用状态实时联动与 `HorizontalSwipePhysics` 统一横滑物理内核；修复动态/专栏点赞图标偶发消失、DASH 尾段音轨提前 EOF 截断结尾、直播间静音失效、播放器换片忙态锁死、WebView2 清理脚本语法错误、`-412` 冷静期踩踏、离线下载卡顿 UI 与多屏异 DPI 尺寸偏差等全仓问题；将 `ApiClient`（唯一发包口 `SendThrottledAsync`）与 `PlayerWindow` 按业务域模块化重构，新增 `AGENTS.md` / `docs/ARCHITECTURE.md` 与 `--ci` 一键离线回归及像素/绑定探针；安装器及完整源码标签 |
+| 0.3.6 | 当前版本：面向 Windows 平板竖屏的「平板模式」（`Off` 默认 / `Auto` / `Always`、Surface BIOS 首次识别提醒、480 DIP 竖屏宽度解禁、底部四项导航栏、单窗口内嵌播放与直播、对齐安卓端 B 站的视频下方直挂 `简介 \| 评论` 双标签 + 简介内收拢 UP/标题/三连 + 竖屏视频高视口与底部 65% 半屏评论抽屉、动态页顶部 UP 主横向头像条、私信会话↔对话二级下钻）与桌面端「竖屏视频优化」（网页布局竖屏视频左置 + 评论区并排右置）；新增原生 Windows ARM64 构建，自本版起每次 Release 同步发布 x64 与 ARM64 双架构安装器并支持按架构自动匹配更新 |
+| 0.3.5 | 历史版本：离线缓存联网后台加载评论与弹幕（零阻塞本地起播）；全站 `UserStateBus` 弱引用状态实时联动与 `HorizontalSwipePhysics` 统一横滑物理内核；修复动态/专栏点赞图标偶发消失、DASH 尾段音轨提前 EOF 截断结尾、直播间静音失效、播放器换片忙态锁死、WebView2 清理脚本语法错误、`-412` 冷静期踩踏、离线下载卡顿 UI 与多屏异 DPI 尺寸偏差等全仓问题；将 `ApiClient`（唯一发包口 `SendThrottledAsync`）与 `PlayerWindow` 按业务域模块化重构，新增 `AGENTS.md` / `docs/ARCHITECTURE.md` 与 `--ci` 一键离线回归及像素/绑定探针；安装器及完整源码标签 |
 | 0.3.4 | 历史版本：新增点赞按钮长按一键三连（触屏/鼠标双端进度环、三按钮联动演出与防误触取消拦截）；同步上游至 v1.7.6 播放器卡顿渐进自愈、听视频缓冲与切流保护、跳转纠偏与假 EOF 恢复、弹幕时钟校准与描边/弹层交互修复、最大化安全边距及云母/亚克力底色闪烁抑制、直播间断流重连；星创组网页同人游戏改在应用内嵌运行台游玩；安装器及完整源码标签 |
 | 0.3.3 | 修复离线缓存播放误走在线视频流的问题；新增原生专栏／Opus 阅读页（接入搜索、空间与动态链接）、原生星创组浏览页、评论收藏集表情面板与发送验证反馈；修复网页布局缩放评论虚拟化坐标偏差、弹幕描边弹层触控隔离、下拉刷新弹性回弹与一镜到底延后挂载优化；安装器及完整源码标签 |
 | 0.3.2 | 并排/网页视频开合动效连续化、消除页签切换模糊截图（消息/搜索/动态实时页签预览）、全站下拉刷新阻尼跟手化与列表状态覆盖统一、弹幕描边开关与弹层交互修复、哔哩哔哩 Windows 客户端离线缓存自动识别与合集二级双列网格、设置页并排↔网页布局切换与并排右栏触控横滑修复；安装器及完整源码标签 |

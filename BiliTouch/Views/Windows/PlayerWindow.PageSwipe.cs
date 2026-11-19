@@ -180,7 +180,7 @@ public partial class PlayerWindow
         var current = CurrentPagePanel();
         var other = OtherPagePanel();
         if (current == null || other == null) return false;
-        if (IsWebVideoLayout) UpdateWebRecommendationsHint();
+        if (UsesDetachedCommentsLayout) UpdateWebRecommendationsHint();
         _infoDraggingPage = true;
         if (current.ActualHeight > 1)
             PageHost.Height = current.ActualHeight;
@@ -329,9 +329,9 @@ public partial class PlayerWindow
         panel.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(180)));
     }
 
-    private RadioButton SecondaryPageButton() => IsWebVideoLayout ? TabRecommended : TabComments;
+    private RadioButton SecondaryPageButton() => UsesDetachedCommentsLayout ? TabRecommended : TabComments;
 
-    private FrameworkElement? SecondaryPagePanel() => IsWebVideoLayout ? WebRecommendationsPanel : CommentsPanel;
+    private FrameworkElement? SecondaryPagePanel() => UsesDetachedCommentsLayout ? WebRecommendationsPanel : CommentsPanel;
 
     private int PageIndex => SecondaryPageButton()?.IsChecked == true ? 1 : 0;
 

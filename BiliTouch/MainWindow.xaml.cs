@@ -43,9 +43,12 @@ public partial class MainWindow : FluentWindow
     public MainWindow()
     {
         InitializeComponent();
+        SyncTabletWindowConstraints();
         RefreshSidebarTheme();
         Svc.Theme.ThemeChanged+=RefreshSidebarTheme;
-        Closed+=(_,_)=> { _idleTrimTimer?.Stop(); _toastTimer?.Stop(); _precisionTouchpad?.Dispose(); FinishHorizontalWheel(false); Svc.Theme.ThemeChanged-=RefreshSidebarTheme; Svc.Toast.Shown-=ShowToast; _vm.PageChanged -= OnPageChanged; };
+        Svc.Settings.LayoutChanged+=OnMainLayoutSettingsChanged;
+        Responsive.PostureChanged+=OnPostureChanged;
+        Closed+=(_,_)=> { _idleTrimTimer?.Stop(); _toastTimer?.Stop(); _precisionTouchpad?.Dispose(); FinishHorizontalWheel(false); Svc.Theme.ThemeChanged-=RefreshSidebarTheme; Svc.Settings.LayoutChanged-=OnMainLayoutSettingsChanged; Responsive.PostureChanged-=OnPostureChanged; Svc.Toast.Shown-=ShowToast; _vm.PageChanged -= OnPageChanged; };
         Deactivated += OnDeactivatedTrim;
         Activated += (_, _) => _idleTrimTimer?.Stop();
         SourceInitialized += (_, _) =>
@@ -85,8 +88,12 @@ public partial class MainWindow : FluentWindow
     private void OnSidebarMessages(object sender,RoutedEventArgs e)=>_vm.Navigate(PageKey.Messages);
     private void RefreshSidebarTheme()
     {
-        SidebarThemeGlyph.Text=Svc.Theme.IsDark?"\uE706":"\uE708";
-        SidebarTheme.ToolTip=Svc.Theme.IsDark?"切换到浅色主题":"切换到深色主题";
+        var glyph = Svc.Theme.IsDark ? "\uE706" : "\uE708";
+        var tip = Svc.Theme.IsDark ? "切换到浅色主题" : "切换到深色主题";
+        SidebarThemeGlyph.Text = glyph;
+        SidebarTheme.ToolTip = tip;
+        if (TabletThemeGlyph != null) TabletThemeGlyph.Text = glyph;
+        if (TabletThemeButton != null) TabletThemeButton.ToolTip = tip;
     }
 
     // WM_MOUSEHWHEEL carries distance but no trustworthy finger-up or device identity.
@@ -213,10 +220,118 @@ public partial class MainWindow : FluentWindow
             HidePartition();
             return;
         }
+        if (IsEmbeddedPlayerVisible && Svc.Player.TryHandleEmbeddedBack())
+        {
+            e.Handled = true;
+            return;
+        }
         if (EmbeddedHost.Visibility != Visibility.Visible)
-        { if(CurrentModuleGestures is {} gestures){gestures.Step(e.ChangedButton==MouseButton.XButton1?-1:1);e.Handled=true;}return; }
+        {
+            if (_vm.Current == PageKey.Messages && PageOf(PageKey.Messages) is MessagesPage msgPage && msgPage.TryGoBackTabletThread())
+            {
+                e.Handled = true;
+                return;
+            }
+            if(CurrentModuleGestures is {} gestures){gestures.Step(e.ChangedButton==MouseButton.XButton1?-1:1);e.Handled=true;}
+            return;
+        }
         e.Handled = true;
         GoBackEmbedded();
+    }
+
+    private const double DesktopMinWidth = 840;
+    private const double TabletPortraitMinWidth = 480;
+
+    private void OnMainLayoutSettingsChanged()
+    {
+        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(new Action(OnMainLayoutSettingsChanged)); return; }
+        SyncTabletWindowConstraints();
+        RefreshSurfaceTabletHint();
+    }
+
+    private void OnPostureChanged(FrameworkElement source, LayoutPosture posture)
+    {
+        if (!ReferenceEquals(source, RootGrid)) return;
+        SyncTabletWindowConstraints();
+        ApplyTabletShellLayout(posture);
+    }
+
+    internal bool IsTabletPortraitPosture => Responsive.GetPosture(RootGrid) == LayoutPosture.TabletPortrait;
+
+    internal void ApplyTabletShellLayout(LayoutPosture posture)
+    {
+        var tablet = posture == LayoutPosture.TabletPortrait;
+        var playerOpen = IsEmbeddedPlayerVisible;
+        if (NavRail != null) NavRail.Visibility = !playerOpen && !tablet ? Visibility.Visible : Visibility.Collapsed;
+        if (BottomNavBar != null) BottomNavBar.Visibility = !playerOpen && tablet ? Visibility.Visible : Visibility.Collapsed;
+        if (TabletTopActions != null) TabletTopActions.Visibility = tablet ? Visibility.Visible : Visibility.Collapsed;
+        CardWall.RefreshAll();
+    }
+
+    private void OnBottomNavClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: PageKey key }) return;
+        if (_vm.Current == key && EmbeddedHost.Visibility != Visibility.Visible && key == PageKey.Home)
+        {
+            if (PageOf(PageKey.Home) is HomePage home) home.ScrollToTopOrRefresh();
+            return;
+        }
+        OnNavClick(sender, e);
+    }
+
+    internal bool IsEmbeddedPlayerVisible => EmbeddedPlayerHost?.Visibility == Visibility.Visible;
+
+    internal void MountEmbeddedPlayer(UIElement playerRoot)
+    {
+        if (EmbeddedPlayerContent == null || EmbeddedPlayerHost == null) return;
+        HidePartition();
+        EmbeddedPlayerContent.Content = playerRoot;
+        EmbeddedPlayerHost.Visibility = Visibility.Visible;
+        if (MainContentGrid != null) MainContentGrid.Visibility = Visibility.Collapsed;
+        if (NavRail != null) NavRail.Visibility = Visibility.Collapsed;
+        if (BottomNavBar != null) BottomNavBar.Visibility = Visibility.Collapsed;
+    }
+
+    internal void UnmountEmbeddedPlayer(UIElement? expectedRoot = null)
+    {
+        if (EmbeddedPlayerContent == null || EmbeddedPlayerHost == null) return;
+        if (expectedRoot != null && !ReferenceEquals(EmbeddedPlayerContent.Content, expectedRoot)) return;
+        EmbeddedPlayerContent.Content = null;
+        EmbeddedPlayerHost.Visibility = Visibility.Collapsed;
+        if (MainContentGrid != null) MainContentGrid.Visibility = Visibility.Visible;
+        ApplyTabletShellLayout(Responsive.GetPosture(RootGrid));
+    }
+
+    internal void SyncTabletWindowConstraints()
+    {
+        var allowNarrow = Svc.Settings.TabletMode != TabletMode.Off
+                          || Responsive.GetPosture(RootGrid) == LayoutPosture.TabletPortrait;
+        var targetMin = allowNarrow ? TabletPortraitMinWidth : DesktopMinWidth;
+        if (Math.Abs(MinWidth - targetMin) > 0.5) MinWidth = targetMin;
+    }
+
+    internal void RefreshSurfaceTabletHint()
+    {
+        if (SurfaceTabletHintBanner == null) return;
+        var show = DeviceProfile.ShouldShowSurfaceTabletHint(
+            DeviceProfile.IsSurfaceDevice,
+            Svc.Settings.TabletMode,
+            Svc.Settings.SurfaceTabletHintDismissed);
+        SurfaceTabletHintBanner.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OnEnableSurfaceTabletModeClick(object sender, RoutedEventArgs e)
+    {
+        Svc.Settings.DismissSurfaceTabletHint();
+        Svc.Settings.SetTabletMode(TabletMode.Auto);
+        RefreshSurfaceTabletHint();
+        Svc.Toast.Show("已开启平板模式（竖屏自动切换）");
+    }
+
+    private void OnDismissSurfaceTabletHintClick(object sender, RoutedEventArgs e)
+    {
+        Svc.Settings.DismissSurfaceTabletHint();
+        RefreshSurfaceTabletHint();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -224,6 +339,9 @@ public partial class MainWindow : FluentWindow
         // 首次显示不播入场动画: 窗口刚出来, 再叠一层淡入会很怪。
         ShowPage(_vm.Current, animate: false);
         _ = (PageOf(PageKey.Home) as HomePage)?.Init();
+        SyncTabletWindowConstraints();
+        ApplyTabletShellLayout(Responsive.GetPosture(RootGrid));
+        RefreshSurfaceTabletHint();
     }
 
     /// <summary>

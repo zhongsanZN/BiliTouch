@@ -340,6 +340,29 @@ public partial class PlayerWindow
         //   ⇒ 整段(含之后由消息循环送达的状态变化)排掉, 时长给足 —— 进出全屏最慢也就几百毫秒。
         SuppressStateCoverFor(1600);
 
+        // 平板单窗口内嵌模式：全屏直接在主窗内铺满舞台（无需改动隐藏的 PlayerWindow 窗口态）
+        if (_isEmbeddedInMain)
+        {
+            if (on)
+            {
+                RootGrid.Background = Brushes.Black;
+                TopBar.Visibility = Visibility.Collapsed;
+                TopRow.Height = new GridLength(0);
+                ApplyInfoPanelState();
+                UpdatePortraitImmersiveOverlay();
+            }
+            else
+            {
+                SetPortraitCommentDrawerOpen(false);
+                RootGrid.SetResourceReference(BackgroundProperty, "AppBackgroundBrush");
+                TopBar.Visibility = Visibility.Visible;
+                TopRow.Height = new GridLength(44);
+                ApplyInfoPanelState();
+                UpdatePortraitImmersiveOverlay();
+            }
+            return;
+        }
+
         if (on)
         {
             _beforeFullscreenState = WindowState == WindowState.Maximized ? WindowState.Maximized : WindowState.Normal;
@@ -712,23 +735,21 @@ public partial class PlayerWindow
         var hide = _isFullscreen || _isFillWindow;
         if (InfoPanel != null)
             InfoPanel.Visibility = hide ? Visibility.Collapsed : Visibility.Visible;
+        var tabletStacked = !hide && (_tabletPortraitLayoutMounted || ShouldUseTabletPortraitLayout);
+        var hostW = _embeddedHost?.ActualWidth ?? ActualWidth;
         // ★ 列宽必须跟着一起给回去: 只把 Visibility 改回 Visible 而列宽还停在 0,
         //   面板会量成 0 宽(用户看到的是"信息栏没回来")。
         if (RightColumn != null)
-            RightColumn.Width = new GridLength(hide ? 0 : InfoPanelWidthFor(ActualWidth));
+            RightColumn.Width = new GridLength(hide || tabletStacked ? 0 : InfoPanelWidthFor(hostW));
 
-        // ★ 最小尺寸必须跟着状态走(2026-10-05 修"铺满窗口后缩到某个程度就被卡住"):
-        //   常规的 840×600 是按"视频列 320 + 信息栏 400"的布局定的下限(2026-11-03 从
-        //   1100/480 降下来, 为了竖屏副屏能放下); 信息栏收起后整个窗口只剩视频,
-        //   再拿它当底线没有道理。视频列的 MinWidth 同理 —— 不跟着放开,
-        //   窗口缩到 320 以下时列宽比窗口还宽, 画面会被裁偏。
-        //   (FluentWindow 的 WM_GETMINMAXINFO 在每次拖动时重读 MinWidth/MinHeight, 改属性即可。)
         if (VideoColumn != null)
-            VideoColumn.MinWidth = hide ? 0 : VideoColumnNormalMinWidth;
+            VideoColumn.MinWidth = hide || tabletStacked ? 0 : VideoColumnNormalMinWidth;
         MinWidth = hide ? FillWindowMinWidth : NormalWindowMinWidth;
         MinHeight = hide ? FillWindowMinHeight : NormalWindowMinHeight;
-        ApplyAlternateLayoutPreference();
+        ApplyAlternateLayoutPreference(allowPreLoad: _isEmbeddedInMain);
+        if (_tabletPortraitLayoutMounted) UpdateTabletPortraitMeasurements();
         UpdateCommentPicturePlacement();
+        UpdatePortraitImmersiveOverlay();
         QueueAlternateLayout();
     }
 
@@ -758,7 +779,7 @@ public partial class PlayerWindow
     private void OnWindowSizeChangedForInfoPanel(object sender, SizeChangedEventArgs e)
     {
         if (_closing || RightColumn == null) return;
-        if (_isFullscreen || _isFillWindow) return;
+        if (_isFullscreen || _isFillWindow || _tabletPortraitLayoutMounted) return;
         var w = InfoPanelWidthFor(e.NewSize.Width);
         if (Math.Abs(RightColumn.Width.Value - w) > 0.5)
             RightColumn.Width = new GridLength(w);
@@ -777,8 +798,14 @@ public partial class PlayerWindow
     /// </summary>
     private const double CompactControlBarWidth = 560;
 
+    /// <summary>视频区窄于此宽度（如竖屏优化左栏）时收起弹幕输入框，避免把右侧清晰度/全屏按钮挤出画面。</summary>
+    private const double CompactDanmakuComposerWidth = 520;
+
     /// <summary>再窄一档(竖屏手机比例的小窗)连播放时间也收, 只留图标按钮。</summary>
-    private const double CompactTimeWidth = 400;
+    private const double CompactTimeWidth = 380;
+
+    /// <summary>极窄宽度（最小窗口下的竖屏左栏）收起倍速按钮，确保全屏按钮不被裁出画面。</summary>
+    private const double CompactSpeedWidth = 300;
 
     private void OnVideoAreaSizeChanged(object sender, SizeChangedEventArgs e)
     {
@@ -787,6 +814,16 @@ public partial class PlayerWindow
         // ★ 2026-11-05: 不再 Collapse VolumeSlider —— 它在弹层里, 藏掉就是"展开后一片空白"。
         BtnDanmakuArea.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         if (TimeText != null) TimeText.Visibility = e.NewSize.Width > 0 && e.NewSize.Width < CompactTimeWidth ? Visibility.Collapsed : Visibility.Visible;
+        if (SpeedBtn != null) SpeedBtn.Visibility = e.NewSize.Width > 0 && e.NewSize.Width < CompactSpeedWidth ? Visibility.Collapsed : Visibility.Visible;
+        UpdateDanmakuComposerVisibility(e.NewSize.Width);
+    }
+
+    private void UpdateDanmakuComposerVisibility(double videoWidth = -1)
+    {
+        if (DanmakuComposer == null) return;
+        var w = videoWidth >= 0 ? videoWidth : (VideoAreaRoot?.ActualWidth ?? 0);
+        var tooNarrow = w > 0 && w < CompactDanmakuComposerWidth;
+        DanmakuComposer.Visibility = CanUseOnlineDanmaku && !tooNarrow ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>

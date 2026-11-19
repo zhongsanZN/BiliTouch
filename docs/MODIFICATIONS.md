@@ -1,11 +1,12 @@
 # 本分支改动说明
 
-维护者：中三（zhongsanZN）；持续维护至 `0.3.5`。
+维护者：中三（zhongsanZN）；持续维护至 `0.3.6`。
 
 本项目基于 ABing / ABING1111 的 BiliDesk，沿用原 GPL-3.0 许可，保留原作者及上游来源。它是独立维护的衍生项目，不是上游官方发行。仓库、问题反馈和更新均指向 https://github.com/zhongsanZN/BiliTouch 。上游地址仅作来源和鸣谢使用。
 
 ## 主要改动范围
 
+- **0.3.6**：新增面向 Windows 平板竖屏的「平板模式」（`Off` 默认 / `Auto` / `Always`、Surface 设备首次提醒、底部四项导航栏、单窗口内嵌播放与直播、对齐安卓端 B 站的视频下方 `简介 | 评论` 标签页 + 竖屏视频高视口与底部半屏评论抽屉、动态页顶部 UP 主横向头像条、私信二级下钻）与桌面端「竖屏视频优化」（网页布局竖屏视频左置 + 评论区并排右置）；新增原生 Windows ARM64 构建，自本版起每次 Release 同步发布 x64 与 ARM64 双架构安装器。详见 [v0.3.6.md](release-notes/v0.3.6.md)。
 - **0.3.5**：离线缓存播放支持联网后台加载评论与弹幕；新增全站弱引用事件总线 `UserStateBus` 与统一横滑物理内核 `HorizontalSwipePhysics`；根治动态/专栏点赞图标偶发消失、DASH 尾段音轨提前 EOF 截断、多屏异 DPI 尺寸偏差等全仓问题；将 `ApiClient`（唯一发包口 `SendThrottledAsync`）与 `PlayerWindow` 按业务域重构，落地 `AGENTS.md` / `ARCHITECTURE.md` 与 `--ci` 一键离线回归（含离屏像素与零绑定错误探针）。详见 [v0.3.5.md](release-notes/v0.3.5.md)。
 - **0.3.2～0.3.4**：长按一键三连演出、同步上游至 v1.7.6 播放器自愈与听视频保护、原生专栏/Opus 与星创组浏览页、离线缓存识别、并排/网页开合动效连续化。详见 `docs/release-notes/`。
 - **0.3.1**：解码显卡选择、显卡颜色转换与共享纹理合成、最小化停止视频上传、异步串行切换原生媒体及基础隔离修复。详见 [RELEASE-0.3.1-2026-11-11.md](release-notes/RELEASE-0.3.1-2026-11-11.md)。
