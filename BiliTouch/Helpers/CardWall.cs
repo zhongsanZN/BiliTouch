@@ -232,7 +232,7 @@ public static class CardWall
         //    而拖动期间 WM_SIZE 每帧都来 —— 那就是"拖边缘一卡一卡"的来源。
         if (_modalResizing)
         {
-            _pendingWall = wall;
+            TrackPendingWall(wall);
             EnsureThrottleTimer();
             return;
         }
@@ -280,8 +280,18 @@ public static class CardWall
     /// <summary>用户是否正拖着窗口边缘(Win32 的模态缩放循环)</summary>
     private static bool _modalResizing;
 
-    /// <summary>节流期间攒下的"最后那个要算的墙"</summary>
-    private static FrameworkElement? _pendingWall;
+    /// <summary>节流期间攒下的所有待重算墙（多面墙同屏时不互相覆盖丢失）</summary>
+    private static readonly List<WeakReference<FrameworkElement>> _pendingWalls = new();
+
+    private static void TrackPendingWall(FrameworkElement wall)
+    {
+        for (var i = _pendingWalls.Count - 1; i >= 0; i--)
+        {
+            if (!_pendingWalls[i].TryGetTarget(out var existing)) { _pendingWalls.RemoveAt(i); continue; }
+            if (ReferenceEquals(existing, wall)) return;
+        }
+        _pendingWalls.Add(new WeakReference<FrameworkElement>(wall));
+    }
 
     private static DispatcherTimer? _throttleTimer;
 
@@ -320,16 +330,19 @@ public static class CardWall
         _throttleTimer = null;
     }
 
-    /// <summary>把攒下的最后一次算掉。攒着的墙可能已经不在可视树上了(切页), 那就读不到宽度、直接跳过。</summary>
+    /// <summary>把攒下的全部墙一次算掉。已经不在可视树上的墙读不到宽度、直接跳过。</summary>
     private static void FlushPending()
     {
-        var wall = _pendingWall;
-        _pendingWall = null;
-        if (wall == null) return;
-
-        var avail = wall.ActualWidth;
-        if (double.IsNaN(avail) || avail <= 0) return;
-        ApplyTo(wall, avail);
+        if (_pendingWalls.Count == 0) return;
+        var batch = _pendingWalls.ToArray();
+        _pendingWalls.Clear();
+        foreach (var weak in batch)
+        {
+            if (!weak.TryGetTarget(out var wall)) continue;
+            var avail = wall.ActualWidth;
+            if (double.IsNaN(avail) || avail <= 0) continue;
+            ApplyTo(wall, avail);
+        }
     }
 
     /// <summary>

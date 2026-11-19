@@ -91,7 +91,19 @@ public sealed class OfflineDownloadService
     public event Action? Changed;
     private readonly Dictionary<string,CancellationTokenSource> _running=new();
     private readonly Dictionary<string,Task> _work=new();
-    private static readonly HttpClient Http=new(new SocketsHttpHandler { AutomaticDecompression=DecompressionMethods.None,ConnectTimeout=TimeSpan.FromSeconds(20) }) { Timeout=Timeout.InfiniteTimeSpan };
+    private static readonly HttpClient Http = CreateHttpClient();
+    private static HttpClient CreateHttpClient()
+    {
+        var client = new HttpClient(new SocketsHttpHandler
+        {
+            AutomaticDecompression = DecompressionMethods.None,
+            ConnectTimeout = TimeSpan.FromSeconds(20),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5)
+        }) { Timeout = Timeout.InfiniteTimeSpan };
+        client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", HttpDefaults.UserAgent);
+        return client;
+    }
+    private readonly object _saveGate = new();
     public static OfflineDownloadService Instance {get;}=new();
     private static string IndexPath=>Path.Combine(AppPaths.DataDir,"offline-downloads.json");
     private readonly JsonSerializerOptions _json=new(){WriteIndented=true};
@@ -229,114 +241,156 @@ public sealed class OfflineDownloadService
     }
     private void Pump()
     {
-        if(_closing)return;
-        foreach(var e in Items.Where(e=>e.State==OfflineState.Queued && !_running.ContainsKey(e.Id)).ToList())
+        if (_closing) return;
+        foreach (var e in Items.Where(e => e.State == OfflineState.Queued && !_running.ContainsKey(e.Id)).ToList())
         {
-            if(_running.Count>=2)break;
-            var cts=new CancellationTokenSource();_running.Add(e.Id,cts);
-            _work[e.Id]=System.Windows.Application.Current.Dispatcher.InvokeAsync(()=>RunAsync(e,cts)).Task.Unwrap();
+            if (_running.Count >= 2) break;
+            var cts = new CancellationTokenSource();
+            _running.Add(e.Id, cts);
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            _work[e.Id] = dispatcher != null && !dispatcher.HasShutdownStarted
+                ? dispatcher.InvokeAsync(() => RunAsync(e, cts)).Task.Unwrap()
+                : RunAsync(e, cts);
         }
     }
-    private async Task RunAsync(OfflineEntry e,CancellationTokenSource cts)
+
+    private static void DispatchUi(Action action)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher == null || dispatcher.CheckAccess()) { action(); return; }
+        if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+        dispatcher.BeginInvoke(action);
+    }
+
+    private async Task RunAsync(OfflineEntry e, CancellationTokenSource cts)
     {
         await Task.Yield(); // Ensure the work handle exists before cleanup can run.
-        using var progress=Svc.DownloadProgress.Begin(e.Title);
+        using var progress = Svc.DownloadProgress.Begin(e.Title);
         try
         {
-            e.State=OfflineState.Downloading;e.Notify();Save();Changed?.Invoke();
-            if(e.ImportSource.Length>0){await CopyImportedAsync(e,cts.Token,progress);return;}
-            var previousQuality=e.Quality;
-            var(ok,err,url,_,actualQuality)=await _source(e.Bvid,e.Cid,e.RequestedQuality);
-            e.Quality=actualQuality;
+            e.State = OfflineState.Downloading; e.Notify(); Save(); Changed?.Invoke();
+            if (e.ImportSource.Length > 0) { await CopyImportedAsync(e, cts.Token, progress); return; }
+            var previousQuality = e.Quality;
+            var (ok, err, url, _, actualQuality) = await _source(e.Bvid, e.Cid, e.RequestedQuality);
+            e.Quality = actualQuality;
             cts.Token.ThrowIfCancellationRequested();
-            if(!ok || string.IsNullOrWhiteSpace(url))throw new IOException(err??"获取缓存地址失败");
-            Directory.CreateDirectory(Path.GetDirectoryName(e.FilePath)!);
-            if(previousQuality!=actualQuality && File.Exists(e.PartPath))File.Delete(e.PartPath);
-            var offset=File.Exists(e.PartPath)?new FileInfo(e.PartPath).Length:0;
-            using var request=new HttpRequestMessage(HttpMethod.Get,url);
-            request.Headers.UserAgent.ParseAdd(HttpDefaults.UserAgent);
-            request.Headers.Referrer=new Uri($"https://www.bilibili.com/video/{e.Bvid}");
-            request.Headers.TryAddWithoutValidation("Origin","https://www.bilibili.com");
-            if(offset>0)request.Headers.Range=new RangeHeaderValue(offset,null);
-            using var response=await _http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cts.Token);
-            // A server that ignores Range requires a clean restart, never append a full response.
-            if(response.StatusCode==HttpStatusCode.RequestedRangeNotSatisfiable)
-            { if(File.Exists(e.PartPath))File.Delete(e.PartPath);throw new IOException("续传位置已失效，请重试"); }
-            response.EnsureSuccessStatusCode();
-            var mediaType=response.Content.Headers.ContentType?.MediaType;
-            if(mediaType is "text/html" or "application/json")throw new IOException("服务器未返回视频数据");
-            if(response.StatusCode==HttpStatusCode.PartialContent)
-            {if(response.Content.Headers.ContentRange?.From!=offset)throw new IOException("缓存续传校验失败");}
-            else offset=0;
-            e.Total=response.Content.Headers.ContentRange?.Length ?? ((response.Content.Headers.ContentLength??0)>0?offset+response.Content.Headers.ContentLength!.Value:0);
-            e.Done=offset;
-            await using(var input=await response.Content.ReadAsStreamAsync(cts.Token))
-            await using(var output=new FileStream(e.PartPath,offset>0?FileMode.Append:FileMode.Create,FileAccess.Write,FileShare.Read,81920,true))
-            {
-                var buffer=new byte[81920];long tick=0;int count;
-                while((count=await input.ReadAsync(buffer,cts.Token))>0)
-                {
-                    await output.WriteAsync(buffer.AsMemory(0,count),cts.Token);e.Done+=count;progress.Report(e.Done,e.Total);
-                    if(Environment.TickCount64-tick>300){tick=Environment.TickCount64;e.Notify();}
-                }
-            }
-            cts.Token.ThrowIfCancellationRequested();
-            if(e.Done==0)throw new IOException("服务器返回了空视频");
-            if(e.Total>0 && e.Done!=e.Total)throw new IOException("视频未完整下载，请重试");
-            File.Move(e.PartPath,e.FilePath,true);e.State=OfflineState.Completed;e.Error="";
-            using var coverTimeout=CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
-            coverTimeout.CancelAfter(TimeSpan.FromSeconds(15));
-            try { await SaveCoverAsync(e,coverTimeout.Token); } catch(OperationCanceledException) { }
+            if (!ok || string.IsNullOrWhiteSpace(url)) throw new IOException(err ?? "获取缓存地址失败");
 
-            TrayService.Instance.Notify("缓存完成",e.Title+" · "+e.PartTitle);
+            // 网络流读取与磁盘写入全部留在后台线程池，仅节流回 UI 线程刷新进度，
+            // 避免每 80KB 块向 Dispatcher 投递两次续体导致下载期间界面掉帧。
+            await Task.Run(async () =>
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(e.FilePath)!);
+                if (previousQuality != actualQuality && File.Exists(e.PartPath)) File.Delete(e.PartPath);
+                var offset = File.Exists(e.PartPath) ? new FileInfo(e.PartPath).Length : 0;
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.UserAgent.ParseAdd(HttpDefaults.UserAgent);
+                request.Headers.Referrer = new Uri($"https://www.bilibili.com/video/{e.Bvid}");
+                request.Headers.TryAddWithoutValidation("Origin", "https://www.bilibili.com");
+                if (offset > 0) request.Headers.Range = new RangeHeaderValue(offset, null);
+                using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
+                // A server that ignores Range requires a clean restart, never append a full response.
+                if (response.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
+                { if (File.Exists(e.PartPath)) File.Delete(e.PartPath); throw new IOException("续传位置已失效，请重试"); }
+                response.EnsureSuccessStatusCode();
+                var mediaType = response.Content.Headers.ContentType?.MediaType;
+                if (mediaType is "text/html" or "application/json") throw new IOException("服务器未返回视频数据");
+                if (response.StatusCode == HttpStatusCode.PartialContent)
+                { if (response.Content.Headers.ContentRange?.From != offset) throw new IOException("缓存续传校验失败"); }
+                else offset = 0;
+                e.Total = response.Content.Headers.ContentRange?.Length ?? ((response.Content.Headers.ContentLength ?? 0) > 0 ? offset + response.Content.Headers.ContentLength!.Value : 0);
+                e.Done = offset;
+                await using (var input = await response.Content.ReadAsStreamAsync(cts.Token).ConfigureAwait(false))
+                await using (var output = new FileStream(e.PartPath, offset > 0 ? FileMode.Append : FileMode.Create, FileAccess.Write, FileShare.Read, 81920, true))
+                {
+                    var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(81920);
+                    try
+                    {
+                        long tick = 0; int count;
+                        while ((count = await input.ReadAsync(buffer.AsMemory(0, 81920), cts.Token).ConfigureAwait(false)) > 0)
+                        {
+                            await output.WriteAsync(buffer.AsMemory(0, count), cts.Token).ConfigureAwait(false);
+                            e.Done += count;
+                            progress.Report(e.Done, e.Total);
+                            if (Environment.TickCount64 - tick > 300) { tick = Environment.TickCount64; DispatchUi(e.Notify); }
+                        }
+                    }
+                    finally { System.Buffers.ArrayPool<byte>.Shared.Return(buffer); }
+                }
+                cts.Token.ThrowIfCancellationRequested();
+                if (e.Done == 0) throw new IOException("服务器返回了空视频");
+                if (e.Total > 0 && e.Done != e.Total) throw new IOException("视频未完整下载，请重试");
+                File.Move(e.PartPath, e.FilePath, true);
+            }, cts.Token);
+
+            e.State = OfflineState.Completed; e.Error = "";
+            using var coverTimeout = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+            coverTimeout.CancelAfter(TimeSpan.FromSeconds(15));
+            try { await SaveCoverAsync(e, coverTimeout.Token); } catch (OperationCanceledException) { }
+
+            TrayService.Instance.Notify("缓存完成", e.Title + " · " + e.PartTitle);
         }
-        catch(OperationCanceledException){e.State=File.Exists(e.FilePath)?OfflineState.Completed:OfflineState.Paused;}
-        catch(Exception ex){e.State=OfflineState.Failed;e.Error=ex.Message;}
+        catch (OperationCanceledException) { e.State = File.Exists(e.FilePath) ? OfflineState.Completed : OfflineState.Paused; }
+        catch (Exception ex) { e.State = OfflineState.Failed; e.Error = ex.Message; }
         finally
         {
-            if(File.Exists(e.PartPath))e.Done=new FileInfo(e.PartPath).Length;
-            _running.Remove(e.Id);_work.Remove(e.Id);cts.Dispose();e.Notify();Save();Changed?.Invoke();Pump();
+            if (File.Exists(e.PartPath)) e.Done = new FileInfo(e.PartPath).Length;
+            _running.Remove(e.Id); _work.Remove(e.Id); cts.Dispose(); e.Notify(); Save(); Changed?.Invoke(); Pump();
         }
     }
-    private async Task CopyImportedAsync(OfflineEntry e,CancellationToken token,DownloadProgressService.Job progress)
+    private async Task CopyImportedAsync(OfflineEntry e, CancellationToken token, DownloadProgressService.Job progress)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(e.FilePath)!);
-        await using var input=new FileStream(e.ImportSource,FileMode.Open,FileAccess.Read,FileShare.Read,81920,true);
-        var offset=File.Exists(e.PartPath)?new FileInfo(e.PartPath).Length:0;
-        if(offset>input.Length || (e.Total>0 && e.Total!=input.Length))offset=0;
-        e.Total=input.Length;e.Done=offset;input.Position=offset;
-        await using(var output=new FileStream(e.PartPath,offset>0?FileMode.Append:FileMode.Create,FileAccess.Write,FileShare.Read,81920,true))
+        await Task.Run(async () =>
         {
-            var buffer=new byte[81920];int count;long tick=0;
-            while((count=await input.ReadAsync(buffer,token))>0)
+            Directory.CreateDirectory(Path.GetDirectoryName(e.FilePath)!);
+            await using var input = new FileStream(e.ImportSource, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+            var offset = File.Exists(e.PartPath) ? new FileInfo(e.PartPath).Length : 0;
+            if (offset > input.Length || (e.Total > 0 && e.Total != input.Length)) offset = 0;
+            e.Total = input.Length; e.Done = offset; input.Position = offset;
+            await using (var output = new FileStream(e.PartPath, offset > 0 ? FileMode.Append : FileMode.Create, FileAccess.Write, FileShare.Read, 81920, true))
             {
-                await output.WriteAsync(buffer.AsMemory(0,count),token);e.Done+=count;progress.Report(e.Done,e.Total);
-                if(Environment.TickCount64-tick>300){tick=Environment.TickCount64;e.Notify();}
+                var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(81920);
+                try
+                {
+                    int count; long tick = 0;
+                    while ((count = await input.ReadAsync(buffer.AsMemory(0, 81920), token).ConfigureAwait(false)) > 0)
+                    {
+                        await output.WriteAsync(buffer.AsMemory(0, count), token).ConfigureAwait(false);
+                        e.Done += count;
+                        progress.Report(e.Done, e.Total);
+                        if (Environment.TickCount64 - tick > 300) { tick = Environment.TickCount64; DispatchUi(e.Notify); }
+                    }
+                }
+                finally { System.Buffers.ArrayPool<byte>.Shared.Return(buffer); }
             }
-        }
-        token.ThrowIfCancellationRequested();
-        if(e.Done<=0 || e.Done!=e.Total)throw new IOException("本地视频复制不完整");
-        File.Move(e.PartPath,e.FilePath,true);e.State=OfflineState.Completed;e.Error="";
+            token.ThrowIfCancellationRequested();
+            if (e.Done <= 0 || e.Done != e.Total) throw new IOException("本地视频复制不完整");
+            File.Move(e.PartPath, e.FilePath, true);
+        }, token);
+        e.State = OfflineState.Completed; e.Error = "";
     }
 
-    private async Task SaveCoverAsync(OfflineEntry e,CancellationToken token)
+    private async Task SaveCoverAsync(OfflineEntry e, CancellationToken token)
     {
         try
         {
-            if(!Uri.TryCreate(e.CoverUrl,UriKind.Absolute,out var uri) || uri.Scheme is not ("http" or "https"))return;
-            using var response=await _http.GetAsync(uri,HttpCompletionOption.ResponseHeadersRead,token);response.EnsureSuccessStatusCode();
-            Directory.CreateDirectory(Path.GetDirectoryName(e.CoverPath)!);
-            await using var source=await response.Content.ReadAsStreamAsync(token);
-            await using var target=File.Create(e.CoverPath);await source.CopyToAsync(target,token);
+            if (!Uri.TryCreate(e.CoverUrl, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return;
+            using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+            req.Headers.TryAddWithoutValidation("User-Agent", HttpDefaults.UserAgent);
+            req.Headers.Referrer = new Uri("https://www.bilibili.com/");
+            using var response = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            await using var source = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
+            await AtomicFile.CopyStreamAsync(source, e.CoverPath, token).ConfigureAwait(false);
         }
-        catch(Exception ex) when(ex is not OperationCanceledException){App.ReportError(ex);}
+        catch (Exception ex) when (ex is not OperationCanceledException) { App.ReportError(ex); }
     }
     private void Save()
     {
-        if(!_loaded)return;
-        Directory.CreateDirectory(AppPaths.DataDir);
-        var native=Items.Where(e=>!e.IsExternalClientCache).ToList();
-        var temp=IndexPath+".tmp";File.WriteAllText(temp,JsonSerializer.Serialize(native,_json));File.Move(temp,IndexPath,true);
+        if (!_loaded) return;
+        var native = Items.Where(e => !e.IsExternalClientCache).ToList();
+        var json = JsonSerializer.Serialize(native, _json);
+        lock (_saveGate) AtomicFile.WriteAllText(IndexPath, json);
     }
     public void Shutdown()
     {

@@ -27,48 +27,53 @@ public partial class WatchLaterPage : UserControl
             if(DataContext is WatchLaterViewModel vm && item is VideoItem video && !vm.Busy)
             { if(!vm.IsEditMode)vm.ToggleEditCommand.Execute(null);video.IsSelected=true; }
         });
-        // 屏蔽筛掉一批后补下一页(否则停在半屏空白上)
-        FilterService.Instance.Changed += OnFilterApplied;
         Loaded += async (_, _) =>
         {
-            if (Vm != null)
+            FilterService.Instance.Changed -= OnFilterApplied;
+            FilterService.Instance.Changed += OnFilterApplied;
+            if (Vm != null && IsVisible)
             {
-                // 稍后再看也纳入全局屏蔽(以前这里怎么屏蔽都不生效)
                 FilterService.Instance.Attach(Vm.Items);
-                await Vm.LoadAsync();
+                if (Vm.Items.Count == 0 || Vm.IsDirty)
+                {
+                    Vm.IsDirty = false;
+                    await Vm.LoadAsync();
+                }
             }
         };
+        Unloaded += (_, _) => FilterService.Instance.Changed -= OnFilterApplied;
     }
 
-    /// <summary>
-    /// 滚到接近底部(或内容不足一屏)就补下一页。
-    ///
-    /// ★ 补页进行中必须暂停判定: 每补一批内容都在长, 这时"内容不够一屏"是假象 ——
-    ///   不挡住的话几次 ScrollChanged 就把剩下所有页一口气全铺出来, 分页等于白做
-    ///   (与首页分帧填充时踩的是同一个坑)。
-    /// </summary>
-    private int _autoFillCount;
+    private int _autoFillStreak;
+    private int _lastAutoFillVisibleCount = -1;
 
     private void OnListScrollChanged(object sender, ScrollChangedEventArgs e)
     {
+        if (e.VerticalChange > 2) _autoFillStreak = 0;
         if (sender is ScrollViewer sv) MaybeAutoLoad(sv);
     }
 
     /// <summary>内容接近底部 / 不足一屏就补下一页。滚动与"屏蔽后补内容"共用这一份判断。</summary>
     private void MaybeAutoLoad(ScrollViewer? sv)
     {
-        if (sv == null) return;
+        if (sv == null || TouchSupport.IsTouchPanning(sv)) return;
         if (Vm is not { HasMore: true } vm) return;
         if (vm.IsFilling) return;
-        if (_autoFillCount > 5) return;   // 防止"补了但布局还没长"造成的死循环
 
         var nearBottom = sv.ScrollableHeight - sv.VerticalOffset < 400;
         var contentShort = sv.ScrollableHeight < sv.ActualHeight * 0.8;
         if (!nearBottom && !contentShort) return;
 
-        _autoFillCount++;
-        try { vm.ShowNextPage(); }
-        finally { _autoFillCount--; }
+        var visibleCount = vm.TotalCount;
+        if (visibleCount != _lastAutoFillVisibleCount)
+        {
+            _lastAutoFillVisibleCount = visibleCount;
+            _autoFillStreak = 0;
+        }
+        if (_autoFillStreak >= 5) return;
+
+        _autoFillStreak++;
+        vm.ShowNextPage();
     }
 
     /// <summary>屏蔽条件落地后, 等布局量完再补内容</summary>

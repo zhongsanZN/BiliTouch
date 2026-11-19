@@ -70,9 +70,12 @@ public class NavigationDispatcher
     public void OpenRelations(long mid,bool followers)
     {
         if(mid<=0)return;
-        var page=new UserRelationsPage(mid,followers);
-        if(SvcWindow.Main is {IsLoaded:true} main)main.ShowEmbeddedPage(page,followers?"粉丝":"关注");
-        else new Window {Title=followers?"粉丝":"关注",Content=page,Width=680,Height=800,Owner=_owner,Background=ThemeBackground()}.Show();
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            var page=new UserRelationsPage(mid,followers);
+            if(SvcWindow.Main is {IsLoaded:true} main)main.ShowEmbeddedPage(page,followers?"粉丝":"关注");
+            else new Window {Title=followers?"粉丝":"关注",Content=page,Width=680,Height=800,Owner=_owner,Background=ThemeBackground()}.Show();
+        });
     }
 
     public void OpenDynamic(BiliTouch.Models.DynamicItem item,bool repost=false)
@@ -156,11 +159,17 @@ public class NavigationDispatcher
         });
     }
 
-    /// <summary>打开搜索结果(原生 WPF Window 承载)</summary>
+    /// <summary>打开搜索结果：优先路由至主窗口内建搜索页（保持导航统一并避免独立窗口事件泄漏）</summary>
     public void OpenSearch(string? keyword)
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
+            if (SvcWindow.Main is { IsLoaded: true } main)
+            {
+                if (!string.IsNullOrWhiteSpace(keyword)) main.NavigateToSearch(keyword);
+                else App.MainVm.Navigate(ViewModels.PageKey.Search);
+                return;
+            }
             var vm = new ViewModels.SearchViewModel();
             var page = new SearchPage { DataContext = vm };
             if (!string.IsNullOrEmpty(keyword))

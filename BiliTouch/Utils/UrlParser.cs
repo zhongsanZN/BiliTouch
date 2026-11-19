@@ -8,6 +8,7 @@ public static class UrlParser
 {
     private static readonly Regex BvidRegex = new(@"/(BV[0-9A-Za-z]{10})", RegexOptions.Compiled);
     private static readonly Regex UidRegex = new(@"/space/(\d+)", RegexOptions.Compiled);
+    private static readonly Regex SpaceHostUidRegex = new(@"^/(\d+)(?:/|$)", RegexOptions.Compiled);
     private static readonly Regex CvRegex = new(@"/read/cv(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex OpusRegex = new(@"/opus/(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
@@ -21,10 +22,19 @@ public static class UrlParser
     private static bool TryParseUri(string urlOrUri, out Uri uri)
     {
         uri = null!;
+        if (string.IsNullOrWhiteSpace(urlOrUri)) return false;
+        var trimmed = urlOrUri.Trim();
         try
         {
-            uri = urlOrUri.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                ? new Uri(urlOrUri) : new Uri("https:" + urlOrUri);
+            if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                uri = new Uri(trimmed);
+            else if (trimmed.StartsWith("//", StringComparison.Ordinal))
+                uri = new Uri("https:" + trimmed);
+            else if (trimmed.StartsWith("/", StringComparison.Ordinal))
+                uri = new Uri("https://www.bilibili.com" + trimmed);
+            else
+                uri = new Uri("https://" + trimmed);
             return true;
         }
         catch
@@ -42,10 +52,15 @@ public static class UrlParser
         return m.Success ? m.Groups[1].Value : null;
     }
 
-    /// <summary>提取 UP 主 uid(space.bilibili.com/{mid})</summary>
+    /// <summary>提取 UP 主 uid(space.bilibili.com/{mid} 或 /space/{mid})</summary>
     public static string? ExtractUid(string urlOrUri)
     {
         if (!TryParseUri(urlOrUri, out var uri)) return null;
+        if (uri.Host.Equals("space.bilibili.com", StringComparison.OrdinalIgnoreCase))
+        {
+            var hostMatch = SpaceHostUidRegex.Match(uri.AbsolutePath);
+            if (hostMatch.Success) return hostMatch.Groups[1].Value;
+        }
         var m = UidRegex.Match(uri.AbsolutePath);
         return m.Success ? m.Groups[1].Value : null;
     }

@@ -927,7 +927,7 @@ public class SettingsStore
             version=++_version;
             _pendingJson = null;
         }
-        try {lock(_diskGate){if(Volatile.Read(ref _version)==version)File.WriteAllText(FilePath,json);}}
+        try {lock(_diskGate){if(Volatile.Read(ref _version)==version)Helpers.AtomicFile.WriteAllText(FilePath,json);}}
         catch { /* 写入失败不影响使用 */ }
     }
 
@@ -979,7 +979,7 @@ public class SettingsStore
                 lock(_diskGate)
                 {
                     if (Volatile.Read(ref _version) != version) continue;
-                    File.WriteAllText(FilePath, json);
+                    Helpers.AtomicFile.WriteAllText(FilePath, json);
                 }
             }
             catch
@@ -1237,9 +1237,10 @@ public class SettingsStore
         var nextFont = Math.Clamp(fontScalePercent ?? DanmakuFontScalePercent, 50, 300);
         var nextSpeed = Math.Clamp(speedLevel ?? DanmakuSpeedLevel,
             Helpers.DanmakuMotion.MinSpeedLevel, Helpers.DanmakuMotion.MaxSpeedLevel);
+        var nextArea = Math.Clamp(areaPercent, 25, 100);
         var nextOutline = outline ?? DanmakuOutline;
         var changed = enabled != DanmakuEnabled
-            || areaPercent != DanmakuAreaPercent
+            || nextArea != DanmakuAreaPercent
             || smartFilter != DanmakuSmartFilter
             || nextColorful != DanmakuColorful
             || nextFScroll != DanmakuFilterScroll
@@ -1251,8 +1252,9 @@ public class SettingsStore
             || nextSpeed != DanmakuSpeedLevel
             || nextOutline != DanmakuOutline
             || !string.Equals(nextKeywords, DanmakuBlockKeywords, StringComparison.Ordinal);
+        if (!changed) return;
         DanmakuEnabled = enabled;
-        DanmakuAreaPercent = Math.Clamp(areaPercent, 25, 100);
+        DanmakuAreaPercent = nextArea;
         DanmakuSmartFilter = smartFilter;
         DanmakuColorful = nextColorful;
         DanmakuFilterScroll = nextFScroll;
@@ -1265,6 +1267,6 @@ public class SettingsStore
         DanmakuOutline = nextOutline;
         DanmakuBlockKeywords = nextKeywords;
         Save();
-        if (changed) DanmakuSettingsChanged?.Invoke();
+        DanmakuSettingsChanged?.Invoke();
     }
 }

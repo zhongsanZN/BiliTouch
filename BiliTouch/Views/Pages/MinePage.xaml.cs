@@ -15,10 +15,14 @@ using BiliTouch.Views.Controls;
 
 namespace BiliTouch.Views.Pages;
 
-public partial class MinePage : UserControl
+public partial class MinePage : UserControl, IHorizontalSwipeHost
 {
-    private const double SwipePageRatio = 3.0 / 8.0;
-    private const double SwipeEdgeResist = 0.35;
+    bool IHorizontalSwipeHost.ContainsSwipePoint(Point screenPoint) => ContainsSwipePoint(screenPoint);
+    void IHorizontalSwipeHost.PreviewHorizontalWheel(double progress) => PreviewHorizontalWheel(progress);
+    void IHorizontalSwipeHost.SettleHorizontalWheelPreview(bool commit) => SettleHorizontalWheelPreview(commit);
+    void IHorizontalSwipeHost.SettlePrecisionTouchpadPreview(bool commit) => SettlePrecisionTouchpadPreview(commit);
+    private const double SwipePageRatio = HorizontalSwipePhysics.CommitRatio;
+    private const double SwipeEdgeResist = HorizontalSwipePhysics.EdgeResist;
 
     public Func<PageKey, FrameworkElement>? SectionFactory { get; set; }
     private readonly Dictionary<int, FrameworkElement> _sections = new();
@@ -172,7 +176,29 @@ public partial class MinePage : UserControl
             pt.X = 0;
             item.Value.Visibility = item.Key == index ? Visibility.Visible : Visibility.Collapsed;
         }
+        if (_sections.TryGetValue(index, out var activeSection))
+            NotifySectionActivated(activeSection);
         MineTabs?.SnapToSelected(true);
+    }
+
+    /// <summary>子页从 Collapsed 切回 Visible 时通知脏数据自动刷新（不会触发无谓全量加载）。</summary>
+    private static void NotifySectionActivated(FrameworkElement section)
+    {
+        switch (section)
+        {
+            case HistoryPage { DataContext: HistoryViewModel hvm } when hvm.IsDirty:
+                hvm.IsDirty = false;
+                _ = hvm.LoadAsync(reset: true);
+                break;
+            case FavoritesPage { DataContext: FavoritesViewModel fvm } when fvm.IsDirty:
+                fvm.IsDirty = false;
+                _ = fvm.LoadAsync();
+                break;
+            case WatchLaterPage { DataContext: WatchLaterViewModel wvm } when wvm.IsDirty:
+                wvm.IsDirty = false;
+                _ = wvm.LoadAsync();
+                break;
+        }
     }
 
     public void SelectSection(PageKey key)
@@ -246,7 +272,7 @@ public partial class MinePage : UserControl
         else
         {
             ClearPeerSection();
-            _slide.X = dx * SwipeEdgeResist;
+            _slide.X = HorizontalSwipePhysics.RubberBand(dx, width);
         }
     }
 
@@ -329,7 +355,7 @@ public partial class MinePage : UserControl
             target == CurrentTabIndex ? 0 : (target > CurrentTabIndex ? -1 : 1) * width,
             TimeSpan.FromMilliseconds(140))
         {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            EasingFunction = HorizontalSwipePhysics.SnapEase
         };
 
         var done = false;

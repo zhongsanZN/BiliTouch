@@ -42,7 +42,9 @@ public sealed class MessageUnreadService : ObservableObject
     public void Start()
     {
         if (_timer != null) return;
-        Svc.Session.Changed += OnAccountChanged;
+        // 订阅 AccountChanged 而非 Changed: 风控 Cookie 后台补齐(BackfillRiskCookies)只补设备字段、
+        // 并不切换账号，不应该把当前未读红点闪清归零再多拉一轮。
+        Svc.Session.AccountChanged += OnSessionAccountChanged;
         _timer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher) { Interval = TimeSpan.FromSeconds(45) };
         _timer.Tick += (_, _) => _ = RefreshAsync();
         _timer.Start();
@@ -52,9 +54,11 @@ public sealed class MessageUnreadService : ObservableObject
     public void Stop()
     {
         _timer?.Stop(); _timer = null;
-        Svc.Session.Changed -= OnAccountChanged;
+        Svc.Session.AccountChanged -= OnSessionAccountChanged;
         ++_generation; _again = false;
     }
+
+    private void OnSessionAccountChanged(object? sender, EventArgs e) => OnAccountChanged();
 
     private void OnAccountChanged()
     {
@@ -97,7 +101,16 @@ public sealed class MessageUnreadService : ObservableObject
         }
         finally
         {
-            await _dispatcher.InvokeAsync(() => { _refresh = null; completion.TrySetResult(); });
+            if (!_dispatcher.HasShutdownStarted && !_dispatcher.HasShutdownFinished)
+            {
+                try { await _dispatcher.InvokeAsync(() => { _refresh = null; completion.TrySetResult(); }); }
+                catch { _refresh = null; completion.TrySetResult(); }
+            }
+            else
+            {
+                _refresh = null;
+                completion.TrySetResult();
+            }
         }
     }
 

@@ -78,13 +78,33 @@ public sealed class LiveOverlayRenderer : IDisposable
         if (_disposed || string.IsNullOrWhiteSpace(message)) return;
         if (_canvas.ActualWidth < 1 || _canvas.ActualHeight < 1)
         {
-            // 预加载阶段: 画布还没量出尺寸。留最近 24 条, 多了没有意义(同屏也就十几条)。
+            // 预加载阶段: 画布还没量出尺寸。留最近 24 条；不挂 Rendering 帧回调避免最小化/隐藏时 60~144Hz 空转，
+            // 等画布 SizeChanged 恢复有效尺寸后自动排干。
             if (_pending.Count >= 24) _pending.Dequeue();
             _pending.Enqueue((message, color));
-            EnsureClock();
+            EnsureSizeHook();
             return;
         }
         Emit(message, color);
+    }
+
+    private bool _sizeHooked;
+    private void EnsureSizeHook()
+    {
+        if (_sizeHooked || _disposed) return;
+        _sizeHooked = true;
+        _canvas.SizeChanged += OnCanvasSizeChanged;
+    }
+
+    private void OnCanvasSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_disposed || _pending.Count == 0) return;
+        if (_canvas.ActualWidth < 1 || _canvas.ActualHeight < 1) return;
+        while (_pending.Count > 0)
+        {
+            var (message, color) = _pending.Dequeue();
+            Emit(message, color);
+        }
     }
 
     private void Emit(string message, uint color)
@@ -150,8 +170,9 @@ public sealed class LiveOverlayRenderer : IDisposable
             else item.move.X = x;
         }
 
-        // 没东西可动就停表: 直播挂机时不空转 UI 线程。
-        if (_items.Count == 0 && _pending.Count == 0) StopClock();
+        // 没东西可动（或画布已不可见）就停表: 直播挂机/最小化时不空转 UI 线程。
+        if (_items.Count == 0 && (_pending.Count == 0 || _canvas.ActualWidth < 1 || _canvas.ActualHeight < 1))
+            StopClock();
     }
 
     private void WatchdogTick()
@@ -194,6 +215,11 @@ public sealed class LiveOverlayRenderer : IDisposable
     public void Dispose()
     {
         _disposed = true;
+        if (_sizeHooked)
+        {
+            _sizeHooked = false;
+            _canvas.SizeChanged -= OnCanvasSizeChanged;
+        }
         Clear();
     }
 }

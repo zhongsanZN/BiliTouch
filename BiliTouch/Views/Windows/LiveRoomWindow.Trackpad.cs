@@ -12,18 +12,37 @@ public partial class LiveRoomWindow
  private void HookLiveTrackpad(Window overlay)
  {
   overlay.PreviewMouseWheel+=LivePrecisionWheel;
+  overlay.SourceInitialized-=OnLiveOverlaySourceInitialized;
+  _liveOverlaySource=PresentationSource.FromVisual(overlay) as HwndSource;
+  if(_liveOverlaySource!=null)_liveOverlaySource.AddHook(LiveOverlayWheelHook);
+  else overlay.SourceInitialized+=OnLiveOverlaySourceInitialized;
+ }
+ private void OnLiveOverlaySourceInitialized(object? sender,EventArgs e)
+ {
+  if(sender is not Window overlay || IsClosing)return;
+  overlay.SourceInitialized-=OnLiveOverlaySourceInitialized;
+  if(_liveOverlaySource!=null)return;
   _liveOverlaySource=PresentationSource.FromVisual(overlay) as HwndSource;
   _liveOverlaySource?.AddHook(LiveOverlayWheelHook);
  }
  private void UnhookLiveTrackpad()
  {
-  if(_liveOverlayWindow!=null)_liveOverlayWindow.PreviewMouseWheel-=LivePrecisionWheel;
+  if(_liveOverlayWindow!=null)
+  {
+   _liveOverlayWindow.PreviewMouseWheel-=LivePrecisionWheel;
+   _liveOverlayWindow.SourceInitialized-=OnLiveOverlaySourceInitialized;
+  }
   _liveOverlaySource?.RemoveHook(LiveOverlayWheelHook);_liveOverlaySource=null;
   _liveWheelIdle?.Stop();_liveGestureHide?.Stop();
  }
  private IntPtr LiveOverlayWheelHook(IntPtr hwnd,int message,IntPtr wParam,IntPtr lParam,ref bool handled)
  {
-  if(message==0x020E){OnHorizontalWheel(unchecked((short)((wParam.ToInt64()>>16)&0xffff)));handled=true;}return IntPtr.Zero;
+  if(message==0x020E && !IsClosing && !_full && VideoOverlay.IsMouseOver)
+  {
+   OnHorizontalWheel(unchecked((short)((wParam.ToInt64()>>16)&0xffff)));
+   handled=true;
+  }
+  return IntPtr.Zero;
  }
  private void RestartLiveWheelGesture()
  {

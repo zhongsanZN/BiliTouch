@@ -112,6 +112,8 @@ public class RegionViewModel : ObservableObject
         };
     }
 
+    private int _loadGen;
+
     /// <summary>切到某个分区。同一个分区且已加载过 → 直接返回</summary>
     public async Task OpenAsync(string name, int tid)
     {
@@ -135,21 +137,21 @@ public class RegionViewModel : ObservableObject
 
     /// <summary>
     /// 滚到底部时补下一页。
-    ///
-    /// ★ 与首页/搜索同款的多道闸: 请求在飞 / 已到头 / 尚未加载出首屏 都直接返回。
-    ///   没有它们, 内容不足一屏时会"补了还是短"→ 立刻再来一次, 表现是页面自己在不停加载。
     /// </summary>
     public async Task LoadMoreAsync()
     {
         if (_tid <= 0 || _loading || _loadingMore || _noMore || Items.Count == 0) return;
 
+        var gen = _loadGen;
+        var tid = _tid;
+        var page = _nextPage;
         LoadingMore = true;
         try
         {
-            var (ok, err, items) = await Svc.Api.GetRegionFeedAsync(_tid, _nextPage);
+            var (ok, err, items) = await Svc.Api.GetRegionFeedAsync(tid, page);
+            if (gen != _loadGen || tid != _tid) return;
             if (!ok)
             {
-                // 补页失败不改首屏内容, 只把错误挂出来(页面在底部显示一句, 不盖掉已有卡片)
                 Error = err ?? "加载失败";
                 return;
             }
@@ -161,11 +163,8 @@ public class RegionViewModel : ObservableObject
                 return;
             }
 
-            // 游标只在**成功取到一页**时推进: 失败重试时应该还请求同一页
-            _nextPage++;
+            _nextPage = page + 1;
 
-            // 去重: 服务端在滚动推荐池, 深页会跟前面重复(实测第 20 页仍有 2 条新的, 说明
-            // 重复是常态而不是异常)。不去重会在列表里出现两张一模一样的卡片。
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var it in Items) seen.Add(it.Bvid);
             var added = 0;
@@ -174,54 +173,56 @@ public class RegionViewModel : ObservableObject
 
             Error = "";
 
-            // 到头的两个判据: 不足一页(池子见底), 或整页全是重复(池子已经滚回原处)。
-            // ★ 后一条是必需的: 实测深页会变成"每页 20 条里只有 2 条新的",
-            //   没有它就会一直拉下去 —— 用户滚到底看到的是"页面自己在不停加载"。
             if (items.Count < ApiClient.RegionPageSize || added == 0) _noMore = true;
 
             OnPropertyChanged(nameof(HasMore));
         }
         catch (Exception ex)
         {
-            Error = ex.Message;
+            if (gen == _loadGen && tid == _tid) Error = ex.Message;
         }
         finally
         {
-            LoadingMore = false;
+            if (gen == _loadGen && tid == _tid) LoadingMore = false;
         }
     }
 
     private async Task LoadAsync()
     {
         if (_tid <= 0) return;
+        var gen = ++_loadGen;
+        var tid = _tid;
         Loading = true;
+        LoadingMore = false;
         Error = "";
         Items.Clear();
         try
         {
-            var (ok, err, items) = await Svc.Api.GetRegionFeedAsync(_tid, 1);
+            var (ok, err, items) = await Svc.Api.GetRegionFeedAsync(tid, 1);
+            if (gen != _loadGen || tid != _tid) return;
             if (items == null || items.Count == 0)
             {
-                // ★ 两种"空"要分开说: ok=true 而 0 条 = 服务端这个分区此刻就是空的;
-                //   ok=false = 请求失败(风控/网络)。混成一句会让人查错方向。
                 Error = ok ? "这个分区暂时没有内容" : (err ?? "加载失败");
             }
             else
             {
                 foreach (var it in items) Items.Add(it);
                 _loaded = true;
-                _nextPage = 2;                                  // 第一页已消费
+                _nextPage = 2;
                 if (items.Count < ApiClient.RegionPageSize) _noMore = true;
             }
         }
         catch (Exception ex)
         {
-            Error = ex.Message;
+            if (gen == _loadGen && tid == _tid) Error = ex.Message;
         }
         finally
         {
-            Loading = false;
-            OnPropertyChanged(nameof(HasMore));
+            if (gen == _loadGen && tid == _tid)
+            {
+                Loading = false;
+                OnPropertyChanged(nameof(HasMore));
+            }
         }
     }
 }

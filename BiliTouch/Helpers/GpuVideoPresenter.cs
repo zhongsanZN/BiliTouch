@@ -44,7 +44,7 @@ internal sealed class GpuVideoPresenter : IDisposable
     public int Width { get; private set; }
     public int Height { get; private set; }
     private int _inputWidth, _inputHeight;
-    private bool _disposed;
+    private volatile bool _disposed;
     public GpuVideoPresenter()
     {
         try
@@ -93,39 +93,47 @@ internal sealed class GpuVideoPresenter : IDisposable
         if (_inputWidth == width && _inputHeight == height && Width == outputWidth && Height == outputHeight) return;
         if (_pending) throw new InvalidOperationException("Previous GPU frame has not completed");
         ReleaseFrame();
-        _inputWidth = width; _inputHeight = height;
-        Width = outputWidth; Height = outputHeight;
-        IntPtr shared = IntPtr.Zero;
-        _texture9 = _device9.CreateTexture((uint)outputWidth, (uint)outputHeight, 1, Vortice.Direct3D9.Usage.RenderTarget,
-            D3D9Format.A8R8G8B8, Pool.Default, ref shared);
-        _surface9 = _texture9.GetSurfaceLevel(0);
-        _output = _device.OpenSharedResource<ID3D11Texture2D>(shared);
-        _input = _device.CreateTexture2D(new Texture2DDescription {
-            Width = (uint)width, Height = (uint)((height + 31) & ~31), MipLevels = 1, ArraySize = 1,
-            Format = Format.NV12, SampleDescription = new SampleDescription(1, 0),
-            Usage = ResourceUsage.Default, BindFlags = BindFlags.Decoder });
-        var description = new VideoProcessorContentDescription {
-            InputFrameFormat = VideoFrameFormat.Progressive, InputWidth = (uint)width, InputHeight = (uint)height,
-            OutputWidth = (uint)outputWidth, OutputHeight = (uint)outputHeight,
-            InputFrameRate = new Rational(60, 1), OutputFrameRate = new Rational(60, 1), Usage = VideoUsage.PlaybackNormal };
-        _enumerator = _videoDevice.CreateVideoProcessorEnumerator<ID3D11VideoProcessorEnumerator>(description);
-        _videoDevice.CreateVideoProcessor(_enumerator, 0, out _processor).CheckError();
-        _inputView = _videoDevice.CreateVideoProcessorInputView(_input, _enumerator,
-            new VideoProcessorInputViewDescription { ViewDimension = VideoProcessorInputViewDimension.Texture2D });
-        _outputView = _videoDevice.CreateVideoProcessorOutputView(_output, _enumerator,
-            new VideoProcessorOutputViewDescription { ViewDimension = VideoProcessorOutputViewDimension.Texture2D });
-        var rect = new Vortice.RawRect(0, 0, width, height);
-        _videoContext.VideoProcessorSetStreamFrameFormat(_processor, 0, VideoFrameFormat.Progressive);
-        _videoContext.VideoProcessorSetStreamSourceRect(_processor, 0, true, rect);
-        _videoContext.VideoProcessorSetStreamDestRect(_processor, 0, true, new Vortice.RawRect(0, 0, outputWidth, outputHeight));
-        _videoContext.VideoProcessorSetStreamAutoProcessingMode(_processor, 0, false);
-        _videoContext.VideoProcessorSetStreamColorSpace1(_processor, 0, height >= 720
-            ? ColorSpaceType.YcbcrStudioG22LeftP709 : ColorSpaceType.YcbcrStudioG22LeftP601);
-        _videoContext.VideoProcessorSetOutputColorSpace1(_processor, ColorSpaceType.RgbFullG22NoneP709);
-        _videoContext.VideoProcessorSetOutputAlphaFillMode(_processor, VideoProcessorAlphaFillMode.Opaque, 0);
-        Image.Lock();
-        try { Image.SetBackBuffer(D3DResourceType.IDirect3DSurface9, _surface9.NativePointer, true); }
-        finally { Image.Unlock(); }
+        try
+        {
+            IntPtr shared = IntPtr.Zero;
+            _texture9 = _device9.CreateTexture((uint)outputWidth, (uint)outputHeight, 1, Vortice.Direct3D9.Usage.RenderTarget,
+                D3D9Format.A8R8G8B8, Pool.Default, ref shared);
+            _surface9 = _texture9.GetSurfaceLevel(0);
+            _output = _device.OpenSharedResource<ID3D11Texture2D>(shared);
+            _input = _device.CreateTexture2D(new Texture2DDescription {
+                Width = (uint)width, Height = (uint)((height + 31) & ~31), MipLevels = 1, ArraySize = 1,
+                Format = Format.NV12, SampleDescription = new SampleDescription(1, 0),
+                Usage = ResourceUsage.Default, BindFlags = BindFlags.Decoder });
+            var description = new VideoProcessorContentDescription {
+                InputFrameFormat = VideoFrameFormat.Progressive, InputWidth = (uint)width, InputHeight = (uint)height,
+                OutputWidth = (uint)outputWidth, OutputHeight = (uint)outputHeight,
+                InputFrameRate = new Rational(60, 1), OutputFrameRate = new Rational(60, 1), Usage = VideoUsage.PlaybackNormal };
+            _enumerator = _videoDevice.CreateVideoProcessorEnumerator<ID3D11VideoProcessorEnumerator>(description);
+            _videoDevice.CreateVideoProcessor(_enumerator, 0, out _processor).CheckError();
+            _inputView = _videoDevice.CreateVideoProcessorInputView(_input, _enumerator,
+                new VideoProcessorInputViewDescription { ViewDimension = VideoProcessorInputViewDimension.Texture2D });
+            _outputView = _videoDevice.CreateVideoProcessorOutputView(_output, _enumerator,
+                new VideoProcessorOutputViewDescription { ViewDimension = VideoProcessorOutputViewDimension.Texture2D });
+            var rect = new Vortice.RawRect(0, 0, width, height);
+            _videoContext.VideoProcessorSetStreamFrameFormat(_processor, 0, VideoFrameFormat.Progressive);
+            _videoContext.VideoProcessorSetStreamSourceRect(_processor, 0, true, rect);
+            _videoContext.VideoProcessorSetStreamDestRect(_processor, 0, true, new Vortice.RawRect(0, 0, outputWidth, outputHeight));
+            _videoContext.VideoProcessorSetStreamAutoProcessingMode(_processor, 0, false);
+            _videoContext.VideoProcessorSetStreamColorSpace1(_processor, 0, height >= 720
+                ? ColorSpaceType.YcbcrStudioG22LeftP709 : ColorSpaceType.YcbcrStudioG22LeftP601);
+            _videoContext.VideoProcessorSetOutputColorSpace1(_processor, ColorSpaceType.RgbFullG22NoneP709);
+            _videoContext.VideoProcessorSetOutputAlphaFillMode(_processor, VideoProcessorAlphaFillMode.Opaque, 0);
+            Image.Lock();
+            try { Image.SetBackBuffer(D3DResourceType.IDirect3DSurface9, _surface9.NativePointer, true); }
+            finally { Image.Unlock(); }
+            _inputWidth = width; _inputHeight = height;
+            Width = outputWidth; Height = outputHeight;
+        }
+        catch
+        {
+            ReleaseFrame();
+            throw;
+        }
     }
     public bool Begin(IntPtr pixels, int pitch)
     {
@@ -191,16 +199,30 @@ internal sealed class GpuVideoPresenter : IDisposable
     private void ReleaseFrame()
     {
         Image.Lock(); try { Image.SetBackBuffer(D3DResourceType.IDirect3DSurface9, IntPtr.Zero); } finally { Image.Unlock(); }
-        _outputView?.Dispose(); _inputView?.Dispose(); _processor?.Dispose(); _enumerator?.Dispose();
-        _input?.Dispose(); _output?.Dispose(); _surface9?.Dispose(); _texture9?.Dispose();
+        _outputView?.Dispose(); _outputView = null;
+        _inputView?.Dispose(); _inputView = null;
+        _processor?.Dispose(); _processor = null;
+        _enumerator?.Dispose(); _enumerator = null;
+        _input?.Dispose(); _input = null;
+        _output?.Dispose(); _output = null;
+        _surface9?.Dispose(); _surface9 = null;
+        _texture9?.Dispose(); _texture9 = null;
+        _inputWidth = _inputHeight = Width = Height = 0;
     }
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
         Image.IsFrontBufferAvailableChanged -= OnFrontBufferAvailableChanged;
-        if (_pending) { _pending = false; Image.Unlock(); }
-        _completionWait?.Unregister(null);
+        if (_pending)
+        {
+            // 先让 GPU 完成挂起信号，再关闭内核事件句柄，避免 SetEventOnCompletion 访问已关闭句柄
+            try { _context?.Flush(); _frameReady.WaitOne(50); } catch { }
+            _pending = false;
+            try { Image.Unlock(); } catch { }
+        }
+        using var unregistered = new ManualResetEvent(false);
+        if (_completionWait?.Unregister(unregistered) == true) unregistered.WaitOne(50);
         ReleaseFrame(); _fence?.Dispose(); _fenceContext?.Dispose(); _frameReady.Dispose();
         _videoContext?.Dispose(); _videoDevice?.Dispose();
         _context?.ClearState(); _context?.Flush();

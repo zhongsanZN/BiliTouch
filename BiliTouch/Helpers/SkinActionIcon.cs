@@ -8,6 +8,12 @@ namespace BiliTouch.Helpers;
 /// <summary>Shared semantic action and playback artwork with native geometry fallback.</summary>
 public sealed class SkinActionIcon : Shape
 {
+ static SkinActionIcon()
+ {
+  // Shape 默认 Stretch=None；全局图标几何（LikeIconGeometry 等）是 1024x1024 坐标系，
+  // 漏写 Stretch="Uniform" 时图形会被画到 16x16 视口之外导致默认主题下完全消失。
+  StretchProperty.OverrideMetadata(typeof(SkinActionIcon), new FrameworkPropertyMetadata(Stretch.Uniform));
+ }
  public static readonly DependencyProperty DataProperty=DependencyProperty.Register(nameof(Data),typeof(Geometry),typeof(SkinActionIcon),new FrameworkPropertyMetadata(Geometry.Empty,FrameworkPropertyMetadataOptions.AffectsRender|FrameworkPropertyMetadataOptions.AffectsMeasure,(d,_)=>((SkinActionIcon)d).Refresh()));
  public Geometry Data{get=>(Geometry)GetValue(DataProperty);set=>SetValue(DataProperty,value);}
  public static readonly DependencyProperty KindProperty=DependencyProperty.Register(nameof(Kind),typeof(string),typeof(SkinActionIcon),new FrameworkPropertyMetadata("Like",FrameworkPropertyMetadataOptions.AffectsRender));
@@ -17,12 +23,20 @@ public sealed class SkinActionIcon : Shape
  public static readonly DependencyProperty IsActiveProperty=DependencyProperty.Register(nameof(IsActive),typeof(bool),typeof(SkinActionIcon),new FrameworkPropertyMetadata(false,FrameworkPropertyMetadataOptions.AffectsRender));
  public bool IsActive{get=>(bool)GetValue(IsActiveProperty);set=>SetValue(IsActiveProperty,value);}
  private static readonly Geometry ArtworkGeometry=CreateArtworkGeometry();
+ private static readonly Geometry PuzzleFallbackGeometry=CreatePuzzleFallbackGeometry();
  private static Geometry CreateArtworkGeometry(){var geometry=new RectangleGeometry(new Rect(0,0,1,1));geometry.Freeze();return geometry;}
- protected override Geometry DefiningGeometry=>Kind=="Play" && ThemedAsset!=null?ArtworkGeometry:Kind=="Puzzle" && Data==Geometry.Empty?Geometry.Parse("M0,0 H8 V8 H0 Z M12,0 H20 V8 H12 Z M0,12 H8 V20 H0 Z M12,12 H20 V20 H12 Z"):Data;
+ private static Geometry CreatePuzzleFallbackGeometry(){var geometry=Geometry.Parse("M0,0 H8 V8 H0 Z M12,0 H20 V8 H12 Z M0,12 H8 V20 H0 Z M12,12 H20 V20 H12 Z");geometry.Freeze();return geometry;}
+ protected override Geometry DefiningGeometry=>Kind=="Play" && ThemedAsset!=null?ArtworkGeometry:Kind=="Puzzle" && Data==Geometry.Empty?PuzzleFallbackGeometry:Data ?? Geometry.Empty;
  private bool _hasPlaybackSize;
  private double _baseWidth,_baseHeight;
  private Button? _playButton;
- public SkinActionIcon(){Loaded+=(_,_)=>{SkinService.Instance.Changed+=Refresh;Svc.Theme.ThemeChanged+=Refresh;Refresh();};Unloaded+=(_,_)=>{SkinService.Instance.Changed-=Refresh;Svc.Theme.ThemeChanged-=Refresh;if(_playButton!=null)_playButton.SizeChanged-=OnPlayButtonSize;_playButton=null;ClearGlow();};IsVisibleChanged+=(_,_)=>UpdatePlaybackSize();}
+ public SkinActionIcon()
+ {
+  Loaded+=(_,_)=>{SkinService.Instance.Changed+=Refresh;Svc.Theme.ThemeChanged+=Refresh;Refresh();};
+  Unloaded+=(_,_)=>{SkinService.Instance.Changed-=Refresh;Svc.Theme.ThemeChanged-=Refresh;if(_playButton!=null)_playButton.SizeChanged-=OnPlayButtonSize;_playButton=null;ClearGlow();};
+  IsVisibleChanged+=(_,_)=>{UpdatePlaybackSize();if(IsVisible)InvalidateVisual();};
+  DataContextChanged+=(_,_)=>{if(IsLoaded)InvalidateVisual();};
+ }
  private void OnPlayButtonSize(object sender,SizeChangedEventArgs e)=>UpdatePlaybackSize();
  private void Refresh(){ClearGlow();UpdatePlaybackSize();InvalidateMeasure();InvalidateVisual();}
  private void UpdatePlaybackSize()
@@ -66,17 +80,43 @@ public sealed class SkinActionIcon : Shape
  protected override void OnRender(DrawingContext dc)
  {
   if(Kind=="Play"){
-   if(ThemedAsset is {} play){if(play=="play")SkinService.Instance.DrawArtwork(dc,play,new Rect(RenderSize));else PhantomUiArtwork.Draw(dc,play,new Rect(RenderSize),Fill);}else base.OnRender(dc);
+   if(ThemedAsset is {} play)
+   {
+    try
+    {
+     if(play=="play")SkinService.Instance.DrawArtwork(dc,play,new Rect(RenderSize));
+     else PhantomUiArtwork.Draw(dc,play,new Rect(RenderSize),Fill);
+     return;
+    }
+    catch { }
+   }
+   base.OnRender(dc);
    return;
   }
   if(!SkinService.Instance.IsEnabled){base.OnRender(dc);return;}
   if(SkinService.Instance.IsPhantomBlade)
   {
-   if(ThemedAsset!=null)PhantomUiArtwork.DrawAction(dc,Kind,new Rect(RenderSize),IsActive,Count,IsCompact);else base.OnRender(dc);
+   if(ThemedAsset!=null && ActualWidth>0 && ActualHeight>0)
+   {
+    try { PhantomUiArtwork.DrawAction(dc,Kind,new Rect(RenderSize),IsActive,Count,IsCompact); return; }
+    catch { }
+   }
+   base.OnRender(dc);
    return;
   }
-  var name=Kind switch{"Coin"=>Count>1?"action_coins":"action_coin","Favorite"=>"action_favorite","Puzzle"=>"action_puzzle",_=>"action_like"};
-  var bitmap=SkinService.Instance.Image(name);var scale=Math.Min(ActualWidth/bitmap.PixelWidth,ActualHeight/bitmap.PixelHeight);
-  var w=bitmap.PixelWidth*scale;var h=bitmap.PixelHeight*scale;dc.DrawImage(bitmap,new Rect((ActualWidth-w)/2,(ActualHeight-h)/2,w,h));
+  try
+  {
+   var name=Kind switch{"Coin"=>Count>1?"action_coins":"action_coin","Favorite"=>"action_favorite","Puzzle"=>"action_puzzle",_=>"action_like"};
+   var bitmap=SkinService.Instance.Image(name);
+   if(bitmap.PixelWidth>0 && bitmap.PixelHeight>0 && ActualWidth>0 && ActualHeight>0)
+   {
+    var scale=Math.Min(ActualWidth/bitmap.PixelWidth,ActualHeight/bitmap.PixelHeight);
+    var w=bitmap.PixelWidth*scale;var h=bitmap.PixelHeight*scale;
+    dc.DrawImage(bitmap,new Rect((ActualWidth-w)/2,(ActualHeight-h)/2,w,h));
+    return;
+   }
+  }
+  catch { }
+  base.OnRender(dc);
  }
 }

@@ -41,7 +41,7 @@ public partial class DynamicFeedCard : UserControl
     {
         if (DataContext is not DynamicItem d) return;
         BiliTouch.Helpers.FilterService.Instance.BlockUp(d.AuthorName, d.AuthorMid);
-        Svc.Toast.Show("已屏蔽此 UP 主，可在首页屏蔽面板撤销");
+        Svc.Toast.Show("已屏蔽此 UP 主，可在「设置 → 数据」屏蔽面板撤销");
         e.Handled = true;
     }
 
@@ -50,7 +50,7 @@ public partial class DynamicFeedCard : UserControl
         if (DataContext is DynamicItem { Video: { } v })
         {
             BiliTouch.Helpers.FilterService.Instance.BlockTitle(v.Title);
-            Svc.Toast.Show("已屏蔽此视频标题，可在首页屏蔽面板撤销");
+            Svc.Toast.Show("已屏蔽此视频标题，可在「设置 → 数据」屏蔽面板撤销");
         }
         e.Handled = true;
     }

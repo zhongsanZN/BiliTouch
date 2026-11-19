@@ -15,8 +15,12 @@ namespace BiliTouch.Views.Pages;
 /// 右栏 = 选中对象的综合时间线或视频投稿。
 /// 选中态与数据都在 FollowViewModel; 这个 code-behind 只做事件转发、滚动加载与排版 chip 的选中态。
 /// </summary>
-public partial class FollowPage : UserControl
+public partial class FollowPage : UserControl, IHorizontalSwipeHost
 {
+    bool IHorizontalSwipeHost.ContainsSwipePoint(Point screenPoint) => ContainsSwipePoint(screenPoint);
+    void IHorizontalSwipeHost.PreviewHorizontalWheel(double progress) => PreviewHorizontalWheel(progress);
+    void IHorizontalSwipeHost.SettleHorizontalWheelPreview(bool commit) => SettleHorizontalWheelPreview(commit);
+    void IHorizontalSwipeHost.SettlePrecisionTouchpadPreview(bool commit) => SettlePrecisionTouchpadPreview(commit);
     private const double AutoLoadThreshold = 240;
 
     /// <summary>看板轮询间隔: "关注的主播开播了"要能自己冒出来, 不能靠用户去点刷新。</summary>
@@ -79,12 +83,7 @@ public partial class FollowPage : UserControl
     }
 
     private static ScrollViewer? FindScrollViewer(DependencyObject parent)
-    {
-        if (parent is ScrollViewer viewer) return viewer;
-        for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
-            if (FindScrollViewer(System.Windows.Media.VisualTreeHelper.GetChild(parent, i)) is { } child) return child;
-        return null;
-    }
+        => VisualTreeUtil.FindDescendant<ScrollViewer>(parent);
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
@@ -93,6 +92,8 @@ public partial class FollowPage : UserControl
         if (DataContext is FollowViewModel vm) vm.PropertyChanged -= OnFeedStateChanged;
         _liveBoardTimer?.Stop();
         _unreadTimer?.Stop();
+        _feedSwipeArmed = _feedSwipeDecided = _feedSwipeHorizontal = false;
+        RestoreFeedPanning();
     }
 
     private void StartPolling()
@@ -166,12 +167,16 @@ public partial class FollowPage : UserControl
         var detail = await Svc.Api.GetDynamicDetailAsync(id);
         if (detail.ok && detail.item is { } item)
         {
-            vm.Dynamics.Insert(0, item);
-            DynamicList.ScrollIntoView(item);
+            Svc.UserState.PublishDynamicCreated(item);
+            // 仅在全部动态视图（或正看着自己）下插入当前列表，避免把自己的动态插进其他 UP 的时间线
+            if (vm.SelectedUp == null || vm.SelectedUp.Mid == item.AuthorMid)
+            {
+                vm.Dynamics.Insert(0, item);
+                DynamicList.ScrollIntoView(item);
+            }
         }
         else
         {
-            // 拉不到就先把列表刷新一遍, 下一轮轮询会补上
             await vm.RefreshAsync();
         }
     }
@@ -268,6 +273,7 @@ public partial class FollowPage : UserControl
         {
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(
                 () => vm.RemoveUser(u));
+            Svc.UserState.PublishFollow(u.Mid, false);
             Svc.Toast.Show($"已取消关注 {u.Name}");
         }
         else
@@ -296,8 +302,8 @@ public partial class FollowPage : UserControl
 
     // ------------------------------------------------------------ 综合 / 视频 双页并排横滑与触控板跟手
 
-    private const double FeedSwipeRatio = 3.0 / 8.0;
-    private const double FeedEdgeResist = 0.35;
+    private const double FeedSwipeRatio = BiliTouch.Helpers.HorizontalSwipePhysics.CommitRatio;
+    private const double FeedEdgeResist = BiliTouch.Helpers.HorizontalSwipePhysics.EdgeResist;
 
     private Point _feedSwipeStart;
     private double _feedSwipeDx;
@@ -492,7 +498,7 @@ public partial class FollowPage : UserControl
 
         if (target is not (0 or 1))
         {
-            c.X = dx * FeedEdgeResist;
+            c.X = BiliTouch.Helpers.HorizontalSwipePhysics.RubberBand(dx, width);
             System.Windows.Data.BindingOperations.GetBindingExpression(other, VisibilityProperty)?.UpdateTarget();
             return;
         }
@@ -509,7 +515,7 @@ public partial class FollowPage : UserControl
         var other = vm.VideoOnly ? (FrameworkElement)DynamicList : VideoFeedScroll;
         var c = FeedTransform(current);
         var o = FeedTransform(other);
-        var ease = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut };
+        var ease = BiliTouch.Helpers.HorizontalSwipePhysics.SnapEase;
         var dur = TimeSpan.FromMilliseconds(160);
 
         var done = false;

@@ -151,9 +151,13 @@ public class ArticleViewModel : ObservableObject
 
     // ------------------------------------------------------------ 数据加载
 
+    private int _commentGen;
+
     public async Task LoadAsync()
     {
-        _loadCts?.Cancel();
+        var prevCts = _loadCts;
+        prevCts?.Cancel();
+        prevCts?.Dispose();
         var cts = _loadCts = new CancellationTokenSource();
 
         Loading = true;
@@ -207,13 +211,15 @@ public class ArticleViewModel : ObservableObject
 
     public async Task LoadCommentsAsync(bool reset = false)
     {
-        if (CommentsLoading) return;
+        if (!reset && CommentsLoading) return;
         if (string.IsNullOrEmpty(Detail.CommentOid) || Detail.CommentType <= 0)
         {
             CommentsHasMore = false;
             return;
         }
 
+        var gen = reset ? ++_commentGen : _commentGen;
+        var sort = SortMode;
         if (reset)
         {
             _commentPage = 1;
@@ -225,12 +231,14 @@ public class ArticleViewModel : ObservableObject
             return;
         }
 
+        var page = _commentPage;
         CommentsLoading = true;
         CommentLoadError = null;
         try
         {
             var r = await Svc.Api.GetDynamicRepliesAsync(
-                Detail.CommentOid, Detail.CommentType, _commentPage, SortMode);
+                Detail.CommentOid, Detail.CommentType, page, sort);
+            if (gen != _commentGen) return;
             if (!r.ok)
             {
                 CommentLoadError = r.err ?? "评论加载失败";
@@ -244,15 +252,15 @@ public class ArticleViewModel : ObservableObject
             CommentsHasMore = r.hasMore;
             _commentTotal = Math.Max(r.total, Detail.ReplyCount);
             OnPropertyChanged(nameof(CommentHeaderText));
-            _commentPage++;
+            _commentPage = page + 1;
         }
         catch (Exception ex)
         {
-            CommentLoadError = ex.Message;
+            if (gen == _commentGen) CommentLoadError = ex.Message;
         }
         finally
         {
-            CommentsLoading = false;
+            if (gen == _commentGen) CommentsLoading = false;
         }
     }
 

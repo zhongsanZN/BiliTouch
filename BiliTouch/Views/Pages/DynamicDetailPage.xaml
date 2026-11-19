@@ -125,7 +125,15 @@
          <ItemsControl ItemsSource="{Binding Pictures}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><Border Width="90" Height="80" Margin="3" helpers:Cover.Source="{Binding Url}" MouseLeftButtonUp="OnCommentPicture" Cursor="Hand"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
          <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
           <TextBlock Text="{Binding RcTime}" FontSize="11" VerticalAlignment="Center" Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,8,0" />
-          <Button Click="OnLike" IsEnabled="{Binding CanLike}" ToolTip="点赞/取消点赞" Style="{StaticResource SubtleButtonStyle}"><StackPanel Orientation="Horizontal"><helpers:SkinActionIcon Kind="Like" IsActive="{Binding IsLiked}" Width="16" Height="16" Margin="0,0,5,0" Fill="{DynamicResource TextSecondaryBrush}" Data="{StaticResource LikeIconGeometry}"/><TextBlock Text="{Binding LikeText}" Style="{StaticResource CommentReactionText}"/></StackPanel></Button>
+          <Button Click="OnLike" IsEnabled="{Binding CanLike}" ToolTip="点赞/取消点赞">
+           <Button.Style>
+            <Style TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+             <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+             <Style.Triggers><DataTrigger Binding="{Binding IsLiked}" Value="True"><Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}" /></DataTrigger></Style.Triggers>
+            </Style>
+           </Button.Style>
+           <StackPanel Orientation="Horizontal"><helpers:SkinActionIcon Kind="Like" IsActive="{Binding IsLiked}" Width="16" Height="16" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,5,0" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Data="{StaticResource LikeIconGeometry}"/><TextBlock Text="{Binding LikeText}" Style="{StaticResource CommentReactionText}" VerticalAlignment="Center"/></StackPanel>
+          </Button>
           <Button Content="回复" Click="OnReply" Style="{StaticResource SubtleButtonStyle}" Margin="6,0" />
          </StackPanel>
          <ItemsControl ItemsSource="{Binding Replies}" ItemTemplate="{StaticResource ReplyTemplate}" />

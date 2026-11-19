@@ -20,6 +20,12 @@ public sealed class PersonalHomeViewModel : ObservableObject
         Videos.CollectionChanged+=(_,_)=>OnPropertyChanged(nameof(ShowEmpty));
         WeakEventManager<SessionManager, EventArgs>.AddHandler(Svc.Session,
             nameof(SessionManager.AccountChanged), OnAccountChanged);
+        Svc.UserState.SubscribeFollow(this, change =>
+        {
+            if (!_statsKnown) return;
+            _following = Math.Max(0, _following + (change.Followed ? 1 : -1));
+            NotifyStats();
+        });
     }
     private void OnAccountChanged(object? sender, EventArgs e)
     { ++_accountGeneration; Loading=false; _pendingRefresh=false; Clear(); IsLoggedIn=Svc.Session.HasLogin; }
@@ -81,7 +87,16 @@ public sealed class PersonalHomeViewModel : ObservableObject
             var seen=Videos.Select(v=>v.Bvid).ToHashSet();foreach(var v in items)if(seen.Add(v.Bvid))Videos.Add(v);
             _page++;_more=items.Count>=30;
         }
-        finally{if(account.IsCurrent && generation==_accountGeneration){Loading=false;OnPropertyChanged(nameof(ShowEmpty));}}
+        catch(Exception ex){if(mid==Mid && account.IsCurrent && generation==_accountGeneration)Error=ex.Message;}
+        finally
+        {
+            if(account.IsCurrent && generation==_accountGeneration)
+            {
+                Loading=false;
+                OnPropertyChanged(nameof(ShowEmpty));
+                if(_pendingRefresh){_pendingRefresh=false;_=RefreshAsync();}
+            }
+        }
     }
     public void Clear()
     { _statsKnown=_videoCountKnown=false;Videos.Clear();Name=Face=Sign=Error="";Mid=0;_following=_followers=_videoCount=0;_page=0;_more=true;NotifyStats();OnPropertyChanged(nameof(ShowEmpty)); }

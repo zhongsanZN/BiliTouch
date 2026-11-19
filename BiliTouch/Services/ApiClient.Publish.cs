@@ -159,10 +159,16 @@ public partial class ApiClient
     /// </summary>
     public async Task<(bool ok, string? err, DynamicImageUpload? image)> UploadDynamicImageAsync(string filePath)
     {
+        var account = SessionManager.Instance.CaptureAccount();
         if (!SessionManager.Instance.HasLogin) return (false, "上传图片需要先登录", null);
         if (!File.Exists(filePath)) return (false, "找不到这个文件", null);
 
-        var bytes = await File.ReadAllBytesAsync(filePath);
+        // 先检查文件大小再读入内存，避免选到超大文件直接把进程打 OOM
+        var info = new FileInfo(filePath);
+        if (info.Length == 0) return (false, "图片是空文件", null);
+        if (info.Length > 20 * 1024 * 1024) return (false, "图片超过 20MB, 传不上去", null);
+
+        var bytes = await File.ReadAllBytesAsync(filePath).ConfigureAwait(false);
         if (bytes.Length == 0) return (false, "图片是空文件", null);
         if (bytes.Length > 20 * 1024 * 1024) return (false, "图片超过 20MB, 传不上去", null);
 
@@ -171,7 +177,8 @@ public partial class ApiClient
 
         try
         {
-            await EnsureWriteReadyAsync();
+            await EnsureWriteReadyAsync().ConfigureAwait(false);
+            if (!account.IsCurrent) return (false, "账号已切换，上传已停止", null);
             using var form = new MultipartFormDataContent();
             var fileContent = new ByteArrayContent(bytes);
             fileContent.Headers.ContentType = new MediaTypeHeaderValue(GuessMimeType(filePath));
@@ -188,14 +195,17 @@ public partial class ApiClient
             request.Headers.TryAddWithoutValidation("Origin", "https://t.bilibili.com");
             request.Content = form;
 
-            await ThrottleAsync();
-            using var response = await _http.SendAsync(request);
-            var text = await response.Content.ReadAsStringAsync();
+            using var response = await SendThrottledAsync(request, expectedAccount: account).ConfigureAwait(false);
+            if (response == null) return (false, "账号已切换，上传已停止", null);
+            var text = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (!account.IsCurrent) return (false, "账号已切换，上传已停止", null);
             using var document = JsonDocument.Parse(text);
             var root = document.RootElement;
             var code = root.TryGetProperty("code", out var c) ? c.GetInt32() : -999;
             var message = root.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String
                 ? m.GetString() : null;
+            if (code == RiskRateLimitedCode)
+                RateLimiter.Penalize(TimeSpan.FromMilliseconds(RiskBackoffMs * 2));
             if (code != 0)
                 return (false, UploadFriendlyError(code, message), null);
             if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
@@ -285,12 +295,31 @@ public partial class ApiClient
                     i += 2 + size;
                 }
             }
-            // WebP: RIFF....WEBP, VP8X 段带 24 位宽高
-            if (bytes.Length > 30 && bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[8] == 0x57)
+            // WebP: RIFF....WEBP，区分 VP8X / VP8 (有损) / VP8L (无损) 三种头部，避免错读成数百万像素
+            if (bytes.Length >= 30 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F' &&
+                bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P')
             {
-                var w = (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16)) + 1;
-                var h = (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16)) + 1;
-                return (w, h);
+                if (bytes[12] == 'V' && bytes[13] == 'P' && bytes[14] == '8' && bytes[15] == 'X')
+                {
+                    var w = (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16)) + 1;
+                    var h = (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16)) + 1;
+                    return (w, h);
+                }
+                if (bytes[12] == 'V' && bytes[13] == 'P' && bytes[14] == '8' && bytes[15] == ' ' &&
+                    bytes[23] == 0x9D && bytes[24] == 0x01 && bytes[25] == 0x2A)
+                {
+                    var w = (bytes[26] | (bytes[27] << 8)) & 0x3FFF;
+                    var h = (bytes[28] | (bytes[29] << 8)) & 0x3FFF;
+                    return (w, h);
+                }
+                if (bytes[12] == 'V' && bytes[13] == 'P' && bytes[14] == '8' && bytes[15] == 'L' &&
+                    bytes[20] == 0x2F)
+                {
+                    var bits = (uint)(bytes[21] | (bytes[22] << 8) | (bytes[23] << 16) | (bytes[24] << 24));
+                    var w = (int)(bits & 0x3FFF) + 1;
+                    var h = (int)((bits >> 14) & 0x3FFF) + 1;
+                    return (w, h);
+                }
             }
         }
         catch { /* 解析失败退回默认比例 */ }
@@ -319,13 +348,14 @@ public partial class ApiClient
             if (!string.IsNullOrEmpty(referer)) request.Headers.TryAddWithoutValidation("Referer", referer);
             request.Headers.TryAddWithoutValidation("Origin", OriginFor(referer));
             request.Content = new FormUrlEncodedContent(ps);
-            await ThrottleAsync();
-            using var response = await _http.SendAsync(request);
-            if (!account.IsCurrent) return (-101, "账号已切换，请重试", null);
+            using var response = await SendThrottledAsync(request, expectedAccount: account);
+            if (response == null || !account.IsCurrent) return (-101, "账号已切换，请重试", null);
             var text = await response.Content.ReadAsStringAsync();
             using var document = JsonDocument.Parse(text);
             var root = document.RootElement;
             var code = root.TryGetProperty("code", out var c) ? c.GetInt32() : -999;
+            if (code == RiskRateLimitedCode)
+                RateLimiter.Penalize(TimeSpan.FromMilliseconds(RiskBackoffMs * 2));
             var message = root.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String
                 ? m.GetString() : null;
             JsonElement? data = root.TryGetProperty("data", out var dd) && dd.ValueKind == JsonValueKind.Object

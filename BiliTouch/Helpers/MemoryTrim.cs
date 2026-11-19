@@ -70,7 +70,8 @@ public static class MemoryTrim
         if (BiliTouch.Services.VlcCore.HasActivePlayers) return;
         try
         {
-            var ws = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64;
+            using var proc = System.Diagnostics.Process.GetCurrentProcess();
+            var ws = proc.WorkingSet64;
             if (ws > 0 && ws < IdleReleaseMinWorkingSetBytes) return;
         }
         catch { }
@@ -78,7 +79,7 @@ public static class MemoryTrim
         var now = Environment.TickCount64;
         var last = Interlocked.Read(ref _lastIdleReleaseTick);
         if (last != 0 && now - last < IdleReleaseCooldownMs) return;
-        Interlocked.Exchange(ref _lastIdleReleaseTick, now);
+        if (Interlocked.CompareExchange(ref _lastIdleReleaseTick, now, last) != last) return;
         Request(releaseWorkingSet: true, heavy: true);
     }
 
@@ -90,7 +91,12 @@ public static class MemoryTrim
             // 否则重载那次会被前面那次的合并窗口吞掉。
             if (releaseWorkingSet) _releaseWorkingSet = true;
             if (heavy) _heavy = true;
-            if (_pending != null) return;
+            // 尾沿防抖(trailing-edge): 每次新请求都把倒计时推后 800ms，避免快速连续切页中途触发 GC。
+            if (_pending != null)
+            {
+                _pending.Change(800, Timeout.Infinite);
+                return;
+            }
 
             _pending = new Timer(_ =>
             {
@@ -171,7 +177,8 @@ public static class MemoryTrim
     {
         try
         {
-            EmptyWorkingSet(System.Diagnostics.Process.GetCurrentProcess().Handle);
+            using var proc = System.Diagnostics.Process.GetCurrentProcess();
+            EmptyWorkingSet(proc.Handle);
         }
         catch
         {

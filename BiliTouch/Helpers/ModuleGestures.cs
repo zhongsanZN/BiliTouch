@@ -95,11 +95,12 @@ internal sealed class ModuleGestures
         _fadeHide.Tick+=(_,_)=>{_fadeHide.Stop();if(!_refreshing && !_down && _wheel==0)_hint.Visibility=Visibility.Collapsed;};
         page.ManipulationStarting+=(_,e)=>{if(_pull){e.Cancel();e.Handled=true;}};
         page.PreviewTouchDown+=(_,e)=>{_touchContact=true;_lastTouchAt=Environment.TickCount64;Begin(e.GetTouchPoint(null).Position,e.OriginalSource as DependencyObject);_touchDevice=e.TouchDevice;};
-        page.PreviewTouchMove+=(_,e)=>{_lastTouchAt=Environment.TickCount64;if(Move(e.GetTouchPoint(null).Position)){e.Handled=true;e.TouchDevice.Capture(page);}};
-        page.PreviewTouchUp+=async(_,e)=>{_touchContact=false;if(!_down)return;var tap=!_held&&!_pull&&!_moved && _activate!=null?_item:null;var consumed=_held||_pull||tap!=null;var run=End();if(tap!=null)_activate?.Invoke(tap);if(consumed){_suppressMouseUntil=Environment.TickCount64+350;TouchSupport.CancelPendingTap();e.Handled=true;e.TouchDevice.Capture(null);}if(run)await RefreshAsync();};
+        page.PreviewTouchMove+=(_,e)=>{_lastTouchAt=Environment.TickCount64;if(Move(e.GetTouchPoint(null).Position)){e.Handled=true;if(!ReferenceEquals(e.TouchDevice.Captured,page))e.TouchDevice.Capture(page);}};
+        page.LostTouchCapture+=(_,e)=>{if(ReferenceEquals(e.OriginalSource,page) && (_pull || _down) && !_held)Reset();};
+        page.PreviewTouchUp+=async(_,e)=>{_touchContact=false;if(!_down)return;var tap=!_held&&!_pull&&!_moved && _activate!=null?_item:null;var consumed=_held||_pull||tap!=null;var run=End();if(tap!=null)_activate?.Invoke(tap);if(consumed){_suppressMouseUntil=Environment.TickCount64+350;TouchSupport.CancelPendingTap();e.Handled=true;if(ReferenceEquals(e.TouchDevice.Captured,page))e.TouchDevice.Capture(null);}if(run){try{await RefreshAsync();}catch{}}};
         page.PreviewMouseLeftButtonDown+=(_,e)=>{if(!TouchInProgress && !TouchSupport.IsTouchMouse(e))Begin(e.GetPosition(null),e.OriginalSource as DependencyObject);};
-        page.PreviewMouseMove+=(_,e)=>{if(!TouchInProgress && !TouchSupport.IsTouchMouse(e) && e.LeftButton==MouseButtonState.Pressed && Move(e.GetPosition(null))){e.Handled=true;page.CaptureMouse();}};
-        page.PreviewMouseLeftButtonUp+=async(_,e)=>{if(TouchInProgress || TouchSupport.IsTouchMouse(e)){if(Environment.TickCount64<_suppressMouseUntil)e.Handled=true;return;}if(!_down)return;var consumed=_held||_pull;var run=End();if(consumed){e.Handled=true;page.ReleaseMouseCapture();}if(run)await RefreshAsync();};
+        page.PreviewMouseMove+=(_,e)=>{if(!TouchInProgress && !TouchSupport.IsTouchMouse(e) && e.LeftButton==MouseButtonState.Pressed && Move(e.GetPosition(null))){e.Handled=true;if(!page.IsMouseCaptured)page.CaptureMouse();}};
+        page.PreviewMouseLeftButtonUp+=async(_,e)=>{if(TouchInProgress || TouchSupport.IsTouchMouse(e)){if(Environment.TickCount64<_suppressMouseUntil)e.Handled=true;return;}if(!_down)return;var consumed=_held||_pull;var run=End();if(consumed){e.Handled=true;if(page.IsMouseCaptured)page.ReleaseMouseCapture();}if(run){try{await RefreshAsync();}catch{}}};
         page.PreviewMouseWheel+=OnWheel;
         page.PreviewKeyDown+=async(_,e)=>{if(e.Key==Key.R && Keyboard.Modifiers==ModifierKeys.Control){e.Handled=true;await RefreshAsync();}};
         page.Unloaded+=(_,_)=>Reset();

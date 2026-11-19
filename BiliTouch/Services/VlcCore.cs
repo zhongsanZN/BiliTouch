@@ -144,7 +144,7 @@ public static class VlcCore
             };
             AppendOptionalDebugLogOptions(options);
             _vmemInstance = new LibVLC(options.ToArray());
-            VideoEnhancement.Observe(_vmemInstance, profile);
+            // vmem 不走 D3D11 交换链，不注册 VideoEnhancement.Observe，避免状态永久停留在"等待驱动确认"
             VideoDecode.Observe(_vmemInstance);
             return _vmemInstance;
         }

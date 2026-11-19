@@ -64,7 +64,8 @@ public static class PhantomUiArtwork
         var result=BitmapSource.Create(image.PixelWidth,image.PixelHeight,source.DpiX,source.DpiY,PixelFormats.Bgra32,null,pixels,stride);
         result.Freeze();return InactiveFlames[dark]=result;
     }
-    public static Brush Ink => Svc.Theme.IsDark?Brushes.White:new SolidColorBrush(Color.FromRgb(35,34,32));
+    private static readonly Brush LightInk = Freeze(35,34,32);
+    public static Brush Ink => Svc.Theme.IsDark?Brushes.White:LightInk;
     public static Brush Blue {get;}=Freeze(65,145,245);
     public static Brush Purple {get;}=Freeze(178,110,239);
     public static Brush Gold {get;}=Freeze(200,155,62);

@@ -91,7 +91,9 @@ public sealed class SponsorBlockService
     {
         if (string.IsNullOrEmpty(bvid) || cid <= 0) return Array.Empty<SponsorSegment>();
 
-        var key = bvid + "|" + cid;
+        // 服务端按 videoID=bvid 返回全部片段，按 bvid 缓存并共享在途请求，避免分 P 切换重复拉取；
+        // 同时将调用方 CancellationToken 与共享 HTTP 请求隔离，避免 A 取消误杀正在等待同一结果的 B。
+        var key = bvid;
         Task<IReadOnlyList<SponsorSegment>?> task;
         var owner = false;
 
@@ -100,11 +102,11 @@ public sealed class SponsorBlockService
             if (_cache.TryGetValue(key, out var cached)) return cached;
             if (_inflight.TryGetValue(key, out var running))
             {
-                task = running;         // 复用在跑的那次查询(由它负责清理登记)
+                task = running;
             }
             else
             {
-                task = QueryAsync(bvid, ct);
+                task = QueryAsync(bvid, CancellationToken.None);
                 _inflight[key] = task;
                 owner = true;
             }
@@ -113,19 +115,31 @@ public sealed class SponsorBlockService
         IReadOnlyList<SponsorSegment>? list;
         try
         {
-            list = await task.ConfigureAwait(false);
+            list = ct.CanBeCanceled
+                ? await task.WaitAsync(ct).ConfigureAwait(false)
+                : await task.ConfigureAwait(false);
         }
         catch
         {
-            list = null;                // 取消(换片/关窗)与网络失败走同一条路
+            list = null;
         }
-
-        if (owner)
+        finally
         {
-            lock (_gate) _inflight.Remove(key);
+            if (owner)
+            {
+                if (task.IsCompleted)
+                {
+                    lock (_gate) _inflight.Remove(key);
+                }
+                else
+                {
+                    _ = task.ContinueWith(_ => { lock (_gate) _inflight.Remove(key); },
+                        CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+                }
+            }
         }
 
-        if (list == null) return Array.Empty<SponsorSegment>();   // 失败不进缓存, 下次还能再试
+        if (list == null) return Array.Empty<SponsorSegment>();
 
         lock (_gate)
         {

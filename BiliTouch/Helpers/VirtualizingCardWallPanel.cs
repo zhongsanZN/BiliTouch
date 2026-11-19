@@ -227,22 +227,27 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
     private void CleanOutside(int first,int last)
     {
         var generator=ItemContainerGenerator;
+        var concrete=generator as ItemContainerGenerator;
         for(int i=InternalChildren.Count-1;i>=0;i--)
         {
-            var index=ItemContainerGenerator.IndexFromGeneratorPosition(new GeneratorPosition(i, 0));
+            var index=concrete!=null?concrete.IndexFromContainer(InternalChildren[i]):generator.IndexFromGeneratorPosition(new GeneratorPosition(i, 0));
             if(index<0) {RemoveInternalChildRange(i,1);continue;}
             if(index>=first && index<=last)continue;
             var position=generator.GeneratorPositionFromIndex(index);
-            if(generator is IRecyclingItemContainerGenerator recycling)recycling.Recycle(position,1);
-            else generator.Remove(position,1);
+            if(position.Offset==0)
+            {
+                if(generator is IRecyclingItemContainerGenerator recycling)recycling.Recycle(position,1);
+                else generator.Remove(position,1);
+            }
             RemoveInternalChildRange(i,1);
         }
     }
     protected override Size ArrangeOverride(Size finalSize)
     {
+        var concrete=ItemContainerGenerator as ItemContainerGenerator;
         for(int i=0;i<InternalChildren.Count;i++)
         {
-            var index=ItemContainerGenerator.IndexFromGeneratorPosition(new GeneratorPosition(i, 0));
+            var index=concrete!=null?concrete.IndexFromContainer(InternalChildren[i]):ItemContainerGenerator.IndexFromGeneratorPosition(new GeneratorPosition(i, 0));
             if(index<0)continue;
             InternalChildren[i].Arrange(new Rect(index%_columns*_slotWidth,index/_columns*_rowHeight,_slotWidth,_rowHeight));
         }
@@ -254,9 +259,20 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
         if(args.Action==NotifyCollectionChangedAction.Reset)RemoveInternalChildRange(0,InternalChildren.Count);
         else if(args.Action is NotifyCollectionChangedAction.Remove or NotifyCollectionChangedAction.Replace or NotifyCollectionChangedAction.Move)
         {
-            var at=Math.Max(0,args.Action==NotifyCollectionChangedAction.Move?args.OldPosition.Index:args.Position.Index);
-            var count=Math.Min(args.ItemUICount,InternalChildren.Count-at);
-            if(count>0)RemoveInternalChildRange(at,count);
+            if(ItemContainerGenerator is ItemContainerGenerator concrete)
+            {
+                for(int i=InternalChildren.Count-1;i>=0;i--)
+                    if(concrete.IndexFromContainer(InternalChildren[i])<0)RemoveInternalChildRange(i,1);
+            }
+            else
+            {
+                var raw=args.Action==NotifyCollectionChangedAction.Move?args.OldPosition.Index:args.Position.Index;
+                if(raw>=0 && raw<InternalChildren.Count)
+                {
+                    var count=Math.Min(args.ItemUICount,InternalChildren.Count-raw);
+                    if(count>0)RemoveInternalChildRange(raw,count);
+                }
+            }
         }
         InvalidateMeasure();
     }

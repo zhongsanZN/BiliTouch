@@ -408,6 +408,15 @@ public class ThemeService
             try { Invalidate(win); }
             catch { /* 单个窗口刷新失败不影响其它窗口 */ }
         }
+        // 主窗口 _pages 缓存的非当前页面暂时脱离可视树，一并失效刷新避免切回时闪旧主题
+        if (SvcWindow.Main is { } main)
+        {
+            foreach (var page in main.CachedPages)
+            {
+                try { Invalidate(page); }
+                catch { }
+            }
+        }
     }
 
     private static void Invalidate(DependencyObject node)
@@ -430,6 +439,11 @@ public class ThemeService
         else if (node is Panel p)
         {
             p.InvalidateProperty(Panel.BackgroundProperty);
+        }
+        else if (node is System.Windows.Shapes.Shape s)
+        {
+            s.InvalidateProperty(System.Windows.Shapes.Shape.FillProperty);
+            s.InvalidateProperty(System.Windows.Shapes.Shape.StrokeProperty);
         }
 
         // 只有"会缓存资源引用"的元素才需要递归; 其他类型直接跳过子树会漏掉深层控件,

@@ -39,9 +39,25 @@ public static class CoverLoader
         public long LastUse;
     }
 
+    private sealed class InFlightEntry
+    {
+        public Task<BitmapImage?> Task = null!;
+        public readonly List<LoadInterest?> Interests = new(2);
+
+        public bool IsAllAbandoned()
+        {
+            if (Interests.Count == 0) return false;
+            foreach (var item in Interests)
+            {
+                if (item == null || !item.IsAbandoned) return false;
+            }
+            return true;
+        }
+    }
+
     private static readonly Dictionary<string, Entry> MemCache = new();
     /// <summary>正在进行中的加载(键 = 缓存键)。同一张图被多处同时请求时共用一次下载+解码。</summary>
-    private static readonly Dictionary<string, Task<BitmapImage?>> InFlight = new();
+    private static readonly Dictionary<string, InFlightEntry> InFlight = new();
     private static readonly object Lock = new();
 
     /// <summary>
@@ -197,14 +213,21 @@ public static class CoverLoader
                 hit.LastUse = ++_clock;
                 return Task.FromResult<BitmapImage?>(hit.Image);
             }
-            // 并发去重: 同一个键已经有请求在跑, 直接复用它的 Task
+            // 并发去重: 同一个键已经有请求在跑, 直接复用它的 Task, 并把当前调用方的 interest 一并登记，
+            // 避免首个调用方滑出视口作废 interest 时误杀仍留在视口里的第二个调用方。
             var cacheKey = w > 0 ? $"{url}|w{w}" : url;
-            if (InFlight.TryGetValue(cacheKey, out var running)) return running;
+            if (InFlight.TryGetValue(cacheKey, out var running))
+            {
+                running.Interests.Add(interest);
+                return running.Task;
+            }
             // Reserve the in-flight entry before the worker can complete. Cold cache
             // directory and file probes must run off the input/layout thread.
-            var task = Task.Run(() => LoadCoreAsync(url, cacheKey, w, interest));
-            InFlight.Add(cacheKey, task);
-            return task;
+            var entry = new InFlightEntry();
+            entry.Interests.Add(interest);
+            entry.Task = Task.Run(() => LoadCoreAsync(url, cacheKey, w, entry));
+            InFlight.Add(cacheKey, entry);
+            return entry.Task;
         }
     }
 
@@ -252,7 +275,7 @@ public static class CoverLoader
     }
 
     private static async Task<BitmapImage?> LoadCoreAsync(string url, string cacheKey, int decodeWidth,
-                                                          LoadInterest? interest = null)
+                                                          InFlightEntry inFlight)
     {
         try
         {
@@ -262,26 +285,16 @@ public static class CoverLoader
             var cacheFile = isLocalFile
                 ? url
                 : Path.Combine(AppPaths.CacheDir, Hashing.Md5Hex(url) + ".jpg");
-            // ★★★ 下载与写盘分开记账(2026-10-11 修"封面加载不出来、标题却正常"):
-            //   原来这两句在同一个 try 里, 一旦 File.WriteAllBytesAsync 抛异常(缓存目录不可写/
-            //   磁盘满/被杀软锁住), 就走 catch 里的 `if (!File.Exists(cacheFile)) return null` ——
-            //   **明明已经把图片字节拿到手了, 却因为写不进磁盘而整张封面不显示**。
-            //   用户看到的就是"标题有(标题来自接口 JSON, 与图片链路无关)、封面一片灰"。
-            //   ⇒ 现在把字节留在 downloaded 里, 写盘失败就退回内存解码: 封面照常显示,
-            //     只是这一张不进磁盘缓存(下次再看会重新下载)。
             byte[]? downloaded = null;
             if (!isLocalFile && !File.Exists(cacheFile))
             {
-                // ★ 下载闸门(2026-11-08): 一次铺满一屏会同时发起 20+ 条 HTTP,
-                //   叠上滚动加载就是几十条。8 个并发既够跑满带宽, 又不至于把 CDN 惹毛
-                //   (突发并发是被判 -412 的常见原因之一)。
                 await DownloadSlots.WaitAsync().ConfigureAwait(false);
                 try
                 {
                     if (!File.Exists(cacheFile))
                     {
                         downloaded = await Http.GetByteArrayAsync(url).ConfigureAwait(false);
-                        await File.WriteAllBytesAsync(cacheFile, downloaded).ConfigureAwait(false);
+                        await AtomicFile.WriteAllBytesAsync(cacheFile, downloaded).ConfigureAwait(false);
                     }
                 }
                 catch
@@ -294,32 +307,22 @@ public static class CoverLoader
                 }
             }
 
-            // 解码放后台线程: 一张 1280 宽的 JPEG 解码要几毫秒到几十毫秒,
-            // 放在 UI 线程上会直接表现为滚动/切页的卡顿。
             BitmapImage? img = null;
             var haveFile = File.Exists(cacheFile);
             if (haveFile || downloaded != null)
             {
-                // ★★ 解码闸门 + 排队后复核(2026-11-08, 同 BiliDesk 1.7.0):
-                //
-                //   卡片是**一被添加就发起加载**的。滚动时几十上百张排队等槽, 轮到它们时
-                //   卡片早就被 VirtualizingCardWallPanel 回收给别的条目了 —— 那一份解码纯属白干,
-                //   而且它占着名额, 真正在视口里的图只能干等。
-                //   上游实测: 滚 6 页后 InFlight 积压 212 个任务, 回顶要等 2.3 秒。
-                //
-                //   ⇒ 拿到槽位后**先复核一次"还要不要"**, 不要就直接把槽让出去。
-                //   ★ 复核只读 interest 里那个 int(纯内存), **绝不碰 Border 的 DP** ——
-                //     这里是后台线程, 碰了就是上游 daa5a93 那个"封面永远灰"的事故。
                 await DecodeSlots.WaitAsync().ConfigureAwait(false);
                 try
                 {
-                    if (interest is { IsAbandoned: true })
+                    bool abandoned;
+                    lock (Lock) abandoned = inFlight.IsAllAbandoned();
+                    if (abandoned)
                     {
-                        // 放弃这一次解码 —— 但**不要把结果塞进缓存**(没解), 直接返回 null。
-                        // 调用方(Cover.LoadAsync)已经复核过源, 拿到 null 就自然什么都不做。
                         return null;
                     }
-                    img = haveFile ? FromFile(cacheFile, decodeWidth) : FromBytes(downloaded!, decodeWidth);
+                    img = downloaded != null
+                        ? FromBytes(downloaded, decodeWidth)
+                        : FromFile(cacheFile, decodeWidth);
                 }
                 finally
                 {
@@ -328,7 +331,7 @@ public static class CoverLoader
             }
             else
             {
-                img = null;   // 既没缓存也没下载到: 这才算真的取不到图
+                img = null;
             }
             if (img == null) return null;
 
@@ -938,7 +941,9 @@ public static class Cover
         var bmp = await CoverLoader.LoadAsync(url, Math.Clamp(GetImageDecodeWidth(image),16,1280));
         if (bmp == null) return;
 
-        await Application.Current.Dispatcher.InvokeAsync(() =>
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null) return;
+        await dispatcher.InvokeAsync(() =>
         {
             if (GetImageSource(image) != url) return; // 已换源, 放弃旧结果
             image.Source = bmp;

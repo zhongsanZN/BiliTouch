@@ -158,6 +158,9 @@ public class HistoryViewModel : VideoListSelectionViewModel
     /// <summary>删除按钮是否可用</summary>
     public bool CanOperate => !Busy;
 
+    /// <summary>播放器上报新观看记录后标脏，下次回到历史页自动同步。</summary>
+    public bool IsDirty { get; set; }
+
     public ICommand ReloadCommand { get; }
     public ICommand ToggleEditCommand { get; }
     public ICommand SelectAllCommand { get; }
@@ -190,6 +193,7 @@ public class HistoryViewModel : VideoListSelectionViewModel
         HookSelectionSource();
         WeakEventManager<SessionManager, EventArgs>.AddHandler(Svc.Session,
             nameof(SessionManager.AccountChanged), OnAccountChanged);
+        Svc.UserState.SubscribeHistory(this, _ => IsDirty = true);
     }
 
     private void OnAccountChanged(object? sender, EventArgs e)
@@ -239,15 +243,30 @@ public class HistoryViewModel : VideoListSelectionViewModel
         var page = reset ? 1 : _pn + 1;
         var account = Svc.Session.CaptureAccount();
 
-        var (ok, err, items) = kind == ContentKind.Live
-            ? await Svc.Api.GetLiveHistoryAsync(page)
-            : await Svc.Api.GetCloudHistoryAsync(page);
+        bool ok = false;
+        string? err = null;
+        List<VideoItem>? items = null;
+        try
+        {
+            (ok, err, items) = kind == ContentKind.Live
+                ? await Svc.Api.GetLiveHistoryAsync(page)
+                : await Svc.Api.GetCloudHistoryAsync(page);
+        }
+        catch (Exception ex)
+        {
+            err = ex.Message;
+        }
+        finally
+        {
+            if (gen == _generation && account.IsCurrent)
+            {
+                Loading = false;
+                LoadingMore = false;
+            }
+        }
 
         // 这一代已经被更新的一次加载取代了: 整包丢弃(别动 Loading —— 那是新那次的状态)
         if (gen != _generation || !account.IsCurrent) return;
-
-        Loading = false;
-        LoadingMore = false;
 
         if (ok && items != null)
         {

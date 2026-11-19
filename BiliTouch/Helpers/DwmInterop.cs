@@ -416,7 +416,7 @@ public static class DwmInterop
             //   ★ 边框同理: 客户区已扩到整窗, 那条 1px 的 DWM 边框会沿着窗口外缘压一圈
             //     (探针实测 VISIBLE_FRAME_BORDER_THICKNESS=1, 且第一行像素就是它的颜色)。
             //     自绘界面不需要它 —— 圆角由 SetRoundCorners 负责, 阴影由 DWM 保留。
-            HideNonClientDecorations(window);
+            if (on) HideNonClientDecorations(window);
 
             // ★★★ "失焦变灰"在这个函数里**修不了**, 别再往这里加代码(2026-10-06 第三次确认):
             //   现象: 窗口失焦后亚克力消失、整窗变灰(221,222,223)。

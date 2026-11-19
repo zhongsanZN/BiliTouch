@@ -75,6 +75,7 @@ public class HistorySyncService
         _lastReportAt = DateTime.UtcNow;
 
         var (ok, _) = await Svc.Api.ReportHistoryAsync(aid, cid, progressSeconds);
+        if (ok) Svc.UserState.PublishHistoryRecorded(aid);
         return ok;
     }
 
@@ -93,6 +94,7 @@ public class HistorySyncService
         _lastReportAt = DateTime.UtcNow;
 
         var (ok, _) = await Svc.Api.ReportHistoryAsync(aid, cid, progressSeconds);
+        if (ok) Svc.UserState.PublishHistoryRecorded(aid);
         return ok;
     }
 

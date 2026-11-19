@@ -182,7 +182,25 @@ public partial class PlayerWindow
         if (_commentsLoaded && !force) return;
         if (aidAtStart <= 0)
         {
-            CommentHint.Text = _isLocalPlayback ? "本地文件没有评论" : "未获取到视频 aid";
+            if (IsOfflineBiliMedia)
+            {
+                if (_offlineOnlineCts != null)
+                {
+                    CommentLoadingRing.Visibility = Visibility.Visible;
+                    CommentHint.Text = "正在联网加载评论…";
+                    BtnRetryComments.Visibility = Visibility.Collapsed;
+                }
+                else
+                {
+                    CommentLoadingRing.Visibility = Visibility.Collapsed;
+                    CommentHint.Text = "离线缓存未加载到在线评论（离线或网络不可用），联网后可点击重试";
+                    BtnRetryComments.Visibility = Visibility.Visible;
+                }
+            }
+            else
+            {
+                CommentHint.Text = _isLocalPlayback ? "本地文件没有评论" : "未获取到视频 aid";
+            }
             UpdateCommentSortUi(visible: false);
             return;
         }
@@ -371,7 +389,25 @@ public partial class PlayerWindow
         }
     }
 
-    private async void OnRetryCommentsClick(object sender, RoutedEventArgs e) => await LoadCommentsAsync(force: true);
+    private async void OnRetryCommentsClick(object sender, RoutedEventArgs e)
+    {
+        if (_aid <= 0 && IsOfflineBiliMedia && _currentOfflineEntry != null)
+        {
+            CommentHint.Text = "正在联网获取评论与弹幕…";
+            BtnRetryComments.Visibility = Visibility.Collapsed;
+            CommentLoadingRing.Visibility = Visibility.Visible;
+            await LoadOfflineOnlineContextAsync(_currentOfflineEntry, _loadGen, userInitiated: true);
+            if (_closing) return;
+            if (_aid <= 0)
+            {
+                CommentLoadingRing.Visibility = Visibility.Collapsed;
+                CommentHint.Text = "仍无法联网获取评论，请检查网络后重试";
+                BtnRetryComments.Visibility = Visibility.Visible;
+                return;
+            }
+        }
+        await LoadCommentsAsync(force: true);
+    }
 
     private void OnCommentSortHotClick(object sender, RoutedEventArgs e) => SetCommentSort(3);
 
@@ -748,7 +784,8 @@ public partial class PlayerWindow
         var flash = new DoubleAnimation(1, 0.35, TimeSpan.FromMilliseconds(140))
         {
             AutoReverse = true,
-            RepeatBehavior = new RepeatBehavior(2)
+            RepeatBehavior = new RepeatBehavior(2),
+            FillBehavior = FillBehavior.Stop
         };
         fe.BeginAnimation(UIElement.OpacityProperty, flash);
     }
@@ -899,7 +936,7 @@ public partial class PlayerWindow
     {
         if (_closing || CommentDraft == null) return;
 
-        var canCompose = Svc.Session.HasLogin && _aid > 0 && !_isLocalPlayback && !_isLive;
+        var canCompose = Svc.Session.HasLogin && CanUseOnlineComments;
         CommentDraft.IsEnabled = canCompose;
         // 提示文案要跟着"当前是发表还是回复"走, 否则回复态下还写着"Enter 发表"会让人困惑
         CommentPostHint.Text = _isLive
@@ -907,7 +944,7 @@ public partial class PlayerWindow
             : !Svc.Session.HasLogin
                 ? "登录后才能发表评论"
                 : _aid <= 0
-                    ? "没拿到视频 aid, 暂时不能评论"
+                    ? (IsOfflineBiliMedia ? "联网加载评论后可发表评论" : "没拿到视频 aid, 暂时不能评论")
                     : _replyTarget != null
                         ? "Enter 发送回复 · Shift+Enter 换行 · 点提示条上的“取消”改发评论"
                         : "Enter 发表 · Shift+Enter 换行";
@@ -973,7 +1010,7 @@ public partial class PlayerWindow
     private void UpdateCommentFabVisibility()
     {
         if (_closing || CommentFab == null) return;
-        var usable = !_isLive && !_isLocalPlayback && _aid > 0 &&
+        var usable = CanUseOnlineComments &&
                      CommentsPanel != null && CommentsPanel.Visibility == Visibility.Visible;
         CommentFab.Visibility = usable ? Visibility.Visible : Visibility.Collapsed;
         BtnBackToComments.Visibility = CommentsPanel?.Visibility == Visibility.Visible && IsCommentDetailOpen
@@ -992,8 +1029,8 @@ public partial class PlayerWindow
         // 与 UpdateCommentComposer 同一套前提; 不满足时说明原因(不展开空面板)
         if (!Svc.Session.HasLogin) { Svc.Toast.Show("登录后才能发表评论"); return; }
         if (_isLive) { Svc.Toast.Show("直播没有评论区"); return; }
-        if (_isLocalPlayback) { Svc.Toast.Show("本地文件没有评论区"); return; }
-        if (_aid <= 0) { Svc.Toast.Show("没拿到视频 aid, 暂时不能评论"); return; }
+        if (_isLocalPlayback && !IsOfflineBiliMedia) { Svc.Toast.Show("本地文件没有评论区"); return; }
+        if (_aid <= 0) { Svc.Toast.Show(IsOfflineBiliMedia ? "当前离线，联网加载评论后可发表" : "没拿到视频 aid, 暂时不能评论"); return; }
 
         OpenComposer();
     }
@@ -1138,13 +1175,15 @@ public partial class PlayerWindow
         var parentRpid = target?.Rpid ?? 0;
         var isReply = rootRpid > 0 && parentRpid > 0;
 
+        var postAid = _aid;
+        var postGen = _loadGen;
         _postingComment = true;
         PostCommentButton.Content = isReply ? "回复中…" : "发表中…";
         UpdatePostCommentButton();
         try
         {
-            var res = await Svc.Api.PostCommentDetailedAsync(_aid, text, rootRpid, parentRpid);
-            if (_closing) return;
+            var res = await Svc.Api.PostCommentDetailedAsync(postAid, text, rootRpid, parentRpid);
+            if (_closing || postAid != _aid || postGen != _loadGen) return;
             if (!res.Ok)
             {
                 var errMsg = res.Err ?? (isReply ? "回复发送失败" : "评论发表失败");

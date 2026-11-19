@@ -45,14 +45,24 @@ public partial class StarPartyPage : UserControl
         {
             if (_loadedOnce) return;
             _loadedOnce = true;
-            await LoadAsync(forceRefresh: false);
+            try { await LoadAsync(forceRefresh: false); }
+            catch (Exception ex)
+            {
+                ErrorText.Text = "星创组加载失败：" + ex.Message;
+                ErrorPanel.Visibility = Visibility.Visible;
+            }
         };
         Unloaded += (_, _) =>
         {
             DisposeAudioPlayer();
-            CloseEmbeddedGame(disposeWebView: true);
+            // 推入内嵌页返回栈（如点开 UP 主空间）也会触发 Unloaded；此时只隐藏并停掉页面而不 Dispose WebView2，
+            // 避免返回 StarPartyPage 后再次启动内嵌游戏触发 ObjectDisposedException。
+            CloseEmbeddedGame(disposeWebView: false);
         };
     }
+
+    private int _detailGen;
+    private bool _gameWebViewInitializing;
 
     private async Task LoadAsync(bool forceRefresh)
     {
@@ -78,6 +88,11 @@ public partial class StarPartyPage : UserControl
             _data = data;
             BindSiteData(data);
             UpdateVisibleSection();
+        }
+        catch (Exception ex)
+        {
+            ErrorText.Text = "未能获取到星创组站点数据：" + ex.Message;
+            ErrorPanel.Visibility = Visibility.Visible;
         }
         finally
         {
@@ -470,18 +485,26 @@ public partial class StarPartyPage : UserControl
         {
             if (!_gameWebViewInitialized)
             {
-                var env = await Svc.WebView2.GetEnvironmentAsync();
-                if (GameWebView.CoreWebView2 == null)
-                    await GameWebView.EnsureCoreWebView2Async(env);
-                Svc.WebView2.ApplyColorScheme(GameWebView);
-                if (GameWebView.CoreWebView2 != null)
+                if (_gameWebViewInitializing) return;
+                _gameWebViewInitializing = true;
+                try
                 {
-                    GameWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                    GameWebView.CoreWebView2.Settings.IsStatusBarEnabled = false;
-                    GameWebView.CoreWebView2.NavigationCompleted += OnGameNavigationCompleted;
-                    GameWebView.CoreWebView2.NewWindowRequested += OnGameNewWindowRequested;
+                    var env = await Svc.WebView2.GetEnvironmentAsync();
+                    if (GameWebView.CoreWebView2 == null)
+                        await GameWebView.EnsureCoreWebView2Async(env);
+                    Svc.WebView2.ApplyColorScheme(GameWebView);
+                    if (GameWebView.CoreWebView2 != null)
+                    {
+                        GameWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+                        GameWebView.CoreWebView2.Settings.IsStatusBarEnabled = false;
+                        GameWebView.CoreWebView2.NavigationCompleted -= OnGameNavigationCompleted;
+                        GameWebView.CoreWebView2.NewWindowRequested -= OnGameNewWindowRequested;
+                        GameWebView.CoreWebView2.NavigationCompleted += OnGameNavigationCompleted;
+                        GameWebView.CoreWebView2.NewWindowRequested += OnGameNewWindowRequested;
+                    }
+                    _gameWebViewInitialized = true;
                 }
-                _gameWebViewInitialized = true;
+                finally { _gameWebViewInitializing = false; }
             }
             GameWebView.CoreWebView2?.Navigate(url);
         }
@@ -568,12 +591,14 @@ public partial class StarPartyPage : UserControl
 
     private async Task ShowDetailAsync(string url, XteamProjectItem? fallbackItem)
     {
+        var gen = ++_detailGen;
         DetailOverlay.Visibility = Visibility.Visible;
         DetailLoading.Visibility = Visibility.Visible;
         DetailCard.Visibility = Visibility.Collapsed;
         _currentDetail = null;
 
         var (ok, err, detail) = await XteamService.Instance.LoadDetailAsync(url);
+        if (gen != _detailGen || DetailOverlay.Visibility != Visibility.Visible) return;
         DetailLoading.Visibility = Visibility.Collapsed;
 
         if (!ok || detail == null)
@@ -607,7 +632,11 @@ public partial class StarPartyPage : UserControl
         DetailCoverImage.Source = null;
         var coverUrl = !string.IsNullOrEmpty(detail.CoverUrl) ? detail.CoverUrl : (fallbackItem?.CoverUrl ?? "");
         if (!string.IsNullOrEmpty(coverUrl))
-            DetailCoverImage.Source = await CoverLoader.LoadAsync(coverUrl, 360);
+        {
+            var bmp = await CoverLoader.LoadAsync(coverUrl, 360);
+            if (gen != _detailGen || DetailOverlay.Visibility != Visibility.Visible) return;
+            DetailCoverImage.Source = bmp;
+        }
 
         DetailActionsPanel.Children.Clear();
         foreach (var act in detail.Actions)

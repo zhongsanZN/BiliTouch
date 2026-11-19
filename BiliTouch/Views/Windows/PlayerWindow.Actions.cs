@@ -550,6 +550,7 @@ public partial class PlayerWindow : FluentWindow
             }
 
             ApplyTripleLikeSuccess(res);
+            if (_isFavorited) Svc.UserState.PublishFavorite(aid, bvid, true);
             UpdateActionCounts();
 
             // 若接口返回某些位为 false（可能原先已在另一端完成或受限），回查以对齐真实状态。

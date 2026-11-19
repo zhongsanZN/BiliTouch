@@ -24,5 +24,6 @@ public static class Svc
     /// <summary>视频线路(CDN)测速与选择, 设置页可配</summary>
     public static CdnService Cdn => CdnService.Instance;
     public static HistorySyncService HistorySync => HistorySyncService.Instance;
+    public static UserStateBus UserState => UserStateBus.Instance;
     public static NavigationDispatcher? Navigate { get; set; }
 }

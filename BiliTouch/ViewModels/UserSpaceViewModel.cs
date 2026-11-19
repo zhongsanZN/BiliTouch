@@ -25,12 +25,13 @@ public class UserSpaceViewModel : ObservableObject
     private bool _loading;
     private string _error = "";
     private int _page = 1;
-    private bool _hasMore = true;
+    private bool _videoHasMore = true;
     private bool _loadingMore;
     private int _articlePage = 1;
     private bool _articleHasMore = true;
     private bool _articlesLoaded;
     private bool _showArticles;
+    private bool _followBusy;
 
     public ObservableCollection<VideoItem> Videos { get; } = new();
     public ObservableCollection<ArticleSummary> Articles { get; } = new();
@@ -43,7 +44,7 @@ public class UserSpaceViewModel : ObservableObject
             if (SetProperty(ref _showArticles, value))
             {
                 OnPropertyChanged(nameof(ShowVideos));
-                HasMore = value ? _articleHasMore : _hasMore;
+                OnPropertyChanged(nameof(HasMore));
                 Error = "";
                 if (value && !_articlesLoaded && _mid > 0)
                     _ = LoadArticlesFirstAsync();
@@ -56,7 +57,18 @@ public class UserSpaceViewModel : ObservableObject
     private async Task LoadArticlesFirstAsync()
     {
         Loading = true;
-        await LoadArticlesAsync(reset: true);
+        try
+        {
+            await LoadArticlesAsync(reset: true);
+        }
+        catch (Exception ex)
+        {
+            if (ShowArticles) Error = ex.Message;
+        }
+        finally
+        {
+            Loading = false;
+        }
     }
 
     public long Mid { get => _mid; private set => SetProperty(ref _mid, value); }
@@ -69,7 +81,16 @@ public class UserSpaceViewModel : ObservableObject
     public long VideoCount { get => _videoCount; private set => SetProperty(ref _videoCount, value); }
     public bool Loading { get => _loading; private set => SetProperty(ref _loading, value); }
     public bool LoadingMore { get => _loadingMore; private set => SetProperty(ref _loadingMore, value); }
-    public bool HasMore { get => _hasMore; private set => SetProperty(ref _hasMore, value); }
+    public bool HasMore
+    {
+        get => _showArticles ? _articleHasMore : _videoHasMore;
+        private set
+        {
+            if (_showArticles) _articleHasMore = value;
+            else _videoHasMore = value;
+            OnPropertyChanged(nameof(HasMore));
+        }
+    }
     public string Error { get => _error; private set => SetProperty(ref _error, value); }
 
     public string FollowerText => VideoItem.FormatCount(Follower);
@@ -114,6 +135,13 @@ public class UserSpaceViewModel : ObservableObject
         LoadMoreCommand = new AsyncRelayCommand(LoadMoreAsync);
         FollowCommand = new AsyncRelayCommand(FollowAsync);
         ToggleFollowCommand = new AsyncRelayCommand(ToggleFollowAsync);
+        Svc.UserState.SubscribeFollow(this, change =>
+        {
+            if (change.Mid != _mid || IsFollowed == change.Followed) return;
+            IsFollowed = change.Followed;
+            Follower = Math.Max(0, Follower + (change.Followed ? 1 : -1));
+            OnPropertyChanged(nameof(FollowerText));
+        });
     }
 
     public async Task InitAsync(long mid)
@@ -195,8 +223,8 @@ public class UserSpaceViewModel : ObservableObject
             {
                 if (reset) Videos.Clear();
                 foreach (var it in items) Videos.Add(it);
-                _hasMore = items.Count >= 30;
-                if (!ShowArticles) HasMore = _hasMore;
+                _videoHasMore = items.Count >= 30;
+                if (!ShowArticles) OnPropertyChanged(nameof(HasMore));
                 _page++;
                 if (Videos.Count == 0 && !ShowArticles) Error = err ?? "该 UP 主暂无投稿视频";
             }
@@ -239,7 +267,7 @@ public class UserSpaceViewModel : ObservableObject
 
     public async Task LoadMoreAsync()
     {
-        var currentHasMore = ShowArticles ? _articleHasMore : _hasMore;
+        var currentHasMore = ShowArticles ? _articleHasMore : _videoHasMore;
         if (LoadingMore || Loading || !currentHasMore) return;
         LoadingMore = true;
         try
@@ -256,9 +284,19 @@ public class UserSpaceViewModel : ObservableObject
     private async Task FollowAsync()
     {
         if (!Svc.Session.HasLogin) { Svc.Toast.Show("关注需要先登录"); return; }
-        if (_mid <= 0) return;
-        var (ok, err) = await Svc.Api.FollowUpAsync(_mid, true);
-        Svc.Toast.Show(ok ? "已关注" : "关注失败: " + (err ?? "未知错误"));
+        if (_mid <= 0 || _followBusy) return;
+        _followBusy = true;
+        try
+        {
+            var (ok, err) = await Svc.Api.FollowUpAsync(_mid, true);
+            if (ok)
+            {
+                if (!IsFollowed) { IsFollowed = true; Follower++; OnPropertyChanged(nameof(FollowerText)); }
+                Svc.UserState.PublishFollow(_mid, true);
+            }
+            Svc.Toast.Show(ok ? "已关注" : "关注失败: " + (err ?? "未知错误"));
+        }
+        finally { _followBusy = false; }
     }
 
     /// <summary>查询与该 UP 的关注关系(进页面时调一次)</summary>
@@ -273,16 +311,25 @@ public class UserSpaceViewModel : ObservableObject
     private async Task ToggleFollowAsync()
     {
         if (!Svc.Session.HasLogin) { Svc.Toast.Show("关注需要先登录"); return; }
-        if (_mid <= 0) return;
-        var (ok, err) = await Svc.Api.FollowUpAsync(_mid, !IsFollowed);
-        if (ok)
+        if (_mid <= 0 || _followBusy) return;
+        _followBusy = true;
+        try
         {
-            IsFollowed = !IsFollowed;
-            Svc.Toast.Show(IsFollowed ? "已关注" : "已取消关注");
+            var target = !IsFollowed;
+            var (ok, err) = await Svc.Api.FollowUpAsync(_mid, target);
+            if (ok)
+            {
+                IsFollowed = target;
+                Follower = Math.Max(0, Follower + (target ? 1 : -1));
+                OnPropertyChanged(nameof(FollowerText));
+                Svc.UserState.PublishFollow(_mid, target);
+                Svc.Toast.Show(IsFollowed ? "已关注" : "已取消关注");
+            }
+            else
+            {
+                Svc.Toast.Show("操作失败: " + (err ?? "未知错误"));
+            }
         }
-        else
-        {
-            Svc.Toast.Show("操作失败: " + (err ?? "未知错误"));
-        }
+        finally { _followBusy = false; }
     }
 }

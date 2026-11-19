@@ -761,13 +761,14 @@ public partial class PlayerWindow
     internal async void PopulateDockAndLoadingPosterAsync(string? url)
     {
         if (string.IsNullOrWhiteSpace(url)) return;
+        var gen = _loadGen;
         try
         {
             var img = await CoverLoader.LoadAsync(url, 640);
-            if (img == null || _closing) return;
+            if (img == null || _closing || gen != _loadGen) return;
             await Dispatcher.InvokeAsync(() =>
             {
-                if (_closing) return;
+                if (_closing || gen != _loadGen) return;
                 ApplySharedCoverArtwork(img);
             });
         }

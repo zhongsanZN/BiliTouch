@@ -886,7 +886,6 @@ public partial class HomeViewModel : ObservableObject
         if (_hotLoading) return;
         if (HasHot && DateTime.UtcNow - _hotFetchedAt < HotCacheTtl) return;
 
-        _hotLoading = true;
         HotLoading = true;
         HotError = "";
         try

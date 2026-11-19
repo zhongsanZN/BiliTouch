@@ -209,6 +209,7 @@ public partial class LiveRoomWindow : FluentWindow
                 media.AddOption(":network-caching=" + liveCaching);
                 media.AddOption(":live-caching=" + liveCaching);
                 _paused = false; SetPauseGlyph(playing: true);
+                VideoDecode.BeginMedia(_liveCore);
                 if (!_player.Play(media)) throw new InvalidOperationException("无法打开直播流");
                 _player.Volume = _muted ? 0 : Svc.Settings.PlayerVolume;
                 _startedAt = DateTimeOffset.UtcNow; Model.Error = ""; Model.StatusText = ""; if (Model.LiveState != 2) Model.SetLiveState(1);
@@ -318,13 +319,17 @@ public partial class LiveRoomWindow : FluentWindow
         } catch { }
     }
 
-    private void OnPlaying(object? sender, EventArgs args) => Dispatcher.BeginInvoke(() =>
+    private void OnPlaying(object? sender, EventArgs args)
     {
-        if (IsClosing) return;
-        StartLiveBackdropGuard();
-        PlaybackState.Visibility = Visibility.Collapsed; _retryCount = 0; _nextRetry = DateTimeOffset.MaxValue;
-        StartControlsCountdown();
-    });
+        var capturedStream = _streamRequest;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (IsClosing || capturedStream != _streamRequest) return;
+            StartLiveBackdropGuard();
+            PlaybackState.Visibility = Visibility.Collapsed; _retryCount = 0; _nextRetry = DateTimeOffset.MaxValue;
+            StartControlsCountdown();
+        });
+    }
     private void HealthTick(object? sender, EventArgs args)
     {
         if (IsClosing || Model.RoomId <= 0) return;
@@ -434,11 +439,16 @@ public partial class LiveRoomWindow : FluentWindow
         if (_following || Model.UserId <= 0 || IsClosing) return;
         if (!Svc.Session.HasLogin) { Model.Error = "请先登录后再关注主播"; return; }
         var request = _request; var follow = !Model.Followed; _following = true; FollowButton.IsEnabled = false;
-        try { var response = await Svc.Api.FollowUpAsync(Model.UserId, follow); if (Current(request)) { if (response.ok) Model.Followed = follow; else Model.Error = response.err ?? "关注失败"; } }
+        try { var response = await Svc.Api.FollowUpAsync(Model.UserId, follow); if (Current(request)) { if (response.ok) { Model.Followed = follow; Svc.UserState.PublishFollow(Model.UserId, follow); } else Model.Error = response.err ?? "关注失败"; } }
         catch (Exception ex) { if (Current(request)) Model.Error = ex.Message; }
         finally { _following = false; FollowButton.IsEnabled = true; }
     }
-    private void OpenBrowserClick(object sender, RoutedEventArgs e) { if (Model.RoomId > 0) Process.Start(new ProcessStartInfo($"https://live.bilibili.com/{Model.RoomId}") { UseShellExecute = true }); }
+    private void OpenBrowserClick(object sender, RoutedEventArgs e)
+    {
+        if (Model.RoomId <= 0) return;
+        if (!LinkLauncher.OpenInSystemBrowser($"https://live.bilibili.com/{Model.RoomId}"))
+            Svc.Toast.Show("无法使用系统默认浏览器打开直播间");
+    }
 
     // ------------------------------------------------------------ 清晰度(与播放器同形态的按钮 + 弹层)
 
@@ -480,21 +490,22 @@ public partial class LiveRoomWindow : FluentWindow
     /// 音量的唯一入口。真人拖滑杆、滚轮、按键、程序回灌全走这里, 保证三个账本
     /// (原生音量 / 设置持久化 / 图标状态)不会漂移。
     /// </summary>
-    private void VolumeSliderSync(int value, bool updateSettings)
+    private void VolumeSliderSync(int value, bool updateSettings, bool preserveMute = false)
     {
         if (_player == null) return;
         value = Math.Clamp(value, 0, 100);
+        var wasSyncing = _syncingVolume;
         if (Math.Abs(LiveVolume.Value - value) > 0.5)
         {
             _syncingVolume = true;
-            LiveVolume.Value = value;
-            _syncingVolume = false;
+            try { LiveVolume.Value = value; }
+            finally { _syncingVolume = wasSyncing; }
         }
-        if (value > 0) _muted = false;
+        if (!preserveMute && value > 0) _muted = false;
         _player.Volume = _muted ? 0 : value;
         VolumePopupText.Text = _muted ? "静音" : value + "%";
         SyncVolumeGlyph();
-        if (updateSettings && !_syncingVolume) Svc.Settings.SetPlayerVolume(value);
+        if (updateSettings && !wasSyncing && !App.MuteForThisRun) Svc.Settings.SetPlayerVolume(value);
     }
     private bool _syncingVolume;
 
@@ -515,7 +526,7 @@ public partial class LiveRoomWindow : FluentWindow
             return;
         }
         _muted = !_muted;
-        VolumeSliderSync((int)LiveVolume.Value, updateSettings: false);
+        VolumeSliderSync((int)LiveVolume.Value, updateSettings: false, preserveMute: true);
     }
     private void VolumeHoverEnter(object sender, MouseEventArgs e)
     {
@@ -815,7 +826,7 @@ public partial class LiveRoomWindow : FluentWindow
                 else Close();
                 break;
             case Key.Space: TogglePause(); break;
-            case Key.M: _muted = !_muted; VolumeSliderSync((int)LiveVolume.Value, updateSettings: false); break;
+            case Key.M: _muted = !_muted; VolumeSliderSync((int)LiveVolume.Value, updateSettings: false, preserveMute: true); break;
             case Key.Enter: ToggleFillWindow(); break;
             default: return;
         }
@@ -851,9 +862,22 @@ public partial class LiveRoomWindow : FluentWindow
     }
     private async Task TeardownAsync()
     {
-        await StopPlaybackAsync();
-        LiveVideo.MediaPlayer = null; LiveVideo.Content = null; LiveVideo.Dispose();
-        await Task.Run(_player.Dispose); VlcCore.UnregisterPlayer();
-        _closeReady = true; Close();
+        try
+        {
+            try { await StopPlaybackAsync(); } catch { }
+            try { LiveVideo.MediaPlayer = null; LiveVideo.Content = null; LiveVideo.Dispose(); } catch { }
+            var mp = _player;
+            if (mp != null)
+            {
+                try { await Task.Run(mp.Dispose); } catch { }
+            }
+        }
+        finally
+        {
+            try { _mediaGate.Dispose(); } catch { }
+            VlcCore.UnregisterPlayer();
+            _closeReady = true;
+            try { Close(); } catch { }
+        }
     }
 }

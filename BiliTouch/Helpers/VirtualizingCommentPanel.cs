@@ -280,6 +280,20 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
             _heights.Clear();
             RemoveInternalChildRange(0, InternalChildren.Count);
         }
+        else if (args.Action == NotifyCollectionChangedAction.Add && args.ItemCount > 0)
+        {
+            // 插入新评论（例如发评论插入 index 0）时，将插入点及之后的缓存高度键整体后移，
+            // 否则后续每条评论的高度都会错位 1 格导致裁切或重叠。
+            var insertAt = ItemContainerGenerator.IndexFromGeneratorPosition(args.Position);
+            if (insertAt >= 0 && _heights.Count > 0)
+            {
+                var shifted = new Dictionary<int, double>(_heights.Count);
+                foreach (var kv in _heights)
+                    shifted[kv.Key >= insertAt ? kv.Key + args.ItemCount : kv.Key] = kv.Value;
+                _heights.Clear();
+                foreach (var kv in shifted) _heights[kv.Key] = kv.Value;
+            }
+        }
         else if (args.Action is NotifyCollectionChangedAction.Remove or NotifyCollectionChangedAction.Replace or NotifyCollectionChangedAction.Move)
         {
             _heights.Clear();

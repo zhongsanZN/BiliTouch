@@ -66,6 +66,7 @@ public class BangumiViewModel : ObservableObject
                 OnPropertyChanged(nameof(HasDetail));
                 OnPropertyChanged(nameof(Title));
                 OnPropertyChanged(nameof(Subtitle));
+                OnPropertyChanged(nameof(Cover));
                 OnPropertyChanged(nameof(Evaluate));
                 OnPropertyChanged(nameof(MetaLine));
                 OnPropertyChanged(nameof(EpCountText));
@@ -117,8 +118,8 @@ public class BangumiViewModel : ObservableObject
 
     public async Task InitAsync()
     {
-        // 已经拉过就不重复请求: 用户在选集里播一集、看几集, 中途可能切走又切回来。
-        if (Episodes.Count > 0) return;
+        // 已经拉过或正在加载就不重复请求: 避免连点重试并发发两份。
+        if (Loading || Episodes.Count > 0) return;
 
         Loading = true;
         Error = "";

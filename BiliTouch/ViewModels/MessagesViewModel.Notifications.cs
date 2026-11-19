@@ -63,8 +63,16 @@ public partial class MessagesViewModel
  private bool HasChannelUnreadIncrease(string channel)
  {
   var current=ChannelUnreadCount(channel);
-  if(channel=="私信")return _privateLoaded && current>_cachedPrivateUnread;
-  return _channelCache.TryGetValue(channel,out var cache) && cache.Loaded && current>cache.UnreadSnapshot;
+  if(channel=="私信")
+  {
+   if(!_privateLoaded)return false;
+   // 已读清零后同步拉低水位，避免后续新来 1~N 条消息因低于历史高水位而被误跳过。
+   if(current<_cachedPrivateUnread)_cachedPrivateUnread=current;
+   return current>_cachedPrivateUnread;
+  }
+  if(!_channelCache.TryGetValue(channel,out var cache) || !cache.Loaded)return false;
+  if(current<cache.UnreadSnapshot)cache.UnreadSnapshot=current;
+  return current>cache.UnreadSnapshot;
  }
  private void RestoreCachedChannel(string channel)
  {
@@ -125,7 +133,8 @@ public partial class MessagesViewModel
  public bool NotificationLoading{get=>_notificationLoading;private set{SetProperty(ref _notificationLoading,value);OnPropertyChanged(nameof(NotificationsEmpty));}}
  public bool NotificationsEmpty=>!NotificationLoading && Notifications.Count==0 && string.IsNullOrWhiteSpace(Error);
  public bool NotificationMore{get=>_notificationMore;private set=>SetProperty(ref _notificationMore,value);}
- public ICommand LoadMoreNotificationsCommand=>new RelayCommand(()=>_ = LoadNotificationsAsync(true));
+ private ICommand? _loadMoreNotificationsCommand;
+ public ICommand LoadMoreNotificationsCommand => _loadMoreNotificationsCommand ??= new RelayCommand(() => _ = LoadNotificationsAsync(true));
  private async Task LoadNotificationsAsync(bool more=false,bool force=true)
  {
   EnsureAccount();
@@ -158,7 +167,7 @@ public partial class MessagesViewModel
     var kind=channel=="新增粉丝"?"fans":"like";
     var result=await FetchNotice(kind,more);
     if(generation!=_notificationGeneration || !account.IsCurrent)return;
-    items=result.items;next=result.more;KeepNoticeCursor(kind,items,next);if(more && result.ok)_fansPage++;if(!result.ok)Error=result.error??"消息加载失败";
+    items=result.items;next=result.more;KeepNoticeCursor(kind,items,next);if(more && result.ok && kind=="fans")_fansPage++;if(!result.ok)Error=result.error??"消息加载失败";
    }
    if(!more && string.IsNullOrWhiteSpace(Error))Notifications.Clear();
    var seen=Notifications.Select(x=>x.Id).ToHashSet();var added=0;foreach(var item in items)if(seen.Add(item.Id)){Notifications.Add(item);added++;}

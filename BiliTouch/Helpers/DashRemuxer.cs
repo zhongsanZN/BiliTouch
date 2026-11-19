@@ -94,7 +94,7 @@ public static class DashRemuxer
     internal static bool TryStripLeadingZeros(string srcPath, string outPath, out string? error)
     {
         error = null;
-        var tmp = outPath + ".tmp";
+        var tmp = AtomicFile.BuildTempPath(outPath);
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
@@ -102,8 +102,7 @@ public static class DashRemuxer
             var skip = DetectM4sStartOffset(src);
             using (var dst = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, CopyBufSize, false))
                 CopyBytes(src, skip, dst, src.Length - skip);
-            if (File.Exists(outPath)) File.Delete(outPath);
-            File.Move(tmp, outPath);
+            File.Move(tmp, outPath, overwrite: true);
             return true;
         }
         catch (Exception ex)
@@ -113,7 +112,7 @@ public static class DashRemuxer
         }
         finally
         {
-            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+            AtomicFile.TryDelete(tmp);
         }
     }
 
@@ -122,7 +121,7 @@ public static class DashRemuxer
     {
         error = null;
         FileStream? vFs = null, aFs = null;
-        var tmp = outPath + ".tmp";
+        var tmp = AtomicFile.BuildTempPath(outPath);
         try
         {
             vFs = OpenRead(videoPath);
@@ -180,9 +179,8 @@ public static class DashRemuxer
                 foreach (var f in all) CopyBytes(f.Track.Fs, f.SrcDataStart, dst, f.TotalSize);
             }
 
-            // 全部写完才改名: 中断/失败时不会留下一个"看着正常其实是半截"的文件
-            if (File.Exists(outPath)) File.Delete(outPath);
-            File.Move(tmp, outPath);
+            // 全部写完才改名: 原子替换避免并发/中断遗留损坏文件
+            File.Move(tmp, outPath, overwrite: true);
             return true;
         }
         catch (Exception ex)
@@ -192,7 +190,7 @@ public static class DashRemuxer
         }
         finally
         {
-            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { /* 清理失败不影响结果 */ }
+            AtomicFile.TryDelete(tmp);
             vFs?.Dispose();
             aFs?.Dispose();
         }
@@ -352,19 +350,31 @@ public static class DashRemuxer
                             var elst = FindPath(moov, off + hdr, off + size, "edts", "elst");
                             if (elst.Count == 2)
                             {
-                                ElstVersion = moov[elst[1].Offset + 8];
-                                // entry_count 之后就是第一条编辑(见 ISO 14496-12: version/flags(4)
-                                // + entry_count(4) + entries)。第一条 media_time 为 -1 表示**空编辑**
-                                // (对位垫片): 它的 segment_duration 绝不能被"补真实时长"逻辑放大,
-                                // 否则整条轨被宣告成静默编辑期("有画面没声音", 见 BuildTrak 的说明)。
-                                // entry 大小: ver 0 是 segDur(u32)+mediaTime(u32 各 4B), ver 1 是各 8B。
-                                var firstEntry = elst[1].Offset + 16;
-                                var mtOff = firstEntry + (ElstVersion == 0 ? 4 : 8);
-                                var mediaTime = ElstVersion == 0
-                                    ? (long)(int)ReadU32(moov, mtOff)
-                                    : (long)ReadU64(moov, mtOff);
-                                ElstFirstEntryIsEmpty = mediaTime < 0;
-                                ElstSegDurOffset = elst[1].Offset + 16 - off;
+                                var elstOff = elst[1].Offset;
+                                var elstEnd = elstOff + elst[1].Size;
+                                ElstVersion = moov[elstOff + 8];
+                                // 遍历 elst 各条编辑：media_time < 0 是空编辑垫片必须原样保留，
+                                // 定位第一条 media_time >= 0 的主编辑段，只把它的 segment_duration 补成真实时长。
+                                var entryCount = elstOff + 16 <= elstEnd ? (int)ReadU32(moov, elstOff + 12) : 0;
+                                var entrySize = ElstVersion == 0 ? 12 : 20;
+                                var segFieldSize = ElstVersion == 0 ? 4 : 8;
+                                ElstFirstEntryIsEmpty = true;
+                                ElstSegDurOffset = -1;
+                                for (var ei = 0; ei < entryCount; ei++)
+                                {
+                                    var entryPos = elstOff + 16 + ei * entrySize;
+                                    if (entryPos + entrySize > elstEnd) break;
+                                    var mtOff = entryPos + segFieldSize;
+                                    var mediaTime = ElstVersion == 0
+                                        ? (long)(int)ReadU32(moov, mtOff)
+                                        : (long)ReadU64(moov, mtOff);
+                                    if (mediaTime >= 0)
+                                    {
+                                        ElstFirstEntryIsEmpty = false;
+                                        ElstSegDurOffset = entryPos - off;
+                                        break;
+                                    }
+                                }
                             }
                             break;
                         }
@@ -632,8 +642,13 @@ public static class DashRemuxer
                 else
                     stts.Add((1, (uint)s.Duration));
 
-                // ctts 只要出现过非零偏移就要整表写出(否则各样本时间对不上)
-                if (s.CtsOffset != 0) needCtts = true;
+                // ctts 只要出现过非零偏移就要整表写出(否则各样本时间对不上)；
+                // 首次出现非零时必须把前面已遍历的 idx 个 0 偏移样本补齐，否则整条轨 PTS 提前错位。
+                if (!needCtts && s.CtsOffset != 0)
+                {
+                    needCtts = true;
+                    if (idx > 0) ctts.Add(((uint)idx, 0));
+                }
                 if (needCtts)
                 {
                     if (ctts.Count > 0 && ctts[^1].Offset == s.CtsOffset)
@@ -795,15 +810,22 @@ public static class DashRemuxer
     private static void CopyBytes(FileStream src, long srcOffset, FileStream dst, long count)
     {
         src.Position = srcOffset;
-        var buf = new byte[CopyBufSize];
-        var left = count;
-        while (left > 0)
+        var buf = System.Buffers.ArrayPool<byte>.Shared.Rent(CopyBufSize);
+        try
         {
-            var want = (int)Math.Min(buf.Length, left);
-            var n = src.Read(buf, 0, want);
-            if (n <= 0) throw new EndOfStreamException("拷贝样本数据时提前结束");
-            dst.Write(buf, 0, n);
-            left -= n;
+            var left = count;
+            while (left > 0)
+            {
+                var want = (int)Math.Min(CopyBufSize, left);
+                var n = src.Read(buf, 0, want);
+                if (n <= 0) throw new EndOfStreamException("拷贝样本数据时提前结束");
+                dst.Write(buf, 0, n);
+                left -= n;
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(buf);
         }
     }
 

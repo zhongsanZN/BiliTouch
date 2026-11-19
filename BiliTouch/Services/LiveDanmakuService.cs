@@ -103,8 +103,8 @@ public sealed class LiveDanmakuService : IDisposable
         _authenticated = false;
         _running = false;
         try { _cts?.Cancel(); } catch { }
+        // 只 Abort 不跨线程 Dispose：ws 的所有权和释放归 RunAsync 内的 using var ws，避免并发双释放
         try { _socket?.Abort(); } catch { }
-        try { _socket?.Dispose(); } catch { }
         _socket = null;
         _cts?.Dispose();
         _cts = null;
@@ -393,7 +393,12 @@ public sealed class LiveDanmakuService : IDisposable
 
     private void Raise(Message m) { if (Received != null) Dispatch(() => Received?.Invoke(m)); }
 
-    private void RaiseConnection(bool ok) => DispatchCritical(() => { _authenticated = ok; ConnectionChanged?.Invoke(ok); });
+    private void RaiseConnection(bool ok)
+    {
+        // 同步更新 _authenticated，避免 ReceiveLoopAsync 在 UI 线程回调前仍用 15s 未认证超时误判 30s 心跳断连
+        _authenticated = ok;
+        DispatchCritical(() => ConnectionChanged?.Invoke(ok));
+    }
 
     // Authentication, stream state and moderation deletes must not be discarded by chat overload.
     private void DispatchCritical(Action action)

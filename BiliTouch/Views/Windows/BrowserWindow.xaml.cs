@@ -15,6 +15,7 @@ public partial class BrowserWindow : FluentWindow
     private readonly string _initialUrl;
     private string _currentUrl;
     private long _lastExternalOpen;
+    private bool _closed;
     private const string OpenExternalMessage = "bd-open-external";
     private const long OpenExternalThrottleMs = 500;
 
@@ -34,14 +35,18 @@ public partial class BrowserWindow : FluentWindow
         try
         {
             await Svc.WebView2.InitAsync(Wv);
+            if (_closed) return;
             var core = Wv.CoreWebView2;
+            if (core == null) return;
             core.SourceChanged += OnSourceChanged;
             core.WebMessageReceived += OnWebMessage;
             await core.AddScriptToExecuteOnDocumentCreatedAsync(BuildOpenExternalScript());
+            if (_closed) return;
             core.Navigate(_initialUrl);
         }
         catch (Exception ex)
         {
+            if (_closed) return;
             Svc.Toast.Show("网页加载失败: " + ex.Message);
             Close();
         }
@@ -147,6 +152,7 @@ public partial class BrowserWindow : FluentWindow
 
     private void OnClosed(object? sender, EventArgs e)
     {
+        _closed = true;
         ReleaseStrayCapture();
         try
         {

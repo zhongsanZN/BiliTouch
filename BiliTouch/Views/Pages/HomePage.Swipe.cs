@@ -14,8 +14,12 @@ namespace BiliTouch.Views.Pages;
 /// <summary>
 /// 首页五个 tab 的跟手翻页与触控板全幅双页并排中间态。
 /// </summary>
-public partial class HomePage
+public partial class HomePage : Helpers.IHorizontalSwipeHost
 {
+    bool Helpers.IHorizontalSwipeHost.ContainsSwipePoint(Point screenPoint) => ContainsSwipePoint(screenPoint);
+    void Helpers.IHorizontalSwipeHost.PreviewHorizontalWheel(double progress) => PreviewHorizontalWheel(progress);
+    void Helpers.IHorizontalSwipeHost.SettleHorizontalWheelPreview(bool commit) => SettleHorizontalWheelPreview(commit);
+    void Helpers.IHorizontalSwipeHost.SettlePrecisionTouchpadPreview(bool commit) => SettlePrecisionTouchpadPreview(commit);
     private Point _swipeStart;
     private bool _swipeArmed, _swipeDirKnown, _swipeHorizontal, _swipeConsumed;
     /// <summary>这次按下之后有没有移动过(判定"点击 vs 拖动")</summary>
@@ -55,11 +59,11 @@ public partial class HomePage
     }
 
     /// <summary>起手要超过这个位移才判定方向(避免手指微抖就锁成横向)。</summary>
-    private const double SwipeSlop = 12;
+    private const double SwipeSlop = Helpers.HorizontalSwipePhysics.Slop;
     /// <summary>松手时位移需过八分之三（内容宽度的 37.5%）才触发翻页。</summary>
-    internal const double SwipePageRatio = 3.0 / 8.0;
+    internal const double SwipePageRatio = Helpers.HorizontalSwipePhysics.CommitRatio;
     /// <summary>到头了还拖的橡皮筋系数。</summary>
-    private const double SwipeEdgeResist = 0.35;
+    private const double SwipeEdgeResist = Helpers.HorizontalSwipePhysics.EdgeResist;
     /// <summary>被 <see cref="FreezeVertical"/> 关掉平移的那个 tab(null = 没冻)</summary>
     private HomeTabKind? _frozenKind;
     /// <summary>冻结前的 PanningMode, 解冻时原样还回去</summary>
@@ -76,7 +80,7 @@ public partial class HomePage
     private TouchDevice? _pendingSwipeTouch;
 
     /// <summary>吸附动画时长。</summary>
-    private const int SwipeSnapMs = 170;
+    private const int SwipeSnapMs = Helpers.HorizontalSwipePhysics.SnapDurationMs;
 
     private void HookTabSwipe()
     {
@@ -316,7 +320,7 @@ public partial class HomePage
         else
         {
             ClearPeerPreview();
-            trans.X = Math.Sign(dx) * width * SwipeEdgeResist * (1 - Math.Exp(-Math.Abs(dx) / width));
+            trans.X = Helpers.HorizontalSwipePhysics.RubberBand(dx, width);
         }
     }
 
@@ -380,8 +384,8 @@ public partial class HomePage
     {
         CompleteActiveSnap();
         var trans = TabTrans;
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        var duration = TimeSpan.FromMilliseconds(SwipeSnapMs);
+        var ease = Helpers.HorizontalSwipePhysics.SnapEase;
+        var duration = Helpers.HorizontalSwipePhysics.SnapDuration;
 
         var done = false;
         _snapTarget = switchPage ? target : -1;

@@ -587,13 +587,41 @@ public class FollowViewModel : ObservableObject
                 Svc.Navigate?.OpenUserSpace(u.Mid.ToString());
             }
         });
-        Svc.Session.Changed += OnSessionChanged;
+        System.Windows.WeakEventManager<SessionManager, EventArgs>.AddHandler(
+            Svc.Session, nameof(SessionManager.AccountChanged), (_, _) => OnSessionChanged());
+        Svc.UserState.SubscribeFollow(this, change =>
+        {
+            if (!change.Followed)
+            {
+                var existing = Users.FirstOrDefault(u => u.Mid == change.Mid);
+                if (existing != null)
+                {
+                    if (ReferenceEquals(SelectedUp, existing)) SelectedUp = null;
+                    Users.Remove(existing);
+                    OnPropertyChanged(nameof(Count));
+                    OnPropertyChanged(nameof(HasFollowUsers));
+                    RaiseUnreadSummary();
+                }
+            }
+            else if (Users.Count > 0 && Users.All(u => u.Mid != change.Mid))
+            {
+                _ = RefreshAsync();
+            }
+        });
+        Svc.UserState.SubscribeDynamicMutated(this, change =>
+        {
+            var item = Dynamics.FirstOrDefault(d => string.Equals(d.Id, change.DynamicId, StringComparison.Ordinal));
+            if (item == null || ReferenceEquals(item, change.AlreadyAppliedTo)) return;
+            if (change.Liked is { } liked) item.SetLiked(liked);
+            item.AdjustCounts(change.CommentDelta, change.RepostDelta);
+        });
     }
 
     private void OnSessionChanged()
     {
         OnPropertyChanged(nameof(NotLoggedIn));
         OnPropertyChanged(nameof(ShowContent));
+        OnPropertyChanged(nameof(IsLoggedInForPublish));
         _ = RefreshAsync();
     }
 
@@ -706,11 +734,16 @@ public class FollowViewModel : ObservableObject
             }
             UpdateUnreadBadges(all);
             _lastUnreadScanTs = all.Count > 0 ? all.Max(d => d.PubTs) : _lastUnreadScanTs;
-            var fresh = all.TakeWhile(d => !_seenDynamicIds.Contains(d.Id))
-                .Where(d => d.Id.Length > 0).ToList();
-            _pendingNewDynamics = fresh;
-            NewDynamicsText = $"{fresh.Count} 条新动态";
-            HasNewDynamics = fresh.Count > 0;
+            // 单 UP 视图下 _seenDynamicIds 仅含该 UP 的动态，与全局时间线做差会恒判 20 条新动态；
+            // 仅在全部动态视图下计算顶部「N 条新动态」横幅。
+            if (forUp == null && SelectedUp == null)
+            {
+                var fresh = all.TakeWhile(d => !_seenDynamicIds.Contains(d.Id))
+                    .Where(d => d.Id.Length > 0).ToList();
+                _pendingNewDynamics = fresh;
+                NewDynamicsText = $"{fresh.Count} 条新动态";
+                HasNewDynamics = fresh.Count > 0;
+            }
         }
         finally { _checkingNew = false; }
     }
@@ -774,8 +807,8 @@ public class FollowViewModel : ObservableObject
 
             var (ok, err, list) = await Svc.Api.GetFollowingsAsync(_selfMid, 1, 50);
             var followingPage = 1;
-            if (!ok) { Error = err ?? "关注列表获取失败"; return; }
             if (refreshGeneration != _refreshGeneration) return;
+            if (!ok) { Error = err ?? "关注列表获取失败"; return; }
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
             {
                 if (list != null)
@@ -805,6 +838,7 @@ public class FollowViewModel : ObservableObject
                 Loading = false;
             });
             await LoadSelectionAsync(reset: true);
+            if (refreshGeneration != _refreshGeneration) return;
             _ = CompleteFollowingsAsync(refreshGeneration, list?.Count == 50);
             _lastUnreadScanTs = Dynamics.Count > 0 ? Dynamics.Max(d => d.PubTs) : _lastUnreadScanTs;
             _ = RefreshServerUnreadAsync(includeOverflowPages: true);
@@ -816,8 +850,11 @@ public class FollowViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            Loading = false;
-            Error = ex.Message;
+            if (refreshGeneration == _refreshGeneration)
+            {
+                Loading = false;
+                Error = ex.Message;
+            }
         }
         finally { if (refreshGeneration == _refreshGeneration) Loading = false; }
     }

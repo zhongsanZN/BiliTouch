@@ -48,7 +48,9 @@ internal static class Program
         {
             if (args.Contains("--user-ui") || args.Contains("--gesture-review")) MotionReviewHost.Configure(Artifacts);
             if(args.Contains("--gesture-review")) MotionReviewHost.Run();
+            else if(args.Contains("--ci")) RunCiSuite();
             else if(args.Contains("--foundation")) FoundationTests.Run(Check);
+            else if(args.Contains("--audit-fixes")) AuditFixesTests.Run(Check);
             else if(args.Contains("--decoder-settings")) VideoDecodeTests.Settings(Check);
             else if(args.Contains("--decoder-hardware")) VideoDecodeTests.Hardware(Check, args);
             else if(args.Contains("--precision-touchpad")) PrecisionTouchpadTests.Run(Check);
@@ -170,6 +172,28 @@ internal static class Program
         Console.Out.Flush();
         Environment.Exit(exit);
         return exit;
+    }
+
+    /// <summary>
+    /// 现代一键离线 CI 聚合回归套件：覆盖账号隔离、唯一发包限速、运行期健康探针（离屏像素 + 零绑定错误）、
+    /// 未读、解码与合成、弹幕、更新、超分、版本一致性与排序不变量。
+    /// </summary>
+    private static void RunCiSuite()
+    {
+        FoundationTests.Run(Check);
+        RateLimitTests.Run(Check);
+        AuditFixesTests.Run(Check);
+        MessageUnreadTests.Run(Check);
+        VideoDecodeTests.Settings(Check);
+        VmemBufferTests.Run(Check);
+        DanmakuFilteringTests.Run(Check);
+        DanmakuRecoveryTests.Run(Check);
+        UpdateFallbackTests.Run(Check);
+        VideoEnhancementTests.Run(Check);
+        Upstream176SyncTests.Run(Check);
+        ReviewFixTests.Run(Check);
+        Release034Tests.Run(Check);
+        FollowSortTests.Run(Check, Artifacts);
     }
 
     private static void Check(bool condition, string description)

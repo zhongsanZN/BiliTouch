@@ -41,21 +41,16 @@ public partial class DynamicCard : UserControl
             Svc.Toast.Show("没拿到 UP 主的 UID, 打不开主页");
             return;
         }
-        new NavigationDispatcher(Window.GetWindow(this)).OpenUserSpace(v.OwnerMid.ToString());
+        if (Svc.Navigate != null) Svc.Navigate.OpenUserSpace(v.OwnerMid.ToString());
+        else if (Window.GetWindow(this) is { } w) new NavigationDispatcher(w).OpenUserSpace(v.OwnerMid.ToString());
     }
-
-    // ------------------------------------------------------------ 右键菜单
-    //
-    // ★ 这些动作与 VideoCard 的**逐字同款**(动态卡是默认排版, 不能少功能)。
-    //   没有把它们抽成公共方法: VideoCard 那边是 private, 抽出来要动它的公开面;
-    //   而这里每个都只有两三行, 重复的代价小于为它新建一个共享类的代价。
-    //   (若将来第三处也用同一套, 再抽到 Helpers/MediaActions 旁边。)
 
     private async void OnDownloadCover(object sender, RoutedEventArgs e)
     {
         var v = Current;
         if (v == null) return;
-        await MediaActions.SaveImageAsync(v.Cover, v.Title);
+        try { await MediaActions.SaveImageAsync(v.Cover, v.Title); }
+        catch (Exception ex) { Svc.Toast.Show("保存封面失败: " + ex.Message); }
     }
 
     /// <summary>预览封面大图(与 VideoCard 同款, 动态卡不能少功能)。</summary>
@@ -70,7 +65,8 @@ public partial class DynamicCard : UserControl
     {
         var v = Current;
         if (v == null || string.IsNullOrEmpty(v.Bvid)) return;
-        await VideoDownloader.DownloadAsync(v.Bvid, v.Title, Window.GetWindow(this));
+        try { await VideoDownloader.DownloadAsync(v.Bvid, v.Title, Window.GetWindow(this)); }
+        catch (Exception ex) { Svc.Toast.Show("下载失败: " + ex.Message); }
     }
 
     /// <summary>一键屏蔽这个 UP 主(精确同名 + UID, 与 VideoCard 同款)</summary>
@@ -88,7 +84,7 @@ public partial class DynamicCard : UserControl
 
         FilterService.Instance.BlockUp(author, v.OwnerMid);
         var label = author.Length > 0 ? author : $"UID {v.OwnerMid}";
-        Svc.Toast.Show($"已屏蔽 UP 主「{label}」，可在首页「屏蔽」面板撤销");
+        Svc.Toast.Show($"已屏蔽 UP 主「{label}」，可在「设置 → 数据」屏蔽面板撤销");
     }
 
     /// <summary>一键屏蔽这个标题(完全相同才隐藏, 与 VideoCard 同款)</summary>
@@ -101,14 +97,9 @@ public partial class DynamicCard : UserControl
         if (title.Length == 0) return;
 
         FilterService.Instance.BlockTitle(title);
-        Svc.Toast.Show("已屏蔽这条视频，可在首页「屏蔽」面板撤销");
+        Svc.Toast.Show("已屏蔽这条视频，可在「设置 → 数据」屏蔽面板撤销");
     }
 
-    /// <summary>
-    /// 把这条视频加入 B 站账号的「稍后再看」。
-    /// ★ 动态条目的 rid 就是 avid(Aid 已在解析时填好), 所以这里通常不必补查详情;
-    ///   补查那一步留着是因为 Aid 为 0 的形态确实存在(转发/结构异常), 与 VideoCard 同款兜底。
-    /// </summary>
     private async void OnAddWatchLater(object sender, RoutedEventArgs e)
     {
         var v = Current;
@@ -118,20 +109,24 @@ public partial class DynamicCard : UserControl
             Svc.Toast.Show("稍后再看需要先登录");
             return;
         }
-
-        var aid = v.Aid;
-        if (aid <= 0)
+        try
         {
-            var (_, _, vd) = await Svc.Api.GetVideoAsync(v.Bvid);
-            aid = vd?.Aid ?? 0;
-        }
-        if (aid <= 0)
-        {
-            Svc.Toast.Show("没拿到这条视频的 avid, 加不了");
-            return;
-        }
+            var aid = v.Aid;
+            if (aid <= 0)
+            {
+                var (_, _, vd) = await Svc.Api.GetVideoAsync(v.Bvid);
+                aid = vd?.Aid ?? 0;
+            }
+            if (aid <= 0)
+            {
+                Svc.Toast.Show("没拿到这条视频的 avid, 加不了");
+                return;
+            }
 
-        var (ok, err) = await Svc.Api.AddWatchLaterAsync(aid);
-        Svc.Toast.Show(ok ? "已加入稍后再看" : "加入失败: " + (err ?? "未知错误"));
+            var (ok, err) = await Svc.Api.AddWatchLaterAsync(aid);
+            if (ok) Svc.UserState.PublishWatchLater(aid, v.Bvid, true);
+            Svc.Toast.Show(ok ? "已加入稍后再看" : "加入失败: " + (err ?? "未知错误"));
+        }
+        catch (Exception ex) { Svc.Toast.Show("加入失败: " + ex.Message); }
     }
 }

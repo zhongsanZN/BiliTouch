@@ -64,9 +64,14 @@ public partial class SearchPage : UserControl
         ModuleGestures = new TabNavigationGestures(this, ResultArea, SearchKindTabs, CreatePeerPreview);
         SearchCard.SizeChanged+=(_,_) => (Window.GetWindow(this) as BiliTouch.MainWindow)?.RepaintHeader();
 
-        // 历史增删(自己搜一次 / 点掉一条 / 清空)都会改变展开高度, 也可能让历史变空。
-        // 服务是单例, 页面实例在导航缓存里长住, 所以这里不需要退订。
-        Svc.SearchHistory.Items.CollectionChanged += (_, _) => ScheduleHeightSync();
+        // 历史增删与全局屏蔽仅在页面挂入可视树期间订阅，卸载时退订（避免独立搜索窗口泄漏）。
+        Loaded += (_, _) =>
+        {
+            Svc.SearchHistory.Items.CollectionChanged -= OnSearchHistoryItemsChanged;
+            Svc.SearchHistory.Items.CollectionChanged += OnSearchHistoryItemsChanged;
+            FilterService.Instance.Changed -= OnFilterApplied;
+            FilterService.Instance.Changed += OnFilterApplied;
+        };
 
         // DataContext 是外面赋进来的, 构造时还拿不到 VM; 换 VM 就当作"换了一次展示", 把卡片收回原位。
         DataContextChanged += (_, e) =>
@@ -82,11 +87,17 @@ public partial class SearchPage : UserControl
                 vm.Suggestions.CollectionChanged += OnSuggestionsChanged;
             }
         };
-        // 屏蔽筛掉一批结果后, 结果区可能不够一屏: 主动补下一页(滚动事件不会因此触发)
-        FilterService.Instance.Changed += OnFilterApplied;
         // 切到别的页时本页会被摘出可视树: 焦点跟着没了, 卡片也该收回去(不然后面切回来它是开着的)
-        Unloaded += (_, _) => ResetCard();
+        Unloaded += (_, _) =>
+        {
+            Svc.SearchHistory.Items.CollectionChanged -= OnSearchHistoryItemsChanged;
+            FilterService.Instance.Changed -= OnFilterApplied;
+            ResetCard();
+        };
     }
+
+    private void OnSearchHistoryItemsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleHeightSync();
 
     // ------------------------------------------------------------ 交互
 

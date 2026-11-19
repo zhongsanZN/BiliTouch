@@ -45,7 +45,7 @@ public partial class MainWindow : FluentWindow
         InitializeComponent();
         RefreshSidebarTheme();
         Svc.Theme.ThemeChanged+=RefreshSidebarTheme;
-        Closed+=(_,_)=> { _idleTrimTimer?.Stop(); _precisionTouchpad?.Dispose(); FinishHorizontalWheel(false); Svc.Theme.ThemeChanged-=RefreshSidebarTheme; _vm.PageChanged -= OnPageChanged; };
+        Closed+=(_,_)=> { _idleTrimTimer?.Stop(); _toastTimer?.Stop(); _precisionTouchpad?.Dispose(); FinishHorizontalWheel(false); Svc.Theme.ThemeChanged-=RefreshSidebarTheme; Svc.Toast.Shown-=ShowToast; _vm.PageChanged -= OnPageChanged; };
         Deactivated += OnDeactivatedTrim;
         Activated += (_, _) => _idleTrimTimer?.Stop();
         SourceInitialized += (_, _) =>
@@ -104,19 +104,24 @@ public partial class MainWindow : FluentWindow
         OnHorizontalWheel(delta);
     }
 
+    internal IEnumerable<FrameworkElement> CachedPages => _pages.Values;
+
+    private IHorizontalSwipeHost? CurrentSwipeHost => _vm.Current switch
+    {
+        PageKey.Settings => (PageOf(PageKey.Settings) as SettingsPage)?.ModuleGestures,
+        PageKey.Messages => (PageOf(PageKey.Messages) as MessagesPage)?.ModuleGestures,
+        PageKey.Search => (PageOf(PageKey.Search) as SearchPage)?.ModuleGestures,
+        PageKey.Home => PageOf(PageKey.Home) as IHorizontalSwipeHost,
+        PageKey.Mine => PageOf(PageKey.Mine) as IHorizontalSwipeHost,
+        PageKey.Follow => PageOf(PageKey.Follow) as IHorizontalSwipeHost,
+        _ => null
+    };
+
     internal PrecisionTouchpadInput.Target? ResolvePrecisionTouchpadTarget(Point screenPoint)
     {
         if (EmbeddedHost.IsVisible || PartitionPanel.IsVisible) return null;
-        Action begin = () => FinishHorizontalWheel(false);
-        if (CurrentModuleGestures is { } module && module.ContainsSwipePoint(screenPoint))
-            return new(begin, module.PreviewHorizontalWheel, module.SettlePrecisionTouchpadPreview, _vm.Current.ToString());
-        if (_vm.Current == PageKey.Home && PageOf(PageKey.Home) is HomePage home && home.ContainsSwipePoint(screenPoint))
-            return new(begin, home.PreviewHorizontalWheel, home.SettlePrecisionTouchpadPreview, "Home");
-        if (_vm.Current == PageKey.Mine && PageOf(PageKey.Mine) is MinePage mine && mine.ContainsSwipePoint(screenPoint))
-            return new(begin, mine.PreviewHorizontalWheel, mine.SettlePrecisionTouchpadPreview, "Mine");
-        if (_vm.Current == PageKey.Follow && PageOf(PageKey.Follow) is FollowPage follow && follow.ContainsSwipePoint(screenPoint))
-            return new(begin, follow.PreviewHorizontalWheel, follow.SettlePrecisionTouchpadPreview, "Follow");
-        return null;
+        if (CurrentSwipeHost is not { } host || !host.ContainsSwipePoint(screenPoint)) return null;
+        return new(() => FinishHorizontalWheel(false), host.PreviewHorizontalWheel, host.SettlePrecisionTouchpadPreview, _vm.Current.ToString());
     }
 
     protected override void OnHorizontalWheel(int delta)
@@ -125,27 +130,9 @@ public partial class MainWindow : FluentWindow
         if (delta == 0) return;
         if (_wheelPreview == null)
         {
-            if (CurrentModuleGestures is { } modules)
-            {
-                _wheelPreview = modules.PreviewHorizontalWheel;
-                _wheelSettle = modules.SettleHorizontalWheelPreview;
-            }
-            else if (_vm.Current == PageKey.Home && PageOf(PageKey.Home) is HomePage home)
-            {
-                _wheelPreview = home.PreviewHorizontalWheel;
-                _wheelSettle = home.SettleHorizontalWheelPreview;
-            }
-            else if (_vm.Current == PageKey.Mine && PageOf(PageKey.Mine) is MinePage mine)
-            {
-                _wheelPreview = mine.PreviewHorizontalWheel;
-                _wheelSettle = mine.SettleHorizontalWheelPreview;
-            }
-            else if (_vm.Current == PageKey.Follow && PageOf(PageKey.Follow) is FollowPage follow)
-            {
-                _wheelPreview = follow.PreviewHorizontalWheel;
-                _wheelSettle = follow.SettleHorizontalWheelPreview;
-            }
-            else return;
+            if (CurrentSwipeHost is not { } host) return;
+            _wheelPreview = host.PreviewHorizontalWheel;
+            _wheelSettle = host.SettleHorizontalWheelPreview;
         }
         _hWheelAccum += delta;
         _wheelPreview(Math.Clamp(_hWheelAccum / TouchpadSwipeFullDelta, -1.0, 1.0));
@@ -559,6 +546,8 @@ public partial class MainWindow : FluentWindow
     // ------------------------------------------------------------ 分区面板(点左上角 logo 展开)
 
     private bool _partitionOpen;
+    private int _partitionGen;
+    private int _toastGen;
 
     /// <summary>
     /// 左上角 logo: 点它展开分区面板(2026-10-13 用户要求"改回左上角 logo 点击后显示分区,
@@ -567,27 +556,31 @@ public partial class MainWindow : FluentWindow
     /// </summary>
     private void OnBrandLogoClick(object sender, MouseButtonEventArgs e) => OpenPartition();
 
-    /// <summary>
-    /// 展开分区面板(2026-10-12: 入口从"左上角 logo"搬到了**首页右下角工具栏**)。
-    ///
-    /// ★ 面板**仍然留在窗口左上角**展开 —— 入口搬了, 但展开位置没跟着搬:
-    ///   分区是"导航级"的菜单, 从右下角按钮长出一张贴着左上的大面板会很别扭;
-    ///   而左上角正好是导航栏的位置, 面板从那儿长出来仍然贴着它。
-    ///   (真正会读代码的人会问"为什么不跟着入口走", 所以在这里写明。)
-    ///
-    /// RenderTransformOrigin=0,0 意味着缩放锚点是面板左上角, 动画看起来就是"从左上角长出"。
-    /// </summary>
     public void OpenPartition(FrameworkElement? anchor=null)
     {
         if (_partitionOpen) return;
         _partitionOpen = true;
-        if(anchor!=null){
-            PartitionPanel.Width=Math.Min(470,Math.Max(280,ActualWidth-32));
-            PartitionPanel.MaxHeight=Math.Max(180,ActualHeight-128);
-            var point=anchor.TranslatePoint(new Point(anchor.ActualWidth,anchor.ActualHeight),this);
-            var left=Math.Clamp(point.X-PartitionPanel.Width,8,Math.Max(8,ActualWidth-PartitionPanel.Width-8));
-            PartitionPanel.Margin=new Thickness(left,Math.Min(point.Y+8,Math.Max(8,ActualHeight-200)),0,0);
-            PartitionPanel.RenderTransformOrigin=new Point(1,0);
+        _partitionGen++;
+        if (anchor != null)
+        {
+            // PartitionPanel 位于已挂 UiScale LayoutTransform 的 Content 根容器内，
+            // 必须使用该容器坐标系而非未缩放的 Window 尺寸，避免 UiScale != 100% 时越界裁切。
+            var host = Content as FrameworkElement ?? this;
+            var hostW = host.ActualWidth > 0 ? host.ActualWidth : ActualWidth;
+            var hostH = host.ActualHeight > 0 ? host.ActualHeight : ActualHeight;
+            PartitionPanel.Width = Math.Min(470, Math.Max(280, hostW - 32));
+            PartitionPanel.MaxHeight = Math.Max(180, hostH - 128);
+            var point = anchor.TranslatePoint(new Point(anchor.ActualWidth, anchor.ActualHeight), host);
+            var left = Math.Clamp(point.X - PartitionPanel.Width, 8, Math.Max(8, hostW - PartitionPanel.Width - 8));
+            PartitionPanel.Margin = new Thickness(left, Math.Min(point.Y + 8, Math.Max(8, hostH - 200)), 0, 0);
+            PartitionPanel.RenderTransformOrigin = new Point(1, 0);
+        }
+        else
+        {
+            PartitionPanel.Width = 470;
+            PartitionPanel.MaxHeight = double.PositiveInfinity;
+            PartitionPanel.Margin = new Thickness(14, 66, 14, 0);
+            PartitionPanel.RenderTransformOrigin = new Point(0, 0);
         }
 
         PartitionScrim.Visibility = Visibility.Visible;
@@ -609,11 +602,13 @@ public partial class MainWindow : FluentWindow
     {
         if (!_partitionOpen) return;
         _partitionOpen = false;
+        var gen = ++_partitionGen;
 
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease };
         fade.Completed += (_, _) =>
         {
+            if (gen != _partitionGen || _partitionOpen) return;
             PartitionScrim.Visibility = Visibility.Collapsed;
             PartitionPanel.Visibility = Visibility.Collapsed;
         };
@@ -631,6 +626,7 @@ public partial class MainWindow : FluentWindow
     {
         if (!_partitionOpen) return;
         _partitionOpen = false;
+        _partitionGen++;
 
         PartitionScrim.BeginAnimation(OpacityProperty, null);
         PartitionPanel.BeginAnimation(OpacityProperty, null);
@@ -663,9 +659,7 @@ public partial class MainWindow : FluentWindow
 
     private void ShowToast(string message)
     {
-        // ★ 2026-11-04 (issue #38): 连续/并发的提示不能每次都从透明度 0 重播淡入 ——
-        //   下载进度以前 1~2 秒刷一条, 每次都"透明 → 不透明", 看起来就是每 1% 闪一下。
-        //   已经显示(含正在淡出)时只换文字并保持不透明; 只有从隐藏状态出现才做一次淡入。
+        var gen = ++_toastGen;
         var appearing = Toast.Visibility != Visibility.Visible;
         Toast.BeginAnimation(OpacityProperty, null);   // 撤掉可能还没跑完的淡出
         ToastText.Text = message;
@@ -673,7 +667,6 @@ public partial class MainWindow : FluentWindow
 
         if (appearing)
         {
-            // 基值 = 终值 + FillBehavior.Stop: 动画结束落回 1, 不会停在动画值上。
             Toast.Opacity = 1;
             Toast.BeginAnimation(OpacityProperty,
                 new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(220))
@@ -684,26 +677,29 @@ public partial class MainWindow : FluentWindow
             Toast.Opacity = 1;
         }
 
-        // 复用同一个定时器而不是每条提示都 new 一个: 短时间连发多条提示时,
-        // 每次 new 都会留下一个短命对象和一个挂在它身上的 Tick 委托(得等 GC 才解绑)。
         if (_toastTimer == null)
         {
             _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.8) };
             _toastTimer.Tick += OnToastTick;
         }
-        _toastTimer.Stop();   // 重排: 新提示的存活时间从这一刻重新算
+        _toastTimer.Stop();
         _toastTimer.Start();
+        _ = gen;
     }
 
     private void OnToastTick(object? sender, EventArgs e)
     {
         _toastTimer?.Stop();
-        // 基值先归 0: 淡出结束(Stop)时直接落到 0, 不会闪回不透明。
+        var gen = ++_toastGen;
         Toast.BeginAnimation(OpacityProperty, null);
         Toast.Opacity = 0;
         var a = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(280))
         { FillBehavior = FillBehavior.Stop };
-        a.Completed += (_, _) => Toast.Visibility = Visibility.Collapsed;
+        a.Completed += (_, _) =>
+        {
+            if (gen != _toastGen) return;
+            Toast.Visibility = Visibility.Collapsed;
+        };
         Toast.BeginAnimation(OpacityProperty, a);
     }
 }

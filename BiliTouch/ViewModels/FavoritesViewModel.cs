@@ -70,7 +70,11 @@ public class FavoritesViewModel : VideoListSelectionViewModel
         HookSelectionSource();
         WeakEventManager<SessionManager, EventArgs>.AddHandler(Svc.Session,
             nameof(SessionManager.AccountChanged), OnAccountChanged);
+        Svc.UserState.SubscribeFavorite(this, _ => IsDirty = true);
     }
+
+    /// <summary>播放器/详情页收藏状态变更后标脏，下次回到收藏页自动刷新。</summary>
+    public bool IsDirty { get; set; }
 
     protected override ObservableCollection<VideoItem> SelectionSource => Items;
     protected override void OnSourceItemsChanged() => UpdateCount();

@@ -58,11 +58,19 @@ public class FluentWindow : Window
     {
         try
         {
-            var screen = System.Windows.Forms.Screen.FromPoint(
-                System.Windows.Forms.Cursor.Position);
-            var dpi = VisualTreeHelper.GetDpi(this);
-            var workW = screen.WorkingArea.Width / dpi.DpiScaleX;
-            var workH = screen.WorkingArea.Height / dpi.DpiScaleY;
+            var cursor = System.Windows.Forms.Cursor.Position;
+            var screen = System.Windows.Forms.Screen.FromPoint(cursor);
+            // 取鼠标所在目标显示器自己的 DPI，避免多屏异 DPI 时拿尚未显示窗口的主屏 DPI 换算导致偏大或误裁
+            var (scaleX, scaleY) = GetMonitorDpiScaleAt(cursor.X, cursor.Y);
+            if (scaleX <= 0 || scaleY <= 0)
+            {
+                var dpi = VisualTreeHelper.GetDpi(this);
+                scaleX = dpi.DpiScaleX;
+                scaleY = dpi.DpiScaleY;
+            }
+            if (scaleX <= 0 || scaleY <= 0) return;
+            var workW = screen.WorkingArea.Width / scaleX;
+            var workH = screen.WorkingArea.Height / scaleY;
             if (workW <= 0 || workH <= 0) return;
 
             if (!double.IsNaN(Width) && Width > workW) Width = workW;
@@ -78,6 +86,31 @@ public class FluentWindow : Window
             // 拿不到屏幕信息就保持 XAML 尺寸, 不因尺寸优化影响启动
         }
     }
+
+    private static (double scaleX, double scaleY) GetMonitorDpiScaleAt(int screenX, int screenY)
+    {
+        try
+        {
+            var mon = MonitorFromPoint(new Win32Point { X = screenX, Y = screenY }, MonitorDefaultToNearest);
+            if (mon != IntPtr.Zero && GetDpiForMonitor(mon, 0 /* MDT_EFFECTIVE_DPI */, out var dpiX, out var dpiY) == 0
+                && dpiX > 0 && dpiY > 0)
+                return (dpiX / 96.0, dpiY / 96.0);
+        }
+        catch
+        {
+            // 旧系统无 shcore.dll 时回退 WPF 自身 DPI
+        }
+        return (0, 0);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Win32Point { public int X; public int Y; }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromPoint(Win32Point pt, int flags);
+
+    [DllImport("shcore.dll")]
+    private static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
 
     /// <summary>
     /// 本窗口参与全局「软件缩放」的根元素。**返回 null = 本窗口整体不参与缩放。**
@@ -124,7 +157,11 @@ public class FluentWindow : Window
         try
         {
             var handle = new WindowInteropHelper(this).Handle;
-            if (handle != IntPtr.Zero) HwndSource.FromHwnd(handle)?.AddHook(WndProc);
+            if (handle != IntPtr.Zero)
+            {
+                _wndProcSource = HwndSource.FromHwnd(handle);
+                _wndProcSource?.AddHook(WndProc);
+            }
         }
         catch
         {
@@ -400,8 +437,15 @@ public class FluentWindow : Window
         if (_acrylicActive && !_backdropSuspended) UpdateAcrylicWindowBase(false, animate: true);
     }
 
+    private HwndSource? _wndProcSource;
+
     protected override void OnClosed(EventArgs e)
     {
+        if (_wndProcSource != null)
+        {
+            _wndProcSource.RemoveHook(WndProc);
+            _wndProcSource = null;
+        }
         if (_hooked) ThemeService.Instance.ThemeChanged -= OnThemeChanged;
         Svc.Settings.AcrylicChanged -= OnAcrylicChanged;
         Svc.Settings.LayoutChanged -= OnLayoutChanged;
@@ -750,6 +794,8 @@ public class FluentWindow : Window
         {
             var delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
             OnHorizontalWheelAt((short)(-delta), WheelScreenPoint(lParam));
+            // Shift+滚轮已转为横向切页/横向操作，不再继续透传给纵向滚轮，避免横滑同时竖滚。
+            handled = true;
         }
         else if (msg == WM_SYSCOMMAND)
         {

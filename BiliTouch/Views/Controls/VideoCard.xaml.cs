@@ -225,9 +225,29 @@ public partial class VideoCard : UserControl
             _touchDevice = null;
             _touchDragCanceled = false;
             if (wasDrag) return;
-            // ★ 不判"抬起点是否还在卡片内": 触摸常被外层 ScrollViewer 捕获, 抬起时的
-            //   坐标会按捕获元素换算, 判断会误杀正常点击。拖动与否已经由 Move 的 10px 阈值定了。
+            // 抑制随后提升的 MouseUp / TouchSupport 重复触发（避免编辑模式单点被翻转两次）
+            e.Handled = true;
             OpenVideo();
+        };
+        DataContextChanged += (_, _) =>
+        {
+            // 虚拟化回收复用卡片时清理按压/悬停缩放/半透明残留
+            _pressed = _dragCanceled = false;
+            _touchPressed = _touchDragCanceled = false;
+            _touchDevice = null;
+            _ignoreTapUntil = 0;
+            if (_coverScale != null)
+            {
+                _coverScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+                _coverScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+                _coverScale.ScaleX = 1;
+                _coverScale.ScaleY = 1;
+            }
+            if (_entered && Opacity < 1)
+            {
+                BeginAnimation(OpacityProperty, null);
+                Opacity = 1;
+            }
         };
     }
 
@@ -299,19 +319,18 @@ public partial class VideoCard : UserControl
 
     internal void OpenVideo()
     {
-        if(Environment.TickCount64<_ignoreTapUntil)return;
+        var now = Environment.TickCount64;
+        if (now < _ignoreTapUntil) return;
         if (DataContext is not VideoItem v) return;
+        // 短窗去重：防止同一次触摸抬手经 HomePage.Swipe / TouchSupport / VideoCard.PreviewTouchUp / MouseLeftButtonUp 多次触发
+        _ignoreTapUntil = now + 220;
 
-        // 编辑模式下点击 = 勾选/取消勾选, 不再播放。
-        // 这里直接改 IsSelected 而不是绑一个 CheckBox: 卡片的点击目标就是整卡,
-        // 没必要再叠一个只有右下角能点的小方块。
         if (Selectable)
         {
             v.IsSelected = !v.IsSelected;
             return;
         }
 
-        // 直播间走另一条路: 拉直播流地址后交给播放器, 没有弹幕/点赞/进度上报
         if (v.IsLive)
         {
             Svc.Player.PlayLive(v.RoomId, v.Title);
@@ -350,33 +369,35 @@ public partial class VideoCard : UserControl
         if (e.ChangedButton != MouseButton.Left) return;
         if (DataContext is not VideoItem v) return;
 
-        var mid = v.OwnerMid;
-        if (mid <= 0 && !string.IsNullOrEmpty(v.Bvid))
+        try
         {
-            var (_, _, vd) = await Svc.Api.GetVideoAsync(v.Bvid);
-            mid = vd?.OwnerMid ?? 0;
+            var mid = v.OwnerMid;
+            if (mid <= 0 && !string.IsNullOrEmpty(v.Bvid))
+            {
+                var (_, _, vd) = await Svc.Api.GetVideoAsync(v.Bvid);
+                mid = vd?.OwnerMid ?? 0;
+            }
+            if (mid <= 0)
+            {
+                Svc.Toast.Show("没拿到 UP 主的 UID, 打不开主页");
+                return;
+            }
+            if (Svc.Navigate != null) Svc.Navigate.OpenUserSpace(mid.ToString());
+            else if (Window.GetWindow(this) is { } w) new NavigationDispatcher(w).OpenUserSpace(mid.ToString());
         }
-        if (mid <= 0)
-        {
-            // 连详情都拿不到(例如动态里的部分转发), 给个明确反馈而不是毫无反应
-            Svc.Toast.Show("没拿到 UP 主的 UID, 打不开主页");
-            return;
-        }
-        new NavigationDispatcher(Window.GetWindow(this)).OpenUserSpace(mid.ToString());
+        catch (Exception ex) { Svc.Toast.Show("打开主页失败: " + ex.Message); }
     }
 
     // ------------------------------------------------------------ 右键菜单
 
     private VideoItem? Current => DataContext as VideoItem;
 
-    // "查看封面大图"曾按用户要求移除(2026-09-26), 2026-10-31 预览窗重写后按新要求加回
-    // (OnPreviewCover); MediaActions.ShowImage 同时被头像/私信图片预览使用。
-
     private async void OnDownloadCover(object sender, RoutedEventArgs e)
     {
         var v = Current;
         if (v == null) return;
-        await MediaActions.SaveImageAsync(v.Cover, v.Title);
+        try { await MediaActions.SaveImageAsync(v.Cover, v.Title); }
+        catch (Exception ex) { Svc.Toast.Show("保存封面失败: " + ex.Message); }
     }
 
     /// <summary>预览封面大图(2026-10-31 加回): 与"下载封面"同一个 Cover URL。</summary>
@@ -391,12 +412,10 @@ public partial class VideoCard : UserControl
     {
         var v = Current;
         if (v == null || string.IsNullOrEmpty(v.Bvid)) return;
-        await VideoDownloader.DownloadAsync(v.Bvid, v.Title, Window.GetWindow(this));
+        try { await VideoDownloader.DownloadAsync(v.Bvid, v.Title, Window.GetWindow(this)); }
+        catch (Exception ex) { Svc.Toast.Show("下载失败: " + ex.Message); }
     }
 
-    /// <summary>
-    /// 一键屏蔽这个 UP 主(精确同名 + UID)。规则是全局的, 所有已接入屏蔽的列表立刻生效。
-    /// </summary>
     private void OnMoreClick(object sender, RoutedEventArgs e)
     {
         if (ContextMenu is { } menu)
@@ -422,12 +441,9 @@ public partial class VideoCard : UserControl
 
         FilterService.Instance.BlockUp(author, v.OwnerMid);
         var label = author.Length > 0 ? author : $"UID {v.OwnerMid}";
-        Svc.Toast.Show($"已屏蔽 UP 主「{label}」，可在首页「屏蔽」面板撤销");
+        Svc.Toast.Show($"已屏蔽 UP 主「{label}」，可在「设置 → 数据」屏蔽面板撤销");
     }
 
-    /// <summary>
-    /// 一键屏蔽这个标题(**完全相同**才隐藏)。只挡这一条, 同 UP 的其它视频不受影响。
-    /// </summary>
     private void OnBlockTitle(object sender, RoutedEventArgs e)
     {
         var v = Current;
@@ -437,16 +453,9 @@ public partial class VideoCard : UserControl
         if (title.Length == 0) return;
 
         FilterService.Instance.BlockTitle(title);
-        Svc.Toast.Show("已屏蔽这条视频，可在首页「屏蔽」面板撤销");
+        Svc.Toast.Show("已屏蔽这条视频，可在「设置 → 数据」屏蔽面板撤销");
     }
 
-    /// <summary>
-    /// 把这条视频加进 B 站账号的「稍后再看」。
-    ///
-    /// 接口只认 avid, 而搜索/推荐这类列表不下发 avid(见 VideoItem.Aid 的说明),
-    /// 所以先看列表有没有给, 没有就补查一次详情 —— 否则这些页面上右键点了会一直报"缺 avid"。
-    /// 服务端对"已经在列表里"再调一次是幂等的(code 0), 所以不需要先去查列表。
-    /// </summary>
     private async void OnAddWatchLater(object sender, RoutedEventArgs e)
     {
         var v = Current;
@@ -457,19 +466,24 @@ public partial class VideoCard : UserControl
             return;
         }
 
-        var aid = v.Aid;
-        if (aid <= 0)
+        try
         {
-            var (_, _, vd) = await Svc.Api.GetVideoAsync(v.Bvid);
-            aid = vd?.Aid ?? 0;
-        }
-        if (aid <= 0)
-        {
-            Svc.Toast.Show("没拿到这条视频的 avid, 加不了");
-            return;
-        }
+            var aid = v.Aid;
+            if (aid <= 0)
+            {
+                var (_, _, vd) = await Svc.Api.GetVideoAsync(v.Bvid);
+                aid = vd?.Aid ?? 0;
+            }
+            if (aid <= 0)
+            {
+                Svc.Toast.Show("没拿到这条视频的 avid, 加不了");
+                return;
+            }
 
-        var (ok, err) = await Svc.Api.AddWatchLaterAsync(aid);
-        Svc.Toast.Show(ok ? "已加入稍后再看" : "加入失败: " + (err ?? "未知错误"));
+            var (ok, err) = await Svc.Api.AddWatchLaterAsync(aid);
+            if (ok) Svc.UserState.PublishWatchLater(aid, v.Bvid, true);
+            Svc.Toast.Show(ok ? "已加入稍后再看" : "加入失败: " + (err ?? "未知错误"));
+        }
+        catch (Exception ex) { Svc.Toast.Show("加入失败: " + ex.Message); }
     }
 }

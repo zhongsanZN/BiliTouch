@@ -105,7 +105,7 @@ public static class ShortVideoCache
     ///     症状是"整条视频有画面没声音"(2026-10-03 修)。带 v3 前缀的文件由 Prune 清掉, 自动重下。
     /// 带旧版本前缀的文件由 Prune 清掉, 相当于自动重下。
     /// </summary>
-    private const string FormatVersion = "v5";
+    private const string FormatVersion = "v6";
 
     /// <summary>缓存键: 同一视频的不同清晰度是两份文件(切清晰度要重新合)</summary>
     private static string KeyOf(string bvid, int qn, AudioQuality audio) => $"{FormatVersion}_{bvid}_{qn}_{(int)audio}";

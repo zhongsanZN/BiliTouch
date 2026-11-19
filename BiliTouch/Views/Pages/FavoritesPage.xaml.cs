@@ -56,22 +56,33 @@ public partial class FavoritesPage : UserControl
         // 已经拿到内容就不再重复请求(页面会被主窗口反复挂载/卸载);
         // 但"上次没登录 / 请求失败"这两种情况要再给一次机会, 否则用户登录后回到这一页
         // 只能看到旧错误提示, 必须手动点刷新。
-        if (_loadedOnce && (Vm.Folders.Count > 0 || Vm.Items.Count > 0)) return;
+        if (_loadedOnce && !Vm.IsDirty && (Vm.Folders.Count > 0 || Vm.Items.Count > 0)) return;
         _loadedOnce = true;
+        Vm.IsDirty = false;
         await Vm.LoadAsync();
     }
 
-    /// <summary>
-    /// 订阅收藏夹集合变化(加载完成 / 追加分页都会改它): 每次都要重算折叠。
-    /// 集合实例可能被 VM 整个换掉, 所以这里按当前实例挂/退订。
-    /// </summary>
+    private FavoritesViewModel? _observedVm;
+
     private void HookFolderCollection()
     {
         if (Vm == null) return;
+        if (!ReferenceEquals(_observedVm, Vm))
+        {
+            if (_observedVm != null) _observedVm.PropertyChanged -= OnVmPropertyChanged;
+            _observedVm = Vm;
+            _observedVm.PropertyChanged += OnVmPropertyChanged;
+        }
         if (ReferenceEquals(_observedFolders, Vm.Folders)) return;
         if (_observedFolders != null) _observedFolders.CollectionChanged -= OnFoldersChanged;
         _observedFolders = Vm.Folders;
         _observedFolders.CollectionChanged += OnFoldersChanged;
+    }
+
+    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(FavoritesViewModel.CurrentFolderTitle))
+            ScheduleOverflowUpdate();
     }
 
     private void OnFoldersChanged(object? sender, NotifyCollectionChangedEventArgs e)

@@ -158,6 +158,8 @@ public sealed class DynamicDetailViewModel : ObservableObject
             {
                 var r = await Svc.Api.RepostDynamicAsync(Item.Id, text);
                 if (!r.ok) { Error = r.err ?? "转发失败，请重试"; return; }
+                Item.AdjustCounts(forwardDelta: 1);
+                Svc.UserState.PublishDynamicMutated(Item.Id, repostDelta: 1, alreadyAppliedTo: Item);
                 Draft = ""; ComposeReply(null);
                 Status = "转发成功";
                 return;
@@ -180,6 +182,8 @@ public sealed class DynamicDetailViewModel : ObservableObject
 
             Draft = "";
             ComposeReply(null);
+            Item.AdjustCounts(commentDelta: 1);
+            Svc.UserState.PublishDynamicMutated(Item.Id, commentDelta: 1, alreadyAppliedTo: Item);
             await LoadCommentsAsync(true);
             var echoed = res.Reply;
             if (echoed != null)

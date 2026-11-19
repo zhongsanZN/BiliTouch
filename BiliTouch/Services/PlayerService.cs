@@ -65,14 +65,21 @@ public class PlayerService
             win.Topmost = false;
             win.Owner = null;
 
-            // ★ 不 Show、不 Hide: 窗口保持"已构造未显示"状态。
-            //   首次真正播放时 GetOrCreateWindow 会 Show 它, 那时才建原生窗口。
+            AttachLifecycle(win);
             _window = win;
         }
         catch
         {
             // 预热失败就退回"用时再建", 与从前一致
         }
+    }
+
+    private void AttachLifecycle(PlayerWindow win)
+    {
+        win.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_window, win)) _window = null;
+        };
     }
 
     private bool _closing;
@@ -136,6 +143,7 @@ public class PlayerService
     private int _openGeneration;
     private void Play(string? title, Action<PlayerWindow> start, string? seamlessBvid = null)
     {
+        if (_closing) return;
         var generation = ++_openGeneration;
         var live = _liveWindow; _liveWindow = null; live?.Close();
         var win = GetOrCreateWindow(seamlessBvid);
@@ -171,8 +179,13 @@ public class PlayerService
         if (double.IsNaN(w) || w <= 0) w = 320;
         if (double.IsNaN(h) || h <= 0) h = 240;
         var r = new Rect(win.Left, win.Top, w, h);
-        var wa = SystemParameters.WorkArea;
-        return r.IntersectsWith(wa) && r.Width > 0 && r.Height > 0;
+        // 使用完整虚拟桌面（多屏并集）而非仅主屏 WorkArea，避免在副屏打开播放器后被硬拽回主屏。
+        var virtualScreen = new Rect(
+            SystemParameters.VirtualScreenLeft,
+            SystemParameters.VirtualScreenTop,
+            SystemParameters.VirtualScreenWidth,
+            SystemParameters.VirtualScreenHeight);
+        return r.IntersectsWith(virtualScreen) && r.Width > 0 && r.Height > 0;
     }
 
     private PlayerWindow? GetOrCreateWindow(string? seamlessBvid)
@@ -233,11 +246,7 @@ public class PlayerService
             return null;
         }
 
-        // 只在引用仍指向自己时才清空, 避免旧窗口的 Closed 把新窗口的引用一起置空
-        win.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(_window, win)) _window = null;
-        };
+        AttachLifecycle(win);
         _window = win;
         // ★ 进详情页默认最大化(用户要求): 平板/大屏上视频页本来就该占满可用空间。
         //   这是**窗口最大化**, 不是视频全屏 —— 右栏、控制栏都还在, 用户随时可以还原。

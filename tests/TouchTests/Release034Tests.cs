@@ -39,20 +39,31 @@ internal static class Release034Tests
 
     private static void TestVersionContracts(Action<bool, string> check)
     {
-        var asmVer = typeof(App).Assembly.GetName().Version?.ToString(3);
-        check(App.AppVersion == "0.3.4", $"App.AppVersion is updated to 0.3.4 (actual={App.AppVersion})");
-        check(asmVer == "0.3.4", $"Assembly version matches 0.3.4 (actual={asmVer})");
-
+        // 验证版本单一真理源不变量（csproj / Assembly / App.AppVersion / installer.iss 一致，且 >= 0.3.4），
+        // 不再硬编码锁死某个历史版本号导致后续每次发版都要返工旧测试。
         var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../.."));
+        var csprojPath = Path.Combine(root, "BiliTouch", "BiliTouch.csproj");
+        var csprojXml = System.Xml.Linq.XDocument.Load(csprojPath);
+        var csprojVer = csprojXml.Descendants("Version").FirstOrDefault()?.Value?.Trim() ?? "";
+        var asmVer = typeof(App).Assembly.GetName().Version?.ToString(3) ?? "";
+
+        check(!string.IsNullOrEmpty(csprojVer) && App.AppVersion == csprojVer,
+            $"App.AppVersion matches BiliTouch.csproj <Version> (app={App.AppVersion}, csproj={csprojVer})");
+        check(asmVer == csprojVer.Split('-')[0],
+            $"Assembly version matches csproj base version (asm={asmVer}, csproj={csprojVer})");
+        check(Version.TryParse(asmVer, out var parsed) && parsed >= new Version(0, 3, 4),
+            $"Version is >= 0.3.4 (actual={asmVer})");
+
         var issPath = Path.Combine(root, "Publish", "installer.iss");
         var psPath = Path.Combine(root, "发布.ps1");
         var issText = File.ReadAllText(issPath);
         var psText = File.ReadAllText(psPath);
-        check(issText.Contains("#define MyAppVersion \"0.3.4\"", StringComparison.Ordinal)
-              && issText.Contains("#define MyFileVersion \"0.3.4.0\"", StringComparison.Ordinal),
-            "installer.iss defines 0.3.4 and 0.3.4.0");
-        check(psText.Contains("param([string]$Version = \"0.3.4\"", StringComparison.Ordinal),
-            "发布.ps1 defaults to version 0.3.4");
+        var fileVer = csprojVer.Split('-')[0] + ".0";
+        check(issText.Contains($"#define MyAppVersion \"{csprojVer}\"", StringComparison.Ordinal)
+              && issText.Contains($"#define MyFileVersion \"{fileVer}\"", StringComparison.Ordinal),
+            $"installer.iss defines {csprojVer} and {fileVer}");
+        check(psText.Contains("BiliTouch.csproj", StringComparison.Ordinal),
+            "发布.ps1 reads default version from BiliTouch.csproj single source of truth");
     }
 
     private static void TestPressRingAdorner(Action<bool, string> check)

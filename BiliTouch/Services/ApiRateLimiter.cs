@@ -70,7 +70,9 @@ internal sealed class ApiRateLimiter
         {
             if (until > _penalizedUntilTicks) _penalizedUntilTicks = until;
             _tokens = 0;
-            _lastRefillTicks = Environment.TickCount64;
+            // 冷静期内禁止暗中攒满令牌：从冷静期结束那一刻才重新按持续速率回补，
+            // 否则冷静期一结束就瞬间恢复满桶 24 令牌，排队请求同时涌出再次触发 -412。
+            _lastRefillTicks = _penalizedUntilTicks;
         }
     }
 

@@ -79,6 +79,8 @@ public sealed class CdnService
     //   命中时用**当前视频**的模板 ReplaceHost 重建, 不会复用别人的过期签名。
     private string? _cachedBestHost;
     private DateTime _cachedAt = DateTime.MinValue;
+    private string? _failedManualId;
+    private DateTime _failedManualUntil = DateTime.MinValue;
     private string? _lastReport;
 
     /// <summary>最近一轮测速冠军的吞吐(字节/秒); 没测过为 0。给 BufferPolicy 自动档用</summary>
@@ -177,20 +179,35 @@ public sealed class CdnService
         if (settings.CdnMode == CdnSelectMode.Manual)
         {
             var target = CdnOption.ById(settings.CdnManualId);
-            var manualUrl = target == null ? null : TryBuildSwapped(pool, target.Host);
-            if (manualUrl != null)
+            var manualFailed = false;
+            lock (_gate)
             {
-                _ = Task.Run(async () =>
+                manualFailed = target != null &&
+                    string.Equals(_failedManualId, target.Id, StringComparison.Ordinal) &&
+                    DateTime.UtcNow < _failedManualUntil;
+            }
+            if (!manualFailed)
+            {
+                var manualUrl = target == null ? null : TryBuildSwapped(pool, target.Host);
+                if (manualUrl != null)
                 {
-                    var (ok, _, _) = await ProbeAsync(manualUrl!).ConfigureAwait(false);
-                    if (ok) return;
-                    // 指定的这家拉不动(实测个别 CDN 会 403): 预热一轮测速,
-                    // 让下一条视频直接用赢家; 本条已经用指定线路在播, 不动它。
-                    lock (_gate)
-                        _lastReport = $"{DateTime.Now:HH:mm:ss} 指定的 {target!.Name} 不可用, 下一条起将自动改用最快线路";
-                    WarmUpInBackground(pool);
-                });
-                return Task.FromResult(manualUrl);
+                    var capturedTarget = target!;
+                    _ = Task.Run(async () =>
+                    {
+                        var (ok, _, _) = await ProbeAsync(manualUrl!).ConfigureAwait(false);
+                        if (ok) return;
+                        // 指定的这家拉不动(实测个别 CDN 会 403): 标记熔断窗口并预热测速,
+                        // 让下一条视频真正改走最快线路。
+                        lock (_gate)
+                        {
+                            _failedManualId = capturedTarget.Id;
+                            _failedManualUntil = DateTime.UtcNow + TimeSpan.FromMinutes(5);
+                            _lastReport = $"{DateTime.Now:HH:mm:ss} 指定的 {capturedTarget.Name} 不可用, 下一条起将自动改用最快线路";
+                        }
+                        WarmUpInBackground(pool);
+                    });
+                    return Task.FromResult(manualUrl);
+                }
             }
         }
 
@@ -317,7 +334,7 @@ public sealed class CdnService
         var candidates = BuildCandidateSet(pool);
         var budgeted = budget > TimeSpan.Zero;
 
-        using var cts = new CancellationTokenSource();
+        var cts = new CancellationTokenSource();
         if (budgeted) cts.CancelAfter(budget);
 
         var tasks = candidates.Select(async u =>
@@ -326,16 +343,22 @@ public sealed class CdnService
             return (url: u, ok, ms, bytes);
         }).ToList();
 
+        var allTasks = Task.WhenAll(tasks);
         if (budgeted)
         {
-            // 到点就收工。★ 不能 await Task.WhenAll: 它会把被取消的探针也等完(取消本身
-            //   也需要一次 IO 回调), 起播路径上这几百毫秒同样是白等。
-            await Task.WhenAny(Task.WhenAll(tasks), Task.Delay(budget)).ConfigureAwait(false);
+            using var delayCts = new CancellationTokenSource();
+            var delayTask = Task.Delay(budget, delayCts.Token);
+            await Task.WhenAny(allTasks, delayTask).ConfigureAwait(false);
+            delayCts.Cancel();
             try { cts.Cancel(); } catch { /* 已经结束 */ }
+            // 等所有探针结束后再释放 cts，避免仍在跑的 ProbeAsync 碰到已释放的 CTS
+            _ = allTasks.ContinueWith(_ => cts.Dispose(),
+                CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
         }
         else
         {
-            await Task.WhenAll(tasks).ConfigureAwait(false);
+            try { await allTasks.ConfigureAwait(false); }
+            finally { cts.Dispose(); }
         }
 
         var ranked = new List<(string Url, long BytesPerSecond, long ElapsedMs)>();

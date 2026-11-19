@@ -63,6 +63,8 @@ public static class MiddleClickAutoscroll
             new MouseWheelEventHandler(OnPreviewWheel));
         EventManager.RegisterClassHandler(typeof(ScrollViewer), Keyboard.PreviewKeyDownEvent,
             new KeyEventHandler(OnPreviewKeyDown));
+        EventManager.RegisterClassHandler(typeof(Window), Keyboard.PreviewKeyDownEvent,
+            new KeyEventHandler(OnPreviewKeyDown));
     }
 
     private static void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
@@ -79,17 +81,19 @@ public static class MiddleClickAutoscroll
         var sv = (ScrollViewer)sender;
         if (sv.ScrollableHeight <= 0 && sv.ScrollableWidth <= 0) return;
 
+        if (!sv.CaptureMouse()) return;
+        // 标记已处理，防止同一条隧道 PreviewMouseDown 继续落进嵌套内层 ScrollViewer 立刻把自己取消
+        e.Handled = true;
+
         _active = sv;
         _anchor = e.GetPosition(sv);
         _movedBeyondClick = false;
         _targetV = sv.VerticalOffset;
         _targetH = sv.HorizontalOffset;
         _lastTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
-        // 捕获后鼠标事件都路由到 ScrollViewer, 移出窗口也不会丢。
-        // 光标保持可见(不学浏览器隐藏): 光标指哪儿一目了然, 和圆标一起看距离好控速
-        sv.CaptureMouse();
         sv.MouseMove += OnMouseMove;
         sv.LostMouseCapture += OnLostCapture;
+        sv.Unloaded += OnUnloaded;
         CompositionTarget.Rendering += OnRendering;
 
         _glyph = new AutoscrollGlyph(sv, _anchor,
@@ -113,6 +117,7 @@ public static class MiddleClickAutoscroll
     }
 
     private static void OnLostCapture(object? sender, MouseEventArgs e) => End();
+    private static void OnUnloaded(object? sender, RoutedEventArgs e) => End();
 
     private static void OnPreviewWheel(object sender, MouseWheelEventArgs e)
     {
@@ -172,6 +177,7 @@ public static class MiddleClickAutoscroll
         {
             _active.MouseMove -= OnMouseMove;
             _active.LostMouseCapture -= OnLostCapture;
+            _active.Unloaded -= OnUnloaded;
             _active.ReleaseMouseCapture();
             _active = null;
         }

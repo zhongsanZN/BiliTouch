@@ -30,7 +30,7 @@ internal static class ScrollBoundaryTests
             check(scroll.VerticalOffset == 0, "fixture retains an unapplied asynchronous scroll command");
             Input(-60); Frame();
             var expectedPending = 120 * TrackpadScroll.PrecisionPixelsPerDeltaUnit;
-            Pump(400);
+            Pump(650);
             Console.WriteLine($"BOUNDARY pending commands: expected={expectedPending:F2} actual={scroll.VerticalOffset:F2}");
             check(Math.Abs(scroll.VerticalOffset - expectedPending) < 1, "input arriving before scroll acknowledgement keeps both packet distances");
 

@@ -105,7 +105,8 @@ public sealed class FilterService : INotifyPropertyChanged
         // Refresh 一次**所有**注册过的视图(首页四个 tab + 收藏 + 历史 + 搜索 + 分区 + 关注…)。
         // 每次 Refresh 都要把容器全部重建一遍(VideoCard 还不轻, 带封面加载和入场动画),
         // 键盘按住不放时表现就是明显卡顿。攒 220ms 再刷一次, 手感上依然是"边打边变"。
-        _debounce = new DispatcherTimer(DispatcherPriority.Background)
+        var uiDispatcher = System.Windows.Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
+        _debounce = new DispatcherTimer(DispatcherPriority.Background, uiDispatcher)
         {
             Interval = TimeSpan.FromMilliseconds(220)
         };
@@ -504,7 +505,11 @@ public sealed class FilterService : INotifyPropertyChanged
                 continue;
             }
             try { view.Refresh(); }
-            catch { _viewOrder.RemoveAt(i); }
+            catch
+            {
+                _viewOrder.RemoveAt(i);
+                _views.Remove(view);
+            }
         }
 
         // 页面可能因为"筛掉一屏"而需要补内容。回调里不要抛到筛选流程上。

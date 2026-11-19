@@ -99,11 +99,14 @@ public static class ThemeTransition
         overlay.Height = h;
         overlay.HorizontalAlignment = HorizontalAlignment.Left;
         overlay.VerticalAlignment = VerticalAlignment.Top;
-        overlay.Stretch = Stretch.None;
+        // Stretch.Fill 确保当 root 挂了 UiScale LayoutTransform 时，截图恰好铺满预变换的 (w, h) 区域，
+        // 经 root.LayoutTransform 放大后严格 1:1 对齐真实屏幕像素（不再发生 1.5×1.5 二次缩放或右下裁切）。
+        overlay.Stretch = Stretch.Fill;
         overlay.IsHitTestVisible = false; // 别把动画期间的点击吃掉
-        // 根面板是 Grid, 让覆盖层跨过所有行列(否则只会落在第 0 列)
+        // 根面板是 Grid, 让覆盖层跨过所有行列并置顶，避免高 ZIndex 子弹层穿透快照提前跳色
         Grid.SetRowSpan(overlay, 99);
         Grid.SetColumnSpan(overlay, 99);
+        Panel.SetZIndex(overlay, int.MaxValue);
 
         // 圆洞: 矩形 减去 圆。半径 0 时"减掉"的区域为空, 快照完整可见。
         // 半径不能真的写 0 —— 退化几何在组合运算里行为不一致, 用 0.01 更稳。
@@ -236,8 +239,17 @@ public static class ThemeTransition
     private static Image? Capture(FrameworkElement root, double w, double h)
     {
         var dpi = VisualTreeHelper.GetDpi(root);
-        var fullW = (int)Math.Ceiling(w * dpi.DpiScaleX);
-        var fullH = (int)Math.Ceiling(h * dpi.DpiScaleY);
+        // root 挂了 UiScale 的 LayoutTransform(ScaleTransform) 时，bmp.Render(root) 会把 LayoutTransform 一起渲染进去，
+        // 因此位图必须按实际渲染尺寸 (w * scaleX, h * scaleY) 分配，否则 >100% 缩放时会裁掉右/下边缘。
+        var scaleX = 1.0;
+        var scaleY = 1.0;
+        if (root.LayoutTransform is ScaleTransform st)
+        {
+            if (st.ScaleX > 0.01) scaleX = st.ScaleX;
+            if (st.ScaleY > 0.01) scaleY = st.ScaleY;
+        }
+        var fullW = (int)Math.Ceiling(w * scaleX * dpi.DpiScaleX);
+        var fullH = (int)Math.Ceiling(h * scaleY * dpi.DpiScaleY);
         if (fullW <= 0 || fullH <= 0) return null;
 
         if ((long)fullW * fullH > SnapshotBudgetPixels) return null;
@@ -245,10 +257,9 @@ public static class ThemeTransition
         var bmp = new RenderTargetBitmap(
             fullW, fullH, 96 * dpi.DpiScaleX, 96 * dpi.DpiScaleY, PixelFormats.Pbgra32);
         bmp.Render(root);
-        bmp.Freeze(); // 冻结后可跨线程/被多个 ImageBrush 共享, 也少一层校验开销
+        bmp.Freeze();
 
-        // Stretch.None 保留原生像素映射，避免窗口尺寸取整后再对截图重采样。
-        var image = new Image { Source = bmp, Stretch = Stretch.None };
+        var image = new Image { Source = bmp, Stretch = Stretch.Fill };
         return image;
     }
 

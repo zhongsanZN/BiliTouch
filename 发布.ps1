@@ -14,17 +14,30 @@
 # 用法(在仓库根目录):
 #   powershell -ExecutionPolicy Bypass -File 发布.ps1 [-Version 1.5.3]
 #
-# 注意: 这里的默认版本号要跟 App.AppVersion / csproj 的 <Version> / installer.iss 的
-# MyAppVersion 一起改 —— 它只决定 zip 的文件名, 不参与程序内部显示。
-param([string]$Version = "0.3.4", [string]$Configuration = "Release")
+# 注意: 默认版本号自动从 BiliTouch\BiliTouch.csproj 的 <Version> 读取（单一真理源），
+# 也可通过 -Version 显式覆盖。
+param([string]$Version = "", [string]$Configuration = "Release")
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-# 优先使用本项目配套 SDK，避免 PATH 里只有桌面运行时而无法构建。
+$CsprojPath = Join-Path $Root "BiliTouch\BiliTouch.csproj"
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = ([xml](Get-Content $CsprojPath -Raw)).Project.PropertyGroup |
+               ForEach-Object { $_.Version } | Where-Object { $_ } | Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        throw "无法从 $CsprojPath 读取 <Version>，请显式传入 -Version"
+    }
+    $Version = $Version.Trim()
+}
+# 优先使用本项目配套 SDK 与离线 NuGet 缓存，避免 PATH 里只有桌面运行时而无法构建。
 $bundledDotnetRoot = [IO.Path]::GetFullPath((Join-Path $Root '..\.tools\dotnet'))
 if (Test-Path -LiteralPath (Join-Path $bundledDotnetRoot 'sdk')) {
     $env:DOTNET_ROOT = $bundledDotnetRoot
     $env:PATH = $bundledDotnetRoot + [IO.Path]::PathSeparator + $env:PATH
+}
+$bundledNuget = [IO.Path]::GetFullPath((Join-Path $Root '..\.tools\nuget'))
+if (Test-Path -LiteralPath $bundledNuget) {
+    $env:NUGET_PACKAGES = $bundledNuget
 }
 $sdkList = & dotnet --list-sdks
 if ($LASTEXITCODE -ne 0 -or !($sdkList -match '^10\.')) {

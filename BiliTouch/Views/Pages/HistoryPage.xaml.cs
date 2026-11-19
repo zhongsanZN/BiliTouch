@@ -61,13 +61,17 @@ public partial class HistoryPage : UserControl
         if (!_loadedOnce)
         {
             _loadedOnce = true;
+            Vm.IsDirty = false;
             await Vm.LoadAsync(reset: true);
             return;
         }
 
-        // 再次进来: 上次没拿到内容(未登录 / 失败)就补拉一次。
-        // 判断条件写成"已经拿到内容才跳过", 这样登录之后回到这页不会只剩一条旧错误。
-        if (Vm.Entries.Count == 0) await Vm.LoadAsync(reset: true);
+        // 再次进来: 上次没拿到内容(未登录 / 失败)或播放器上报了新观看记录，自动刷新。
+        if (Vm.Entries.Count == 0 || Vm.IsDirty)
+        {
+            Vm.IsDirty = false;
+            await Vm.LoadAsync(reset: true);
+        }
     }
 
     // ------------------------------------------------------------ 滚动: 自动翻页

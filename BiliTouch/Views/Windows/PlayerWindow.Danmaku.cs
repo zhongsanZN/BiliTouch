@@ -197,11 +197,12 @@ public partial class PlayerWindow
     private void SetDanmakuClockRunning(bool running)
     {
         if (running == _dmClockRunning || _closing || _mp == null) return;
-        // 两侧都不额外取媒体时间: 冻结取"此刻所见", 恢复从"冻结处"续跑。
-        // 基准重置到"现在"是必须的 —— Stopwatch 一直在走, 不重置恢复瞬间会前跳一大段。
         _dmClockMedia = DanmakuClock();
         _dmClockStamp = _dmWatch.ElapsedMilliseconds;
         _dmClockRunning = running;
+        // 暂停时停掉 60~144Hz 渲染回调与看门狗，恢复播放时若有在飞弹幕立刻续跑，消除暂停期空转耗电
+        if (!running) StopDanmakuClock();
+        else if (_flying.Count > 0) StartDanmakuClock();
     }
 
     /// <summary>
@@ -914,9 +915,11 @@ public partial class PlayerWindow
             StopDanmakuClock();
             return;
         }
-        if (_closing) return;
-        // 时钟冻结(暂停/缓冲)期间位置不变，直接退出避免逐帧空转重算几十条弹幕位移
-        if (!_dmClockRunning) return;
+        if (_closing || !_dmClockRunning)
+        {
+            StopDanmakuClock();
+            return;
+        }
 
         // ★ 只读一次本地 Stopwatch, **一次原生调用都不做**(见 _dmWatch 那段说明)
         var now = DanmakuClock();
@@ -986,7 +989,7 @@ public partial class PlayerWindow
     {
         if (DanmakuGlyph == null || BtnDanmaku == null) return;
 
-        var usable = !_isLive && !_isLocalPlayback;
+        var usable = CanUseOnlineDanmaku;
         BtnDanmaku.IsEnabled = usable;
         BtnDanmaku.Opacity = usable ? 1.0 : 0.4;
         if (DanmakuComposer != null) DanmakuComposer.Visibility = usable ? Visibility.Visible : Visibility.Collapsed;
@@ -1016,8 +1019,14 @@ public partial class PlayerWindow
         _danmakuOutline = Svc.Settings.DanmakuOutline;
         UpdateDanmakuButton();
         _danmakuAreaRatio = Svc.Settings.DanmakuAreaPercent / 100.0;
-        if (DanmakuAreaSlider != null) DanmakuAreaSlider.Value = Svc.Settings.DanmakuAreaPercent;
-        if (DanmakuAreaValue != null) DanmakuAreaValue.Text = Svc.Settings.DanmakuAreaPercent + "%";
+        var prevSync = _syncingDanmakuLook;
+        _syncingDanmakuLook = true;
+        try
+        {
+            if (DanmakuAreaSlider != null) DanmakuAreaSlider.Value = Svc.Settings.DanmakuAreaPercent;
+            if (DanmakuAreaValue != null) DanmakuAreaValue.Text = Svc.Settings.DanmakuAreaPercent + "%";
+        }
+        finally { _syncingDanmakuLook = prevSync; }
 
         // 外观三项(不透明度/字号/速度)与描边开关
         ApplyDanmakuLook();

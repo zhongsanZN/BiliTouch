@@ -66,7 +66,23 @@ public sealed class SkinService : INotifyPropertyChanged
 
     // Pixel sample excludes the yellow rim and transparent padding. FlipXY makes each
     // boundary continuous without stretching, repainting or duplicating the wordmark.
+    private readonly Dictionary<(string Folder, int OpacityKey), Brush> _patternCache = new();
+
     public Brush Pattern(double opacity = 1, double phaseX = 0)
+    {
+        var folder = IsPhantomBlade ? PhantomBlade : StarParty;
+        if (Math.Abs(phaseX) < 0.01)
+        {
+            var key = (folder, (int)Math.Round(opacity * 1000));
+            if (_patternCache.TryGetValue(key, out var cached)) return cached;
+            var fresh = BuildPatternBrush(opacity, 0);
+            _patternCache[key] = fresh;
+            return fresh;
+        }
+        return BuildPatternBrush(opacity, phaseX);
+    }
+
+    private Brush BuildPatternBrush(double opacity, double phaseX)
     {
         var brush = new ImageBrush(Image("tail_bg"))
         {

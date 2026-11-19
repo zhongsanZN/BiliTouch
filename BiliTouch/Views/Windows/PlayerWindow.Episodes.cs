@@ -260,7 +260,8 @@ public partial class PlayerWindow
         _switchingSeasonEpisode = true;
         try
         {
-            try { _mp.Stop(); } catch { }
+            await ReplaceNativeInputAsync(null);
+            if (_closing) return;
             _currentBvid = ep.Bvid;
             // ★ 关键: 合集里的集是**在线稿件**, 不是本地文件/直播 —— 从离线缓存/直播那类入口
             //   切过来时这两个标志还是 true, 不清掉新片会被当成"没有在线上下文",
@@ -398,7 +399,8 @@ public partial class PlayerWindow
         _switchingPage = true;
         try
         {
-            try { _mp.Stop(); } catch { }
+            await ReplaceNativeInputAsync(null);
+            if (_closing) return;
             // ★ _currentBvid 一个字都不改: 分P 是同一个稿件的分段。改 bvid 会让
             //   弹幕游标 / 历史进度 / 三连状态全部挂到别的稿件上。
             //   ResetForNewMedia 照旧要调: cid 变了就是另一段内容, 进度、弹幕游标、

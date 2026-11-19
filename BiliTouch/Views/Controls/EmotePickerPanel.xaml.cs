@@ -19,18 +19,32 @@ public partial class EmotePickerPanel : UserControl
     private bool _loading;
     private bool _loadedOnce;
 
+    private SessionAccount _loadedAccount;
+
     public event Action<EmoteEntry>? EmoteSelected;
 
     public EmotePickerPanel()
     {
         InitializeComponent();
+        WeakEventManager<SessionManager, EventArgs>.AddHandler(
+            Svc.Session, nameof(SessionManager.AccountChanged), OnAccountChanged);
+    }
+
+    private void OnAccountChanged(object? sender, EventArgs e)
+    {
+        _loadedOnce = false;
+        _allPackages.Clear();
+        _selectedPackage = null;
+        PackageStrip.Children.Clear();
+        EmoteWrap.Children.Clear();
     }
 
     public async Task EnsureLoadedAsync(bool forceRefresh = false)
     {
         if (_loading) return;
-        if (_loadedOnce && !forceRefresh && _allPackages.Count > 0) return;
+        if (_loadedOnce && !forceRefresh && _loadedAccount.IsCurrent && _allPackages.Count > 0) return;
 
+        var account = Svc.Session.CaptureAccount();
         _loading = true;
         BtnRefresh.IsEnabled = false;
         StatusText.Text = "正在加载表情与收藏集…";
@@ -39,7 +53,9 @@ public partial class EmotePickerPanel : UserControl
         try
         {
             var (ok, err, packages) = await Svc.Api.GetReplyEmotePanelAsync("reply", forceRefresh);
+            if (!account.IsCurrent) return;
             _loadedOnce = true;
+            _loadedAccount = account;
             _allPackages = packages ?? new List<EmotePackage>();
             if (!ok || _allPackages.Count == 0)
             {

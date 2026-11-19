@@ -201,12 +201,23 @@
                         </StackPanel>
 
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                            <Button Click="OnLikeArticle" Style="{StaticResource SubtleButtonStyle}" Padding="10,6" Margin="0,0,6,0">
+                            <Button Click="OnLikeArticle" Padding="10,6" Margin="0,0,6,0">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+                                        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsLiked}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
                                 <StackPanel Orientation="Horizontal">
                                     <helpers:SkinActionIcon Kind="Like" IsActive="{Binding IsLiked}" Width="16" Height="16"
-                                                            Margin="0,0,5,0" Fill="{DynamicResource TextSecondaryBrush}"
+                                                            Stretch="Uniform" VerticalAlignment="Center"
+                                                            Margin="0,0,5,0" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                                                             Data="{StaticResource LikeIconGeometry}" />
-                                    <TextBlock Text="{Binding LikeText}" FontSize="12.5" Foreground="{DynamicResource TextPrimaryBrush}" />
+                                    <TextBlock Text="{Binding LikeText}" FontSize="12.5" VerticalAlignment="Center" Foreground="{DynamicResource TextPrimaryBrush}" />
                                 </StackPanel>
                             </Button>
                             <Button Click="OnFavoriteArticle" Style="{StaticResource SubtleButtonStyle}" Padding="10,6" Margin="0,0,6,0"
@@ -325,13 +336,23 @@
                                     <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                                         <TextBlock Text="{Binding RcTime}" FontSize="11" VerticalAlignment="Center"
                                                    Foreground="{DynamicResource TextTertiaryBrush}" Margin="0,0,8,0" />
-                                        <Button Click="OnLikeComment" IsEnabled="{Binding CanLike}" ToolTip="点赞"
-                                                Style="{StaticResource SubtleButtonStyle}">
+                                        <Button Click="OnLikeComment" IsEnabled="{Binding CanLike}" ToolTip="点赞">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsLiked}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource AccentTextBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
                                             <StackPanel Orientation="Horizontal">
                                                 <helpers:SkinActionIcon Kind="Like" IsActive="{Binding IsLiked}" Width="14" Height="14"
-                                                                        Margin="0,0,4,0" Fill="{DynamicResource TextSecondaryBrush}"
+                                                                        Stretch="Uniform" VerticalAlignment="Center"
+                                                                        Margin="0,0,4,0" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                                                                         Data="{StaticResource LikeIconGeometry}" />
-                                                <TextBlock Text="{Binding LikeText}" FontSize="12" Style="{StaticResource CommentReactionText}" />
+                                                <TextBlock Text="{Binding LikeText}" FontSize="12" VerticalAlignment="Center" Style="{StaticResource CommentReactionText}" />
                                             </StackPanel>
                                         </Button>
                                         <Button Content="回复" Click="OnReplyComment" Style="{StaticResource SubtleButtonStyle}" Margin="6,0" FontSize="12" />

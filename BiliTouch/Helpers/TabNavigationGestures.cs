@@ -16,8 +16,12 @@ namespace BiliTouch.Helpers;
 /// <summary>
 /// 通用横向页签手势协调器（支持触屏跟手与精确式触控板全幅双页并排中间态、自然过半阈值与连续打断零抽搐）。
 /// </summary>
-internal sealed class TabNavigationGestures
+internal sealed class TabNavigationGestures : IHorizontalSwipeHost
 {
+    bool IHorizontalSwipeHost.ContainsSwipePoint(Point screenPoint) => ContainsSwipePoint(screenPoint);
+    void IHorizontalSwipeHost.PreviewHorizontalWheel(double progress) => PreviewHorizontalWheel(progress);
+    void IHorizontalSwipeHost.SettleHorizontalWheelPreview(bool commit) => SettleHorizontalWheelPreview(commit);
+    void IHorizontalSwipeHost.SettlePrecisionTouchpadPreview(bool commit) => SettlePrecisionTouchpadPreview(commit);
     // A peer is a decorative, noninteractive copy of another page. Exposing its
     // duplicated controls to UI Automation both misrepresents the active page and
     // forces WPF to rebuild/validate a second large accessibility subtree during
@@ -34,8 +38,8 @@ internal sealed class TabNavigationGestures
         protected override bool IsContentElementCore() => false;
     }
     /// <summary>过八分之三触发切页（37.5% 容器宽度）</summary>
-    internal const double SwipePageRatio = 3.0 / 8.0;
-    private const double SwipeEdgeResist = 0.35;
+    internal const double SwipePageRatio = HorizontalSwipePhysics.CommitRatio;
+    private const double SwipeEdgeResist = HorizontalSwipePhysics.EdgeResist;
 
     private readonly FrameworkElement _content;
     private readonly FrameworkElement _tabs;
@@ -71,15 +75,34 @@ internal sealed class TabNavigationGestures
 
     private Point _start;
     private double _dx;
-    private bool _armed, _decided, _horizontal, _suppressClick;
+    private bool _armed, _decided, _horizontal;
+    private long _suppressClickUntil;
     private ScrollViewer? _scroll;
     private PanningMode _panning;
     private double _offset;
     private readonly System.Windows.Threading.DispatcherTimer _wheelIdle = new() { Interval = TimeSpan.FromMilliseconds(90) };
     private int _wheelAccum;
     private bool _wheelConsumed;
+    private RadioButton[]? _cachedButtons;
 
-    private RadioButton[] Buttons => CollectRadioButtons(_tabs).ToArray();
+    private RadioButton[] Buttons
+    {
+        get
+        {
+            if (_cachedButtons is { Length: > 0 } cached)
+            {
+                var stillValid = true;
+                for (var i = 0; i < cached.Length; i++)
+                {
+                    if (!cached[i].IsLoaded && _tabs.IsLoaded) { stillValid = false; break; }
+                }
+                if (stillValid) return cached;
+            }
+            var collected = CollectRadioButtons(_tabs).ToArray();
+            if (collected.Length > 0) _cachedButtons = collected;
+            return collected;
+        }
+    }
 
     internal int SelectedIndex => Array.FindIndex(Buttons, b => b.IsChecked == true);
 
@@ -97,7 +120,10 @@ internal sealed class TabNavigationGestures
         page.AddHandler(UIElement.PreviewTouchDownEvent, new EventHandler<TouchEventArgs>((_, e) => Begin(e.GetTouchPoint(null).Position, e.OriginalSource as DependencyObject)), true);
         page.AddHandler(UIElement.PreviewTouchMoveEvent, new EventHandler<TouchEventArgs>((_, e) => { if (Move(e.GetTouchPoint(null).Position)) e.Handled = true; }), true);
         page.AddHandler(UIElement.PreviewTouchUpEvent, new EventHandler<TouchEventArgs>((_, e) => { if (End()) e.Handled = true; }), true);
-        page.AddHandler(UIElement.PreviewMouseLeftButtonUpEvent, new MouseButtonEventHandler((_, e) => { if (_suppressClick) { e.Handled = true; _suppressClick = false; } }), true);
+        page.AddHandler(UIElement.PreviewMouseLeftButtonUpEvent, new MouseButtonEventHandler((_, e) =>
+        {
+            if (Environment.TickCount64 < _suppressClickUntil) { e.Handled = true; _suppressClickUntil = 0; }
+        }), true);
 
         _wheelIdle.Tick += (_, _) =>
         {
@@ -121,14 +147,34 @@ internal sealed class TabNavigationGestures
             e.Handled = true;
         };
 
+        void OnAppearanceChanged()
+        {
+            _pageSnapshots.Clear();
+            _peerCache.Clear();
+            _peerHost?.Children.Clear();
+        }
         page.DataContextChanged += (_, _) =>
         {
+            _cachedButtons = null;
             Cancel();
-            _pageSnapshots.Clear(); _peerCache.Clear(); _peerHost?.Children.Clear();
+            OnAppearanceChanged();
             QueuePeerWarmUp();
         };
-        page.Loaded += (_, _) => QueuePeerWarmUp();
-        page.Unloaded += (_, _) => Cancel();
+        page.Loaded += (_, _) =>
+        {
+            _cachedButtons = null;
+            ThemeService.Instance.ThemeChanged -= OnAppearanceChanged;
+            ThemeService.Instance.ThemeChanged += OnAppearanceChanged;
+            SkinService.Instance.Changed -= OnAppearanceChanged;
+            SkinService.Instance.Changed += OnAppearanceChanged;
+            QueuePeerWarmUp();
+        };
+        page.Unloaded += (_, _) =>
+        {
+            ThemeService.Instance.ThemeChanged -= OnAppearanceChanged;
+            SkinService.Instance.Changed -= OnAppearanceChanged;
+            Cancel();
+        };
         page.IsVisibleChanged += (_, _) => { if (!page.IsVisible) Cancel(); };
     }
 
@@ -353,7 +399,7 @@ internal sealed class TabNavigationGestures
         else
         {
             ClearPeerPreview();
-            _slide.X = dx * SwipeEdgeResist;
+            _slide.X = HorizontalSwipePhysics.RubberBand(dx, width);
         }
     }
 
@@ -388,7 +434,7 @@ internal sealed class TabNavigationGestures
     {
         _settleTarget = -1;
         var width = Math.Max(1, _content.ActualWidth);
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var ease = HorizontalSwipePhysics.SnapEase;
         var dur = TimeSpan.FromMilliseconds(160);
         if (_tabs is NavigationTabs navTabs) navTabs.SnapToSelected(true);
 
@@ -451,7 +497,7 @@ internal sealed class TabNavigationGestures
         var width = Math.Max(1, _content.ActualWidth);
         ApplyDragPosition(buttons, current, dragDx, width);
         EnsurePeerVisible(next, dragDx + (direction > 0 ? width : -width));
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var ease = HorizontalSwipePhysics.SnapEase;
         var dur = TimeSpan.FromMilliseconds(160);
         var done = false;
         var fallback = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Input)
@@ -509,7 +555,7 @@ internal sealed class TabNavigationGestures
         _touchDragOrigin = TakeOverSettle();
         _wheelPreviewActive = false;
         _dx = _touchDragOrigin;
-        _suppressClick = false;
+        _suppressClickUntil = 0;
         _start = point;
         _armed = true;
         for (var d = source; d != null; d = Parent(d))
@@ -576,7 +622,8 @@ internal sealed class TabNavigationGestures
             return false;
         }
 
-        _suppressClick = true;
+        // 时间窗抑制紧随其后的合成 MouseUp，不再永久置位吞掉下一次真正的鼠标点击
+        _suppressClickUntil = Environment.TickCount64 + 350;
         var width = Math.Max(1, _content.ActualWidth);
         var commit = Math.Abs(dx) >= width * SwipePageRatio;
         if (commit)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using BiliTouch.Helpers;
 using Microsoft.Web.WebView2.Core;
@@ -35,9 +36,24 @@ public class WebView2Service
         catch(System.Runtime.InteropServices.COMException){}
     }
 
-    public Task<CoreWebView2Environment> GetEnvironmentAsync()
-        => _envTask ??= CoreWebView2Environment.CreateAsync(
-            null, AppPaths.WebView2Dir, null);
+    public async Task<CoreWebView2Environment> GetEnvironmentAsync()
+    {
+        var task = _envTask;
+        if (task == null || task.IsFaulted || task.IsCanceled)
+        {
+            task = CoreWebView2Environment.CreateAsync(null, AppPaths.WebView2Dir, null);
+            _envTask = task;
+        }
+        try
+        {
+            return await task;
+        }
+        catch
+        {
+            if (ReferenceEquals(_envTask, task)) _envTask = null;
+            throw;
+        }
+    }
 
     /// <summary>初始化指定 WebView2 控件(挂载共享环境 + 应用主题色彩 + 视频页清理脚本)</summary>
     public async Task InitAsync(WebView2 webView)
@@ -52,22 +68,22 @@ public class WebView2Service
     /// <summary>为视频页注入的精简脚本: 隐藏广告/弹幕/推荐/举报/笔记/稍后看等
     /// 只保留播放器、点赞、关注、收藏、合集、UP主卡片、UP主首页入口
     /// 每次新文档创建时执行, 并通过 MutationObserver 持续清理动态加载内容</summary>
-    private static readonly HashSet<int> _cleanerInjectedWebViews = new();
+    private static readonly ConditionalWeakTable<WebView2, object> _cleanerInjectedWebViews = new();
 
     private async Task EnsureVideoCleanerInjectedAsync(WebView2 webView)
     {
-        var hash = webView.GetHashCode();
-        if (_cleanerInjectedWebViews.Contains(hash)) return;
+        if (_cleanerInjectedWebViews.TryGetValue(webView, out _)) return;
+        _cleanerInjectedWebViews.Add(webView, new object());
         try
         {
             await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(VideoPageCleanerScript);
             await webView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(AppCursor.WebScript);
             _cursorViews.Add(new WeakReference<WebView2>(webView));
             webView.CoreWebView2.NavigationCompleted += async (_,_) => await RefreshCursorAsync(webView);
-            _cleanerInjectedWebViews.Add(hash);
         }
         catch
         {
+            _cleanerInjectedWebViews.Remove(webView);
             // 注入失败不影响主流程
         }
     }
@@ -107,7 +123,7 @@ public class WebView2Service
     '[class*=""live-card""], [class*=""LiveCard""], [class*=""live-player""], [class*=""LivePlayer""],',
 
     '[class*=""bpx-player-mini-warn""], [class*=""MiniWarn""],',
-    '[class*=""bpx-player-issue""], [class*=""IssueBanner""],',
+    '[class*=""bpx-player-issue""], [class*=""IssueBanner""]',
 
     '{ display:none !important; visibility:hidden !important; }',
 
@@ -126,7 +142,7 @@ public class WebView2Service
 
     // ===== 右侧栏白名单: 只保留 UP 主卡片 + 合集, 其他(推荐/广告/直播)全部隐藏 =====
     '.right-container > *:not([class*=""up-""]):not([class*=""Up-""]):not([class*=""pugc""]):not([class*=""Pugc""]):not([class*=""episode""]):not([class*=""Episode""]):not([class*=""section""]),',
-    '[class*=""right-container""] > *:not([class*=""up-""]):not([class*=""Up-""]):not([class*=""pugc""]):not([class*=""Pugc""]):not([class*=""episode""]):not([class*=""Episode""]):not([class*=""section""]),',
+    '[class*=""right-container""] > *:not([class*=""up-""]):not([class*=""Up-""]):not([class*=""pugc""]):not([class*=""Pugc""]):not([class*=""episode""]):not([class*=""Episode""]):not([class*=""section""])',
     '{ display:none !important; visibility:hidden !important; }',
 
     // ===== 播放器内部广告/弹窗/充电面板 =====
@@ -141,7 +157,7 @@ public class WebView2Service
     '.bpx-player-pause-recommend, .bpx-player-recommend-bottom,',
     '.bpx-player-toast, [class*=""bpx-player-link""], [class*=""bpx-player-recommend""],',
     '[class*=""bpx-player-toast""], [class*=""next-video""], [class*=""NextVideo""],',
-    '.bpx-player-video-info, .bpx-player-video-info-detail,',
+    '.bpx-player-video-info, .bpx-player-video-info-detail',
     '{ display:none !important; visibility:hidden !important; }'
   ].join('\n');
 
@@ -193,7 +209,7 @@ public class WebView2Service
         '[class*=""floor-card""]', '[class*=""floor-banner""]',
         '[class*=""login-tip""]', '[class*=""login-card""]', '[class*=""popup-login""]',
         '[class*=""video-note""]', '[class*=""VideoNote""]',
-        '[class^=""ad-""], [class*=""-ad-""], [class*=""_ad_""],',
+        '[class^=""ad-""]', '[class*=""-ad-""]', '[class*=""_ad_""]',
         '[class*=""live-card""]', '[class*=""LiveCard""]',
         '.bili-header', '.bili-footer', '.nav-bar-wrap'
       ].join(',');

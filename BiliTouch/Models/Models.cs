@@ -2493,7 +2493,27 @@ public class DynamicItem : System.ComponentModel.INotifyPropertyChanged
         IsLiked = liked;
         LikeCount = Math.Max(0, LikeCount + (liked ? 1 : -1));
         Notify(nameof(IsLiked));
+        Notify(nameof(LikeCount));
         Notify(nameof(LikeText));
+        Notify(nameof(LikeCountText));
+    }
+
+    public void AdjustCounts(int commentDelta = 0, int forwardDelta = 0)
+    {
+        if (commentDelta != 0)
+        {
+            CommentCount = Math.Max(0, CommentCount + commentDelta);
+            Notify(nameof(CommentCount));
+            Notify(nameof(CommentText));
+            Notify(nameof(CommentCountText));
+        }
+        if (forwardDelta != 0)
+        {
+            ForwardCount = Math.Max(0, ForwardCount + forwardDelta);
+            Notify(nameof(ForwardCount));
+            Notify(nameof(ForwardText));
+            Notify(nameof(ForwardCountText));
+        }
     }
 
     /// <summary>动态类型标识(接口原文的数字), 评论接口要用它区分 12/17(图文) 与 1(转发)</summary>

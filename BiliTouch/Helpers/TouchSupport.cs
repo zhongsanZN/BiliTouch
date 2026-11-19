@@ -196,8 +196,12 @@ public static class TouchSupport
         EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.LostTouchCaptureEvent,
             new EventHandler<TouchEventArgs>((sender, _) =>
             {
-                // 同上: 任何一个 viewer 丢捕获都代表这次触摸已经不由我们掌握, 无条件清
+                // 同上: 任何一个 viewer 丢捕获都代表这次触摸已经不由我们掌握, 无条件清，
+                // 并一并释放 _tapSource/_tapViewer 防止强引用泄漏与下次触摸误开旧卡片。
                 ClearTouchPanning();
+                _tapViewer = null;
+                _tapSource = null;
+                _tapMoved = false;
             }), true);
         // Suppress window bounce at the end of a list, while retaining native pan inertia.
         EventManager.RegisterClassHandler(typeof(ScrollViewer), UIElement.ManipulationBoundaryFeedbackEvent,

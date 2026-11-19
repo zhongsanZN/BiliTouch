@@ -136,11 +136,19 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
         }));
     }
 
-    /// <summary>按当前游标重建待插入队列(移除/清空之后用 —— Queue 不支持随机删除)。</summary>
+    /// <summary>外部入口（播放器/卡片右键）增删稍后再看后标脏，下次展示页面时自动刷新。</summary>
+    public bool IsDirty { get; set; }
+
+    /// <summary>按当前批次边界重建待插入队列(移除/清空之后用 —— Queue 不支持随机删除)。</summary>
     private void RebuildPending()
     {
+        // 只重建当前已翻出但尚未插入 Items 的批次 [_items.Count .. _shown)，
+        // 绝不能把 _all[_shown..] 全量塞进 _pending，否则 IsFilling 永久为 true 并锁死翻页。
         _pending.Clear();
-        for (var i = _shown; i < _all.Count; i++) _pending.Enqueue(_all[i]);
+        var start = Math.Min(Items.Count, _shown);
+        var end = Math.Min(_shown, _all.Count);
+        for (var i = start; i < end; i++) _pending.Enqueue(_all[i]);
+        if (_pending.Count > 0) SchedulePump();
         OnPropertyChanged(nameof(HasMore));
     }
 
@@ -150,8 +158,12 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
         var idx = _all.IndexOf(item);
         if (idx < 0) return;
         _all.RemoveAt(idx);
-        // 已经铺出去的才需要从视图里摘; 还在队列里的直接随 RebuildPending 一起消失
-        if (idx < _shown && Items.Remove(item)) _shown--;
+        // 已经翻入当前批次（含已在 Items 或仍在 _pending 队列中）的条目，游标一并回退 1
+        if (idx < _shown)
+        {
+            Items.Remove(item);
+            if (_shown > 0) _shown--;
+        }
         RebuildPending();
         OnPropertyChanged(nameof(CountText));
     }
@@ -181,6 +193,7 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
 
         // 分帧铺卡片时每加一条都要刷新选择态(计数与全选按钮文案), 由基类统一挂接
         HookSelectionSource();
+        Svc.UserState.SubscribeWatchLater(this, _ => IsDirty = true);
         WeakEventManager<SessionManager, EventArgs>.AddHandler(Svc.Session,
             nameof(SessionManager.AccountChanged), OnAccountChanged);
     }
@@ -281,8 +294,8 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
                 Svc.Toast.Show("移出失败: " + (err ?? "未知错误"));
                 return;
             }
-            RemoveEverywhere(item);
             if (_total > 0) _total--;
+            RemoveEverywhere(item);
             if (_all.Count == 0) Error = "稍后再看是空的";
         }
         finally
@@ -297,7 +310,7 @@ public class WatchLaterViewModel : VideoListSelectionViewModel
         if (Busy) return;
         var account = Svc.Session.CaptureAccount();
         if (!account.IsLoggedIn || !_account.IsCurrent) return;
-        var targets = Items.Where(x => x.IsSelected).ToList();
+        var targets = VisibleItems().Where(x => x.IsSelected).ToList();
         if (targets.Count == 0)
         {
             Svc.Toast.Show("还没有选择要移出的视频");

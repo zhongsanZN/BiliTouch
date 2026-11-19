@@ -109,10 +109,13 @@ internal sealed class PrecisionTouchpadInput : IDisposable
             _claimed = _eligible = _verticalLocked = false; _ended = false; _target = null; _motion.Clear();
             ReadPreferences();
             _target = _panEnabled ? _resolve(new Point(info.Pixel.X, info.Pixel.Y)) : null;
-            _eligible = _target != null && GetPointerDeviceRects(info.Device, out var device, out _) && device.Right > device.Left;
-            _motion.Reset(_eligible ? DeviceWidth(info.Device) : 1);
+            double deviceWidth = 0;
+            if (_target != null && GetPointerDeviceRects(info.Device, out var device, out _) && device.Right > device.Left)
+                deviceWidth = device.Right - device.Left;
+            _eligible = deviceWidth > 0;
+            _motion.Reset(_eligible ? deviceWidth : 1);
             _progressFilter.Reset();
-            Trace($"down eligible={_eligible} width={(_eligible ? DeviceWidth(info.Device) : 0):F0} target={_target?.Name}");
+            if (InputTrace != null) Trace($"down eligible={_eligible} width={deviceWidth:F0} target={_target?.Name}");
             _ended = false;
         }
         if (!_eligible) return IntPtr.Zero;
@@ -202,8 +205,13 @@ internal sealed class PrecisionTouchpadInput : IDisposable
         }
         catch (InvalidOperationException) { return false; }
     }
+    private long _prefsReadAt;
+
     private void ReadPreferences()
     {
+        var now = Environment.TickCount64;
+        if (_prefsReadAt != 0 && now - _prefsReadAt < 5000) return;
+        _prefsReadAt = now;
         using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad");
         _panEnabled = (key?.GetValue("PanEnabled") as int? ?? 1) != 0;
         _direction = (key?.GetValue("ScrollDirection") as int? ?? 0) == 0 ? 1 : -1;
@@ -236,9 +244,21 @@ internal sealed class PrecisionTouchpadInput : IDisposable
             if (_contacts.TryGetValue(id, out var old)) _contacts[id] = (old.startX, old.startY, x, y);
             else if (active) _contacts[id] = (x, y, x, y);
         }
-        internal (double x, double y) Displacement => _contacts.Count == 0 ? (0, 0) :
-            (_contacts.Values.Average(p => p.x - p.startX) / _width,
-             _contacts.Values.Average(p => p.y - p.startY) / _width);
+        internal (double x, double y) Displacement
+        {
+            get
+            {
+                var n = _contacts.Count;
+                if (n == 0) return (0, 0);
+                double sumX = 0, sumY = 0;
+                foreach (var p in _contacts.Values)
+                {
+                    sumX += p.x - p.startX;
+                    sumY += p.y - p.startY;
+                }
+                return (sumX / n / _width, sumY / n / _width);
+            }
+        }
     }
 
     /// <summary>A new session requires every contact from the previous one to leave.</summary>

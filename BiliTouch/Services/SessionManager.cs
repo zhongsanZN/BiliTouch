@@ -129,48 +129,40 @@ public class SessionManager
         _loaded = true;   // 磁盘上那份已经不在了, 现在这份空会话就是"真相"
     }
 
+    private readonly object _ioGate = new();
+
     public void Save()
     {
-        try
+        lock (_ioGate)
         {
-            // 磁盘上那份读不懂 -> 先挪开再写。不这么做的话, 下面的闸门一会把
-            // **真实登录**的写入也挡掉, 用户就是"提示登录成功、重启仍未登录"且无法自救。
-            ParkUnreadable();
-
-            // ★★ 闸门一: 没 Load 过就绝不落盘。
-            //   调用方想改会话, 前提是先知道当前会话是什么。没读过就写, 一定是覆盖。
-            if (!_loaded)
+            try
             {
-                App.ReportError(new InvalidOperationException(
-                    "SessionManager.Save() 在 Load() 之前被调用, 已拒绝(防止覆盖磁盘上的登录态)"));
-                return;
-            }
+                // 磁盘上那份读不懂 -> 先挪开再写。不这么做的话, 下面的闸门一会把
+                // **真实登录**的写入也挡掉, 用户就是"提示登录成功、重启仍未登录"且无法自救。
+                ParkUnreadable();
 
-            // ★★ 闸门二: 内存里没有登录态, 但磁盘上**有** —— 这是"要把别人登出"的形状, 拒绝。
-            //
-            //   为什么这条必须有: 上一版只挡了"SessData/Buvid3/Buvid4 三者全空",
-            //   而真实事故里的状态是 **SessData=null + Buvid3/Buvid4 有值**
-            //   (某个流程只补了设备指纹就 Save) —— 那时三者不全空, 守卫放行了,
-            //   于是磁盘上好好的登录态被一份"未登录"覆盖掉, 用户被登出。
-            //
-            //   合法地想清空登录只有一条路: Clear()(删文件)。而"用户本来就是未登录"
-            //   这一情形在磁盘上也是没有 SessData 的, 不会命中这条。
-            if (string.IsNullOrEmpty(Current.SessData) && OnDiskHasLogin())
+                // ★★ 闸门一: 没 Load 过就绝不落盘。
+                if (!_loaded)
+                {
+                    App.ReportError(new InvalidOperationException(
+                        "SessionManager.Save() 在 Load() 之前被调用, 已拒绝(防止覆盖磁盘上的登录态)"));
+                    return;
+                }
+
+                // ★★ 闸门二: 内存里没有登录态, 但磁盘上**有** —— 这是"要把别人登出"的形状, 拒绝。
+                if (string.IsNullOrEmpty(Current.SessData) && OnDiskHasLogin())
+                {
+                    App.ReportError(new InvalidOperationException(
+                        "SessionManager.Save() 试图用一份未登录的会话覆盖磁盘上已登录的会话, 已拒绝"));
+                    return;
+                }
+
+                Helpers.AtomicFile.WriteAllText(FilePath, JsonSerializer.Serialize(Current, JsonOpts));
+            }
+            catch
             {
-                App.ReportError(new InvalidOperationException(
-                    "SessionManager.Save() 试图用一份未登录的会话覆盖磁盘上已登录的会话, 已拒绝"));
-                return;
+                // 忽略
             }
-
-            // 先写临时文件再原子替换: 直接覆写的话, 写入瞬间崩溃/断电会留下半个
-            // session.json —— JSON 解析失败 = 登录态丢失, 用户要重新扫码。
-            var tmp = FilePath + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(Current, JsonOpts));
-            File.Move(tmp, FilePath, overwrite: true);
-        }
-        catch
-        {
-            // 忽略
         }
     }
 
@@ -333,31 +325,24 @@ public class SessionManager
             Buvid4 = keepBuvid4,
             BuvidFp = keepBuvidFp,
         };
-        _loaded = true;
-        // ★★ 删文件 → 再把"保留下来的设备指纹"写回去(2026-10-17 实测发现漏了这步):
-        //   Clear() 的原设计是"删掉整个 session.json = 未登录"。但现在我们**刻意保留**了
-        //   buvid3/buvid4, 而文件已经删了 —— 若不落盘, 内存里有、磁盘上无:
-        //     · 下次重启 Load() 读不到 buvid ⇒ 变成一台"新设备"重新领一对
-        //       (与登出前连续的身份被打断, 重新登录后还要再换一次);
-        //     · 更糟的是登出后若进程被杀, 这次保留就白做了。
-        //
-        // ★★ 为什么不复用 Save(): 它写的是 `Current`(字段全、含 bili_jct 等),
-        //   而这里只想要"一个只含 buvid 的干净会话"; 更关键的是 `Save()` 的闸门二
-        //   依赖 `OnDiskHasLogin()` 判断"要不要拒绝覆盖", 在文件刚被删、又需要
-        //   写一份"未登录"回去的语境下, 语义是拧着的。⇒ 直接写, 一次到位。
-        try
+        lock (_ioGate)
         {
-            var keep = new Session
+            _loaded = true;
+            _diskUnreadable = false;
+            try
             {
-                Buvid3 = keepBuvid3,
-                Buvid4 = keepBuvid4,
-                BuvidFp = keepBuvidFp,
-            };
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(keep, JsonOpts));
-        }
-        catch
-        {
-            // 忽略
+                var keep = new Session
+                {
+                    Buvid3 = keepBuvid3,
+                    Buvid4 = keepBuvid4,
+                    BuvidFp = keepBuvidFp,
+                };
+                Helpers.AtomicFile.WriteAllText(FilePath, JsonSerializer.Serialize(keep, JsonOpts));
+            }
+            catch
+            {
+                // 忽略
+            }
         }
 
         // ★★ 退出登录时必须同时清掉 ApiClient 内存里的设备指纹(2026-10-12 16:33 实测):
