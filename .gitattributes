@@ -8,13 +8,25 @@
 #   显式声明 eol=lf 之后, 行尾由本文件说了算, 不再取决于每台机器的全局设置。
 * text=auto eol=lf
 
+# Windows 批处理脚本在 cmd.exe 下要求 CRLF 行尾，避免标签跳转与多行括号块解析错位
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
 # ---- 二进制: 禁止行尾转换, 也别让 git 试图对它们做文本 diff ----
 # (text=auto 已能自动识别, 这里显式列出是双保险: 识别错了的后果是二进制被"清洗")
 *.png binary
 *.jpg binary
 *.jpeg binary
 *.gif binary
+*.webp binary
 *.ico binary
+*.ttf binary
+*.otf binary
+*.woff2 binary
+*.wav binary
+*.mp3 binary
+*.mp4 binary
+*.exe binary
 *.dll binary
 *.lib binary
 *.exp binary
