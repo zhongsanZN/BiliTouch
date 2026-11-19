@@ -113,19 +113,22 @@ public partial class PlayerWindow
     /// 1) 禁用系统 DWM 窗口弹出缩放动画（消除"从屏幕中间展开新窗口"）；
     /// 2) 预挂载源窗口背景快照并隐藏原生 HwndHost，使窗口上屏第一帧与源页面完全连续。
     /// </summary>
+    private void EnsureSeamlessPresentationHook()
+    {
+        if (_seamless.PresentationHooked) return;
+        _seamless.PresentationHooked = true;
+        ContentRendered += (_, _) =>
+        {
+            _seamless.HasPresented = true;
+            if (_seamless.IsRunning && !_closing) AttachSeamlessFrameClock();
+        };
+    }
+
     internal void PrepareSeamlessPreShow()
     {
         if (_closing) return;
         ShowActivated = true;
-        if (!_seamless.PresentationHooked)
-        {
-            _seamless.PresentationHooked = true;
-            ContentRendered += (_, _) =>
-            {
-                _seamless.HasPresented = true;
-                if (_seamless.IsRunning && !_closing) AttachSeamlessFrameClock();
-            };
-        }
+        EnsureSeamlessPresentationHook();
         try
         {
             new WindowInteropHelper(this).EnsureHandle();
@@ -167,11 +170,9 @@ public partial class PlayerWindow
         if (_closing || string.IsNullOrEmpty(bvid) || RootGrid == null) return false;
         if (!SeamlessTransitionDirector.TryConsumeForPlayer(bvid, this, SeamlessStage, out var anchor, out var startRect))
         {
-            if (_seamless.PreShowPrepared)
+            if (_seamless.PreShowPrepared || _seamless.IsRunning || _seamless.EntryWindow != null)
             {
-                _seamless.PreShowPrepared = false;
-                RestorePlayerChromeAfterSeamless();
-                UnmountSeamlessEntryWindow();
+                StopSeamlessMorph();
             }
             return false;
         }
@@ -593,6 +594,7 @@ public partial class PlayerWindow
 
     internal void StopSeamlessMorph()
     {
+        var hadEntryWindow = _seamless.EntryWindow != null;
         UnmountSeamlessEntryWindow();
         var wasClosing = _seamless.IsClosingMorph;
         _seamless.IsRunning = false;
@@ -608,6 +610,10 @@ public partial class PlayerWindow
         if (!wasClosing && !_closing)
         {
             RestorePlayerChromeAfterSeamless();
+            if (hadEntryWindow && !_isEmbeddedInMain && !IsVisible)
+            {
+                try { Show(); } catch { }
+            }
             FlushPostEntryUiActions(execute: true);
             Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
             {

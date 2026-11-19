@@ -25,11 +25,23 @@ public partial class LiveRoomWindow
             ? _embeddedHost?.IsTabletPortraitPosture == true
             : Responsive.GetPosture(Root) == LayoutPosture.TabletPortrait;
 
+    protected override double EffectiveMinWidth =>
+        (Svc.Settings.TabletMode != TabletMode.Off
+         || (Root != null && Responsive.GetPosture(Root) == LayoutPosture.TabletPortrait))
+            ? 480
+            : 840;
+
+    protected override void OnStateChanged(EventArgs e)
+    {
+        base.OnStateChanged(e);
+        if (WindowState != WindowState.Maximized)
+            SyncLiveTabletConstraints();
+    }
+
     internal void SyncLiveTabletConstraints()
     {
-        var allowNarrow = Svc.Settings.TabletMode != TabletMode.Off
-                          || Responsive.GetPosture(Root) == LayoutPosture.TabletPortrait;
-        var targetMin = allowNarrow ? 480 : 840;
+        if (WindowState == WindowState.Maximized) return;
+        var targetMin = EffectiveMinWidth;
         if (Math.Abs(MinWidth - targetMin) > 0.5) MinWidth = targetMin;
     }
 
@@ -147,5 +159,13 @@ public partial class LiveRoomWindow
         if (!ReferenceEquals(source, expected)) return;
         SyncLiveTabletConstraints();
         ApplyChatLayout();
+        if (!_isEmbeddedInMain && WindowState == WindowState.Maximized)
+        {
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+            {
+                if (!IsClosing && WindowState == WindowState.Maximized)
+                    SyncMaximizedLayoutAfterShellChange();
+            }));
+        }
     }
 }

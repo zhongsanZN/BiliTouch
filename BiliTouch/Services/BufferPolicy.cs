@@ -46,9 +46,11 @@ public enum BufferMediaKind
 /// </summary>
 public static class BufferPolicy
 {
-    /// <summary>自动档假设的流码率。DASH 常见 1080P ≈ 2~3Mbps, 取中值; durl 单流略低</summary>
-    private const long AssumedDashBitrateBps = 2_500_000;
+    /// <summary>自动档假设的流码率。DASH 含 1080P60/4K 与高码率/Hi-Res 音轨双流并发，按 6Mbps 估算；durl 单流略低</summary>
+    private const long AssumedDashBitrateBps = 6_000_000;
     private const long AssumedSingleBitrateBps = 2_000_000;
+    /// <summary>DASH 双流（video + input-slave 音轨）自动档最低缓冲下限，防止 500ms 诱发音频漂移重采样与欠载</summary>
+    private const int VodDashAutoFloorMs = 1000;
 
     /// <summary>"极短片"的时长上限 —— 与 ApiClient.ShortVideoRemuxThresholdMs 对齐(60s)。
     /// 短片预读太深没有意义(还没缓冲满就播完了), 自动档给它封个顶。</summary>
@@ -120,6 +122,8 @@ public static class BufferPolicy
                    : ratio >= 3 ? 1000
                    : ratio >= 1.5 ? 2000
                    : 3000;
+            if (kind == BufferMediaKind.VodDash && !shortVideo)
+                baseMs = Math.Max(baseMs, VodDashAutoFloorMs);
         }
 
         // 极短片: 预读超过 1 秒大概率白等(还没缓冲满就播完了)

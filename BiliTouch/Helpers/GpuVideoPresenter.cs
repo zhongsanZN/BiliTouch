@@ -37,9 +37,13 @@ internal sealed class GpuVideoPresenter : IDisposable
     public event Action? FrontBufferRestored;
     public bool FrontBufferAvailable => Image.IsFrontBufferAvailable;
     private bool _pending;
+    private long _pendingStartedAt;
+    private bool _frontBufferNeedsRebind;
     public long Attempts { get; private set; }
     public long LockMisses { get; private set; }
     public bool Pending => _pending;
+    public bool IsPendingStalled(long timeoutMs) =>
+        _pending && _pendingStartedAt > 0 && Environment.TickCount64 - _pendingStartedAt >= timeoutMs;
     public D3DImage Image { get; } = new();
     public int Width { get; private set; }
     public int Height { get; private set; }
@@ -126,6 +130,7 @@ internal sealed class GpuVideoPresenter : IDisposable
             Image.Lock();
             try { Image.SetBackBuffer(D3DResourceType.IDirect3DSurface9, _surface9.NativePointer, true); }
             finally { Image.Unlock(); }
+            _frontBufferNeedsRebind = false;
             _inputWidth = width; _inputHeight = height;
             Width = outputWidth; Height = outputHeight;
         }
@@ -135,15 +140,35 @@ internal sealed class GpuVideoPresenter : IDisposable
             throw;
         }
     }
+    public void CheckDeviceHealth()
+    {
+        _device.DeviceRemovedReason.CheckError();
+        _device9.CheckDeviceState(IntPtr.Zero);
+    }
+    private bool EnsureFrontBufferBound()
+    {
+        if (_surface9 == null) return false;
+        if (!Image.IsFrontBufferAvailable)
+        {
+            _frontBufferNeedsRebind = true;
+            CheckDeviceHealth();
+            return false;
+        }
+        if (_frontBufferNeedsRebind)
+        {
+            CheckDeviceHealth();
+            Image.Lock();
+            try { Image.SetBackBuffer(D3DResourceType.IDirect3DSurface9, _surface9.NativePointer, true); }
+            finally { Image.Unlock(); }
+            _frontBufferNeedsRebind = false;
+        }
+        return true;
+    }
     public bool Begin(IntPtr pixels, int pitch)
     {
         Attempts++;
         if (_pending) return false;
-        if (!Image.IsFrontBufferAvailable)
-        {
-            _device.DeviceRemovedReason.CheckError();
-            return false;
-        }
+        if (!EnsureFrontBufferBound()) return false;
         if (!Image.TryLock(new Duration(TimeSpan.Zero)))
         {
             // D3DImage increments its nesting count even when TryLock times out.
@@ -159,24 +184,27 @@ internal sealed class GpuVideoPresenter : IDisposable
             _fence.SetEventOnCompletion(_signal, _frameReady.SafeWaitHandle.DangerousGetHandle());
             _context.Flush();
             _pending = true;
+            _pendingStartedAt = Environment.TickCount64;
             return true;
         }
         catch { Image.Unlock(); throw; }
     }
     private void OnFrontBufferAvailableChanged(object? sender, DependencyPropertyChangedEventArgs e)
     {
-        if (!_disposed && Image.IsFrontBufferAvailable) FrontBufferRestored?.Invoke();
+        if (_disposed) return;
+        _frontBufferNeedsRebind = true;
+        if (Image.IsFrontBufferAvailable) FrontBufferRestored?.Invoke();
     }
     public bool Complete()
     {
         if (!_pending) return false;
         if (_fence.CompletedValue < _signal)
         {
-            _device.DeviceRemovedReason.CheckError();
+            CheckDeviceHealth();
             return false;
         }
         try { Image.AddDirtyRect(new Int32Rect(0, 0, Width, Height)); }
-        finally { _pending = false; Image.Unlock(); }
+        finally { _pending = false; _pendingStartedAt = 0; Image.Unlock(); }
         return true;
     }
     public BitmapSource Capture()

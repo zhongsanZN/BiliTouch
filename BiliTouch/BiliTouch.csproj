@@ -16,7 +16,7 @@
     <AssemblyTitle>BiliTouch</AssemblyTitle>
     <Product>BiliTouch</Product>
     <Authors>中三</Authors>
-    <Version>0.3.6</Version>
+    <Version>0.3.7</Version>
     <!-- 按目标 RID/Platform 选择架构：默认 x64；指定 -r win-arm64 或 Platform=ARM64 时切换原生 ARM64（面向 ARM 版 Surface） -->
     <IsArm64Target>false</IsArm64Target>
     <IsArm64Target Condition="'$(RuntimeIdentifier)' == 'win-arm64' OR '$(Platform)' == 'ARM64'">true</IsArm64Target>
@@ -110,8 +110,7 @@
                           $(PublishDir)libvlc\$(_VlcRid)\plugins\lua;
                           $(PublishDir)libvlc\$(_VlcRid)\plugins\mux;
                           $(PublishDir)libvlc\$(_VlcRid)\plugins\meta_engine;
-                          $(PublishDir)libvlc\$(_VlcRid)\lua;
-                          $(PublishDir)libvlc\$(_VlcRid)\hrtfs" />
+                          $(PublishDir)libvlc\$(_VlcRid)\lua" />
       <_VlcTrimFile Include="$(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libx264_plugin.dll;
                            $(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libx26410b_plugin.dll;
                            $(PublishDir)libvlc\$(_VlcRid)\plugins\codec\libx265_plugin.dll;
@@ -139,7 +138,6 @@
                            $(PublishDir)libvlc\$(_VlcRid)\plugins\demux\libsid_plugin.dll;
                            $(PublishDir)libvlc\$(_VlcRid)\plugins\demux\libgme_plugin.dll;
                            $(PublishDir)libvlc\$(_VlcRid)\plugins\demux\libmod_plugin.dll;
-                           $(PublishDir)libvlc\$(_VlcRid)\plugins\audio_filter\libspatialaudio_plugin.dll;
                            $(PublishDir)libvlc\$(_VlcRid)\plugins\audio_filter\libmad_plugin.dll;
                            $(PublishDir)libvlc\$(_VlcRid)\plugins\video_output\libcaca_plugin.dll;
                            $(PublishDir)libvlc\$(_VlcRid)\plugins\spu\libremoteosd_plugin.dll;

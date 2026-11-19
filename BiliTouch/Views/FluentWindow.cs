@@ -189,6 +189,7 @@ public class FluentWindow : Window
     protected virtual void OnDisplaySettingsChanged()
     {
         if (!IsLoaded) return;
+        if (WindowState == WindowState.Maximized) RefreshMaximizedBounds();
         SyncMaximizedContentInset();
         if (WindowState == WindowState.Normal) ClampInitialSizeToWorkArea();
         Responsive.RefreshAllPostures();
@@ -757,6 +758,35 @@ public class FluentWindow : Window
     }
 
     /// <summary>Change monitor/work-area bounds while keeping the HWND maximized throughout.</summary>
+    /// <summary>
+    /// 供子类覆写的动态最小宽度（供 WM_GETMINMAXINFO 读取）。
+    /// 最大化期间不直接修改 <see cref="FrameworkElement.MinWidth"/> 以避免触发无 WM_SIZE 的顶层变换/DWM 半屏黑块。
+    /// </summary>
+    protected virtual double EffectiveMinWidth => MinWidth;
+
+    /// <summary>
+    /// 最大化态下壳层结构大变动（如切换平板模式）后强制对齐内容内缩与 DWM/HwndTarget 帧表面，防止残余黑屏区。
+    /// </summary>
+    protected void SyncMaximizedLayoutAfterShellChange()
+    {
+        if (!IsLoaded || WindowState != WindowState.Maximized) return;
+        SyncMaximizedContentInset();
+        if (Content is FrameworkElement root)
+        {
+            root.InvalidateMeasure();
+            root.InvalidateArrange();
+            root.InvalidateVisual();
+        }
+        InvalidateVisual();
+        try
+        {
+            var hwnd = new WindowInteropHelper(this).Handle;
+            if (hwnd != IntPtr.Zero)
+                SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020);
+        }
+        catch { }
+    }
+
     protected void RefreshMaximizedBounds()
     {
         if (WindowState != WindowState.Maximized) return;
@@ -775,7 +805,9 @@ public class FluentWindow : Window
         if (msg == WM_GETMINMAXINFO)
         {
             ApplyWorkingAreaLimit(hwnd, lParam, MaximizeCoversTaskbar);
-            handled = true;
+            // 不设 handled = true：让 WPF 自身的 Window.WmGetMinMaxInfo 也能读取新的 mmi.ptMaxSize
+            // 更新内部 _windowMaxWidthDeviceUnits / _windowMaxHeightDeviceUnits 缓存，
+            // 避免屏幕旋转/切屏/最大化后 ArrangeOverride 按旧上限裁剪根视觉树形成半截黑屏。
         }
         else if (msg == WM_ENTERSIZEMOVE || msg == WM_EXITSIZEMOVE)
         {
@@ -974,7 +1006,7 @@ public class FluentWindow : Window
             var workW = target.Right - target.Left;
             var workH = target.Bottom - target.Top;
 
-            var minW = ToPhysicalPixels(MinWidth, dpi.DpiScaleX);
+            var minW = ToPhysicalPixels(EffectiveMinWidth, dpi.DpiScaleX);
             var minH = ToPhysicalPixels(MinHeight, dpi.DpiScaleY);
             if (minW > 0) mmi.MinTrackSize.X = Math.Min(minW, workW);
             if (minH > 0) mmi.MinTrackSize.Y = Math.Min(minH, workH);

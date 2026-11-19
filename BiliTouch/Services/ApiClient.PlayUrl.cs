@@ -215,7 +215,7 @@ public partial class ApiClient
                 var dashActualAudio = AudioQuality.Auto;
                 // AudioTrack → 原始 JsonElement: 短视频合流要用码率/编码写进容器
                 var audioElements = new Dictionary<AudioTrack, JsonElement>();
-                void AddAudioCandidates(JsonElement a, AudioQuality q, string label)
+                void AddAudioCandidates(JsonElement a, AudioQuality q, string label, int fallbackTrackId = 0)
                 {
                     if(a.ValueKind!=JsonValueKind.Object)return;
                     var acands = new List<string>();
@@ -231,9 +231,11 @@ public partial class ApiClient
                         }
                     }
                     if (acands.Count == 0) return;
+                    var rawId = (int)GetLong(a, "id");
                     var track = new AudioTrack
                     {
                         Quality = q,
+                        TrackId = rawId > 0 ? rawId : fallbackTrackId,
                         Label = label,
                         Bandwidth = GetLong(a, "bandwidth"),
                         Codecs = GetStr(a, "codecs"),
@@ -262,49 +264,63 @@ public partial class ApiClient
                             30232 => "较高音质",
                             _ => "音质 " + id,
                         };
-                        AddAudioCandidates(a, q, label);
+                        AddAudioCandidates(a, q, label, id);
                     }
                 }
 
-                void AddPremium(string name,AudioQuality quality,string label)
+                void AddPremium(string name,AudioQuality quality,string label,int fallbackTrackId)
                 {
                     if(!dash.TryGetProperty(name,out var group) || group.ValueKind!=JsonValueKind.Object || !group.TryGetProperty("audio",out var tracks))return;
-                    if(tracks.ValueKind==JsonValueKind.Object)AddAudioCandidates(tracks,quality,label);
+                    if(tracks.ValueKind==JsonValueKind.Object)AddAudioCandidates(tracks,quality,label,fallbackTrackId);
                     else if(tracks.ValueKind==JsonValueKind.Array)
-                        foreach(var track in tracks.EnumerateArray())AddAudioCandidates(track,quality,label);
+                        foreach(var track in tracks.EnumerateArray())AddAudioCandidates(track,quality,label,fallbackTrackId);
                 }
-                AddPremium("flac",AudioQuality.HiRes,"Hi-Res 无损");
-                AddPremium("dolby",AudioQuality.Dolby,"杜比全景声");
-                dashAudioTracks.Sort((left,right)=>right.Bandwidth.CompareTo(left.Bandwidth));
+                AddPremium("flac",AudioQuality.HiRes,"Hi-Res 无损",30251);
+                AddPremium("dolby",AudioQuality.Dolby,"杜比全景声",30250);
+                // 按码率降序排列，码率相同或为 0 时按 TrackId 降序（30280 > 30232 > 30216）
+                dashAudioTracks.Sort((left, right) =>
+                {
+                    var bw = right.Bandwidth.CompareTo(left.Bandwidth);
+                    return bw != 0 ? bw : right.TrackId.CompareTo(left.TrackId);
+                });
 
-                // 按档位挑一条:
-                //   Auto  → Hi-Res > 杜比 > 最高 AAC(用户没选就给他最好的)
-                //   指定  → 先找完全匹配的档; **找不到绝不退到普通 AAC**(见下)
+                AudioTrack? BestStereoAac() =>
+                    dashAudioTracks
+                        .Where(t => t.Quality is AudioQuality.High or AudioQuality.Standard)
+                        .OrderByDescending(t => t.Bandwidth)
+                        .ThenByDescending(t => t.TrackId)
+                        .FirstOrDefault();
+
+                // 按档位挑一条（杜比采用可选方案，默认不强选杜比下混）：
+                //   Auto  → Hi-Res > 最高立体声 AAC（仅当无 AAC 时兜底杜比）
+                //   HiRes → Hi-Res > 最高立体声 AAC（不自动落到杜比）
+                //   Dolby → 杜比 > Hi-Res > 最高立体声 AAC
+                //   High/Standard → 对应立体声 AAC 档
                 AudioTrack? pick = null;
                 if (audioQuality == AudioQuality.Auto)
                 {
                     pick = dashAudioTracks.FirstOrDefault(t => t.Quality == AudioQuality.HiRes)
+                        ?? BestStereoAac()
                         ?? dashAudioTracks.FirstOrDefault(t => t.Quality == AudioQuality.Dolby)
-                        ?? dashAudioTracks.OrderByDescending(t => t.Bandwidth).FirstOrDefault();
+                        ?? dashAudioTracks.FirstOrDefault();
                 }
                 else
                 {
-                    // ★★★ 2026-11-04 用户要求: "有更高默认使用更高, ... 不应切回 aac"。
-                    //   所以指定档位拿不到时, **优先退回另一种高级音质**(杜比 ↔ Hi-Res),
-                    //   只有连一种高级音质都没有时才落到 AAC —— 绝不因为"要的那档没有"
-                    //   就把用户从无损悄悄降到 AAC。
                     pick = dashAudioTracks.FirstOrDefault(t => t.Quality == audioQuality);
-                    if (pick == null && audioQuality == AudioQuality.High)
-                        pick = dashAudioTracks.Where(t => t.Quality is AudioQuality.High or AudioQuality.Standard)
-                            .OrderByDescending(t => t.Bandwidth).FirstOrDefault();
-                    if (pick == null && audioQuality is AudioQuality.HiRes or AudioQuality.Dolby)
+                    if (pick == null && audioQuality == AudioQuality.Dolby)
                     {
-                        // 退到另一种高级音质, 仍然不是 AAC
                         pick = dashAudioTracks.FirstOrDefault(t => t.Quality == AudioQuality.HiRes)
-                            ?? dashAudioTracks.FirstOrDefault(t => t.Quality == AudioQuality.Dolby);
+                            ?? BestStereoAac();
                     }
-                    // 这条视频压根没有高级音质 ⇒ 才用最高 AAC(否则就没声了)
-                    pick ??= dashAudioTracks.OrderByDescending(t => t.Bandwidth).FirstOrDefault();
+                    else if (pick == null && audioQuality == AudioQuality.HiRes)
+                    {
+                        pick = BestStereoAac();
+                    }
+                    else if (pick == null && audioQuality is AudioQuality.High or AudioQuality.Standard)
+                    {
+                        pick = BestStereoAac();
+                    }
+                    pick ??= BestStereoAac() ?? dashAudioTracks.FirstOrDefault();
                 }
                 if (pick != null)
                 {

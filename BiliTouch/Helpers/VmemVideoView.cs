@@ -75,9 +75,12 @@ public sealed class VmemVideoView : Image, IDisposable
     private GpuVideoPresenter? _gpu;
     private FrameBuffers? _gpuFormat;
     private Window? _ownerWindow;
-    private bool _gpuAvailable;
+    private volatile bool _gpuAvailable;
+    private volatile bool _useCompatibleColorConversion;
     private bool _presentationSizeDirty;
     private DispatcherTimer? _resizeTimer;
+    private DispatcherTimer? _gpuWatchdogTimer;
+    private long _frontBufferLostAt;
     private volatile bool _disposed;
     private long _delivered, _coalesced, _presented;
     private readonly MediaPlayer.LibVLCVideoFormatCb _formatCb;
@@ -91,7 +94,11 @@ public sealed class VmemVideoView : Image, IDisposable
     public long PresentedFrames => Interlocked.Read(ref _presented);
     public bool UsesGpuPresentation => _gpuAvailable && Volatile.Read(ref _format)?.Nv12 == true;
     public string PresentationMode => UsesGpuPresentation ? "显卡合成" : "兼容合成";
-    public bool UseCompatibleColorConversion { get; set; }
+    public bool UseCompatibleColorConversion
+    {
+        get => _useCompatibleColorConversion;
+        set => _useCompatibleColorConversion = value;
+    }
     public event Action<uint, uint>? VideoSizeChanged;
     public (uint Width, uint Height) VideoSize
     {
@@ -117,7 +124,12 @@ public sealed class VmemVideoView : Image, IDisposable
             if (_ownerWindow != null) _ownerWindow.StateChanged -= OnWindowStateChanged;
             _ownerWindow = null;
             _resizeTimer?.Stop();
-            if (_gpu?.Pending != true) _retryTimer?.Stop();
+            if (_gpu?.Pending != true)
+            {
+                _retryTimer?.Stop();
+                _gpuWatchdogTimer?.Stop();
+                _frontBufferLostAt = 0;
+            }
         };
         _formatCb = OnFormat; _cleanupCb = OnCleanup;
         _lockCb = OnLock; _unlockCb = OnUnlock; _displayCb = OnDisplay;
@@ -256,17 +268,27 @@ public sealed class VmemVideoView : Image, IDisposable
         var scale = Math.Min(1, Math.Min(ActualWidth * dpi.DpiScaleX / format.Width,
             ActualHeight * dpi.DpiScaleY / format.Height));
         if (scale <= 0) return (format.Width, format.Height);
-        // Preserve the exact aspect ratio and round up to cover every displayed pixel.
+        // Preserve the exact aspect ratio and round up to even dimensions so D3D11
+        // NV12->BGRA VideoProcessor never receives odd output heights/widths.
         var a = format.Width; var b = format.Height;
         while (b != 0) (a, b) = (b, a % b);
         var units = Math.Clamp((int)Math.Ceiling(a * scale), 1, a);
-        return (format.Width / a * units, format.Height / a * units);
+        var w = format.Width / a * units;
+        var h = format.Height / a * units;
+        if (format.Width >= 2 && (w & 1) != 0) w = Math.Min(format.Width, w + 1);
+        if (format.Height >= 2 && (h & 1) != 0) h = Math.Min(format.Height, h + 1);
+        return (w, h);
     }
 
     private void OnWindowStateChanged(object? sender, EventArgs e)
     {
         if (Volatile.Read(ref _format) is { } format && (CanPresent || _gpu?.Pending == true)) PresentFrame(format);
-        else if (_gpu?.Pending != true) _retryTimer?.Stop();
+        else if (_gpu?.Pending != true)
+        {
+            _retryTimer?.Stop();
+            _gpuWatchdogTimer?.Stop();
+            _frontBufferLostAt = 0;
+        }
     }
 
     private void RetryPresentation()
@@ -278,29 +300,100 @@ public sealed class VmemVideoView : Image, IDisposable
             {
                 _retryTimer.Stop();
                 if (Volatile.Read(ref _format) is { } current) PresentFrame(current);
-                else CompleteGpuFrame();
+                else SafeCompleteGpuFrame();
             };
         }
         _retryTimer.Start();
     }
 
-    private bool CompleteGpuFrame()
+    private void EnsureGpuWatchdog()
     {
+        if (_disposed || _gpu == null) return;
+        if (_gpuWatchdogTimer == null)
+        {
+            _gpuWatchdogTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(250)
+            };
+            _gpuWatchdogTimer.Tick += OnGpuWatchdogTick;
+        }
+        if (!_gpuWatchdogTimer.IsEnabled) _gpuWatchdogTimer.Start();
+    }
+
+    private void OnGpuWatchdogTick(object? sender, EventArgs e)
+    {
+        if (_disposed || _gpu == null) { _gpuWatchdogTimer?.Stop(); return; }
+        var format = Volatile.Read(ref _format);
+        if (_gpu.Pending)
+        {
+            if (SafeCompleteGpuFrame())
+            {
+                if (format != null && Volatile.Read(ref format.Pending) != 0 && CanPresent) PresentFrame(format);
+                return;
+            }
+            if (_gpu != null && _gpu.IsPendingStalled(500))
+            {
+                FallbackToSoftware(new TimeoutException("GPU 帧同步超时，已切换兼容合成"), format);
+            }
+            return;
+        }
+        if (!CanPresent || format == null || Volatile.Read(ref format.Pending) == 0)
+        {
+            _frontBufferLostAt = 0;
+            _gpuWatchdogTimer?.Stop();
+            return;
+        }
+        if (_gpu.FrontBufferAvailable)
+        {
+            _frontBufferLostAt = 0;
+            _gpuWatchdogTimer?.Stop();
+            PresentFrame(format);
+            return;
+        }
+        try
+        {
+            _gpu.CheckDeviceHealth();
+            if (_frontBufferLostAt == 0) _frontBufferLostAt = Environment.TickCount64;
+            else if (Environment.TickCount64 - _frontBufferLostAt >= 1500)
+                FallbackToSoftware(new InvalidOperationException("D3DImage 前台缓冲长时间不可用，已切换兼容合成"), format);
+        }
+        catch (Exception ex)
+        {
+            FallbackToSoftware(ex, format);
+        }
+    }
+
+    private bool CompleteGpuFrame(out bool completed)
+    {
+        completed = false;
         if (_gpu?.Pending != true) return true;
-        if (!_gpu.Complete()) return false; // The GPU fence signals the dispatcher; no periodic polling.
+        if (!_gpu.Complete()) return false; // The GPU fence signals the dispatcher; watchdog guards against missed fences.
+        completed = true;
+        _frontBufferLostAt = 0;
         Interlocked.Increment(ref _presented);
         return true;
+    }
+
+    private bool SafeCompleteGpuFrame()
+    {
+        try { return CompleteGpuFrame(out _); }
+        catch (Exception ex) when (_gpu != null)
+        {
+            FallbackToSoftware(ex, Volatile.Read(ref _format));
+            return true;
+        }
     }
 
     private void OnGpuFrameReady()
     {
         if (_disposed) return;
         if (Volatile.Read(ref _format) is { } format) PresentFrame(format);
-        else CompleteGpuFrame();
+        else SafeCompleteGpuFrame();
     }
     private void OnGpuFrontBufferRestored()
     {
         if (_disposed) return;
+        _frontBufferLostAt = 0;
         if (Volatile.Read(ref _format) is { } format)
         {
             lock (format.Gate) if (!format.Retired) format.Pending = 1;
@@ -308,47 +401,78 @@ public sealed class VmemVideoView : Image, IDisposable
         }
     }
 
+    private void FallbackToSoftware(Exception ex, FrameBuffers? format)
+    {
+        if (_gpu == null) return;
+        _gpuWatchdogTimer?.Stop();
+        _frontBufferLostAt = 0;
+        // Keep the current NV12 negotiation playable if the driver is removed
+        // mid-stream; the next negotiation will request the compatible RGB format.
+        _gpuAvailable = false;
+        try { _gpu.Dispose(); } catch { }
+        _gpu = null; _gpuFormat = null; _bitmapFormat = null;
+        App.ReportError(new InvalidOperationException("显卡合成中断，已切换兼容合成", ex));
+        if (format != null && !_disposed) PresentFrameCore(format);
+    }
+
     private void PresentFrame(FrameBuffers format)
     {
         try { PresentFrameCore(format); }
         catch (Exception ex) when (_gpu != null)
         {
-            // Keep the current NV12 negotiation playable if the driver is removed
-            // mid-stream; the next negotiation will request the compatible RGB format.
-            _gpuAvailable = false;
-            try { _gpu.Dispose(); } catch { }
-            _gpu = null; _gpuFormat = null; _bitmapFormat = null;
-            App.ReportError(new InvalidOperationException("显卡合成中断，已切换兼容合成", ex));
-            PresentFrameCore(format);
+            FallbackToSoftware(ex, format);
         }
     }
 
     private void PresentFrameCore(FrameBuffers format)
     {
         if (_disposed) return;
-        if (!CompleteGpuFrame() || !CanPresent || !ReferenceEquals(format, Volatile.Read(ref _format)) || Volatile.Read(ref format.Pending) == 0) return;
+        if (!CompleteGpuFrame(out var justCompleted) || !CanPresent || !ReferenceEquals(format, Volatile.Read(ref _format)) || Volatile.Read(ref format.Pending) == 0) return;
         if (format.Nv12 && _gpu != null)
         {
-            if (!ReferenceEquals(_gpuFormat, format) || _presentationSizeDirty)
+            var formatChanged = !ReferenceEquals(_gpuFormat, format);
+            if (formatChanged || _presentationSizeDirty)
             {
                 var output = PresentationSize(format);
-                _gpu.Configure(format.Width, format.Height, output.Width, output.Height);
-                _gpuFormat = format;
-                _presentationSizeDirty = false;
-                Source = _gpu.Image;
+                if (!formatChanged && output.Width == _gpu.Width && output.Height == _gpu.Height)
+                {
+                    _presentationSizeDirty = false;
+                }
+                else if (justCompleted && !formatChanged)
+                {
+                    // Avoid tearing down the shared D3D9 surface in the exact same UI tick
+                    // that AddDirtyRect/Unlock was queued; defer reconfiguration by one tick.
+                    RetryPresentation();
+                    return;
+                }
+                else
+                {
+                    _gpu.Configure(format.Width, format.Height, output.Width, output.Height);
+                    _gpuFormat = format;
+                    _presentationSizeDirty = false;
+                    Source = _gpu.Image;
+                }
             }
             lock (format.Gate)
             {
                 if (format.Retired || _disposed || format.Pending == 0) return;
                 if (!_gpu.Begin(format.Present, format.Pitch))
                 {
-                    // Lost presentation surfaces wake from their availability event.
-                    // Poll only a busy copy, never a locked/disconnected desktop.
-                    if (_gpu.FrontBufferAvailable) RetryPresentation();
+                    if (_gpu.FrontBufferAvailable)
+                    {
+                        RetryPresentation();
+                    }
+                    else
+                    {
+                        if (_frontBufferLostAt == 0) _frontBufferLostAt = Environment.TickCount64;
+                        EnsureGpuWatchdog();
+                    }
                     return;
                 }
                 format.Pending = 0;
             }
+            _frontBufferLostAt = 0;
+            EnsureGpuWatchdog();
             return;
         }
         if (!ReferenceEquals(_bitmapFormat, format) || _bitmap == null || _bitmap.IsFrozen)
@@ -420,6 +544,7 @@ public sealed class VmemVideoView : Image, IDisposable
         _disposed = true;
         _retryTimer?.Stop();
         _resizeTimer?.Stop();
+        _gpuWatchdogTimer?.Stop();
         Source = null;
         _bitmap = null;
         _bitmapFormat = null;

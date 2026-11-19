@@ -283,7 +283,15 @@ public static class BilibiliClientCacheScanner
             };
         }
 
-        chosenAudio ??= audios.OrderByDescending(a => a.trackId == 30280 ? 1000 : a.trackId)
+        chosenAudio ??= audios.OrderByDescending(a => a.trackId switch
+            {
+                30251 => 5, // Hi-Res 无损
+                30280 => 4, // 192k AAC
+                30232 => 3, // 132k AAC
+                30250 => 2, // 杜比全景声
+                30216 => 1, // 64k AAC
+                _ => 0,
+            })
             .ThenByDescending(a => a.info.Length)
             .Select(a => a.info)
             .FirstOrDefault();

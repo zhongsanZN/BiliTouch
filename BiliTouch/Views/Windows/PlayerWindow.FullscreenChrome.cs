@@ -440,10 +440,7 @@ public partial class PlayerWindow
 
             TopBar.Visibility = Visibility.Visible;
             TopRow.Height = new GridLength(44);
-            // 与进全屏同一个入口: 退出全屏后信息栏是否回来, 还要看"铺满窗口"是不是还开着
-            // (两个开关可以叠加: 先铺满窗口再按 F 进全屏, 退出全屏时应该回到"仍铺满"状态)。
-            ApplyInfoPanelState();
-            // 先回到普通状态刷新工作区和标题栏样式，再恢复进入前的窗口布局。
+            // 先恢复进入前的窗口几何/工作区，再展开信息栏/网页布局，避免 MountWebLayout 在旧几何下读到 0 宽
             if (_beforeFullscreenState == WindowState.Maximized)
             {
                 RefreshMaximizedBounds();
@@ -453,15 +450,6 @@ public partial class PlayerWindow
                 WindowState = WindowState.Normal;
                 if (!_beforeFullscreenBounds.IsEmpty)
                 {
-                    // ★★★ 2026-11-08 修「退出全屏后卡死闪退」的第二层(第一层是 VlcPlacePictureGuard):
-                    //   这里原来是四次独立赋值(Left / Top / Width / Height) —— 每一个都会各自发一次
-                    //   SetWindowPos, 于是退出全屏时窗口被连续 resize **四次**, 每一次都让 LibVLC
-                    //   重协商 vout。重协商的窗口期里 d3d11 的 processor/super 缩放会拿一份已被
-                    //   video_format_Clean 清零的 pool_fmt 去算几何, 撞上 libvlccore
-                    //   vout_display_PlacePicture 里的 0/0(0xC0000094)。
-                    //   ⇒ 合并成**一次**原生 SetWindowPos: 危险窗口从四次缩到一次。
-                    //   ★ 原生调用失败(极端情况: 句柄还没建好)时回落到原来的四次赋值,
-                    //     宁可多一次 resize 也不能让窗口停在错误尺寸上。
                     if (!SetWindowBoundsOnce(_beforeFullscreenBounds))
                     {
                         Left = _beforeFullscreenBounds.Left; Top = _beforeFullscreenBounds.Top;
@@ -470,6 +458,8 @@ public partial class PlayerWindow
                 }
             }
             DwmInterop.SyncCaptionForAcrylic(this);
+            // 与进全屏同一个入口: 退出全屏后信息栏是否回来, 还要看"铺满窗口"是不是还开着
+            ApplyInfoPanelState();
 
             // 信息栏直接到位, 不再淡入 —— 全屏切换整体没有任何过渡动画了。
             // 顺手把可能的残留动画摘掉并归位, 免得哪天有人给它加动画时被这里顶掉。
@@ -512,7 +502,7 @@ public partial class PlayerWindow
     /// </remarks>
     private void ArmFullscreenCover()
     {
-        if (_closing || VideoAreaRoot == null) return;
+        if (_closing || _vmemMode || VideoAreaRoot == null) return;
         VideoAreaRoot.Background = Brushes.Black;
         _fullscreenCoverArmed = true;
         _fullscreenCoverTimer ??= new DispatcherTimer
@@ -547,7 +537,12 @@ public partial class PlayerWindow
     /// 兜底: 一直没等到新帧(暂停中/静止帧/极短片)就把黑幕撤掉,
     /// 否则画面会被自己挡住。超时取 600ms —— 正常情况下远早于此就已撤掉。
     /// </summary>
-    private void OnFullscreenCoverTimeout(object? sender, EventArgs e) => ReleaseFullscreenCover();
+    private void OnFullscreenCoverTimeout(object? sender, EventArgs e)
+    {
+        // 若已不在拖拽期（例如 WM_EXITSIZEMOVE 丢失），必须主动放闸防止黑幕永久锁死
+        if (_resizeHold && !_modalResizeInProgress) _resizeHold = false;
+        ReleaseFullscreenCover();
+    }
 
     /// <summary>
     /// resize 期间的视频区遮罩。
@@ -565,7 +560,7 @@ public partial class PlayerWindow
     /// </summary>
     private void ArmResizeCover()
     {
-        if (_closing || VideoAreaRoot == null) return;
+        if (_closing || _vmemMode || VideoAreaRoot == null) return;
         _resizeHold = true;
         VideoAreaRoot.Background = Brushes.Black;
         _fullscreenCoverArmed = true;
@@ -880,7 +875,7 @@ public partial class PlayerWindow
     /// </summary>
     private void ArmMaximizeCover()
     {
-        if (_closing || VideoAreaRoot == null) return;
+        if (_closing || _vmemMode || VideoAreaRoot == null) return;
         _resizeHold = true;
         _maximizeCoverArmed = true;
         VideoAreaRoot.Background = Brushes.Black;

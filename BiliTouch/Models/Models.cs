@@ -2572,15 +2572,31 @@ public enum AudioQuality
 public class AudioTrack
 {
     public AudioQuality Quality { get; set; }
+    /// <summary>B 站原始音轨 ID（30216=64k, 30232=132k, 30280=192k, 30250=杜比, 30251=Hi-Res）</summary>
+    public int TrackId { get; set; }
     public string Label { get; set; } = "";
-    /// <summary>码率(kbps, 用于标签上显示"无损 1.4Mbps"这种)</summary>
+    /// <summary>码率(bps, 用于标签上显示"192 kbps"等)</summary>
     public long Bandwidth { get; set; }
     public string Codecs { get; set; } = "";
     /// <summary>这条音轨的真实地址(已选好 CDN)</summary>
     public string Url { get; set; } = "";
 
-    public string DisplayLabel => Bandwidth > 0
-        ? $"{Label} ({Bandwidth / 1000} kbps)"
+    public int EffectiveBitrateKbps => Bandwidth > 0
+        ? (int)Math.Max(1, Math.Round(Bandwidth / 1000.0))
+        : TrackId switch
+        {
+            30280 => 192,
+            30232 => 132,
+            30216 => 64,
+            _ => 0,
+        };
+
+    public string BitrateBadgeText => EffectiveBitrateKbps > 0
+        ? $"{EffectiveBitrateKbps} kbps"
+        : "";
+
+    public string DisplayLabel => EffectiveBitrateKbps > 0
+        ? $"{Label} ({EffectiveBitrateKbps} kbps)"
         : Label;
 }
 

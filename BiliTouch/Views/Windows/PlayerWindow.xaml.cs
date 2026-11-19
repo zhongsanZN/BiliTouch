@@ -754,6 +754,7 @@ public partial class PlayerWindow : FluentWindow
 
         // 换片重置覆盖度自检: 新增了状态字段却忘了归类, 会在 errors.txt 里被点出来(仅 DEBUG)
         VerifyResetCoverage();
+        EnsureSeamlessPresentationHook();
     }
 
     /// <summary>

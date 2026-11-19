@@ -41,8 +41,12 @@ internal static class AudioImagesFontsTests
    check(result.remux?.SelectedAudioQuality==AudioQuality.HiRes && result.remux.AudioCodecs=="fLaC","short-video remux retains the selected FLAC codec and audio quality");
    handler.FlacArray=true;result=Wait(Svc.Api.GetPlayUrlAsync("BVfixture",42,64));
    check(result.actualAudio==AudioQuality.HiRes && handler.MuxedRequests==0,"720P automatic playback keeps premium audio instead of taking the muxed AAC shortcut");
-   handler.FlacArray=false;handler.Flac=false;handler.DolbyObject=true;result=Wait(Svc.Api.GetPlayUrlAsync("BVfixture",42,80,AudioQuality.HiRes));
-   check(result.actualAudio==AudioQuality.Dolby && result.audioUrl!.EndsWith("dolby.m4a"),"missing FLAC falls back to Dolby object audio before AAC");
+   handler.FlacArray=false;handler.Flac=false;handler.DolbyObject=true;result=Wait(Svc.Api.GetPlayUrlAsync("BVfixture",42,80,AudioQuality.Auto));
+   check(result.actualAudio==AudioQuality.High && result.audioUrl!.EndsWith("high.m4a"),"Auto prefers highest stereo AAC over optional Dolby when FLAC is absent");
+   result=Wait(Svc.Api.GetPlayUrlAsync("BVfixture",42,80,AudioQuality.HiRes));
+   check(result.actualAudio==AudioQuality.High && result.audioUrl!.EndsWith("high.m4a"),"missing FLAC falls back to highest stereo AAC instead of forcing Dolby");
+   result=Wait(Svc.Api.GetPlayUrlAsync("BVfixture",42,80,AudioQuality.Dolby));
+   check(result.actualAudio==AudioQuality.Dolby && result.audioUrl!.EndsWith("dolby.m4a"),"explicit Dolby preference selects Dolby object audio");
    handler.Dolby=false;result=Wait(Svc.Api.GetPlayUrlAsync("BVfixture",42,80));
    check(result.actualAudio==AudioQuality.High && result.audioUrl!.EndsWith("high.m4a"),"ordinary fallback selects the highest bitrate AAC even when response order differs");
    handler.Flac=handler.Dolby=true;handler.SnakeCase=true;result=Wait(Svc.Api.GetPlayUrlAsync("BVfixture",42,80));

@@ -241,6 +241,20 @@ public partial class MainWindow : FluentWindow
 
     private const double DesktopMinWidth = 840;
     private const double TabletPortraitMinWidth = 480;
+    private bool _tabletShellRefreshQueued;
+
+    protected override double EffectiveMinWidth =>
+        (Svc.Settings.TabletMode != TabletMode.Off
+         || (RootGrid != null && Responsive.GetPosture(RootGrid) == LayoutPosture.TabletPortrait))
+            ? TabletPortraitMinWidth
+            : DesktopMinWidth;
+
+    protected override void OnStateChanged(EventArgs e)
+    {
+        base.OnStateChanged(e);
+        if (WindowState != WindowState.Maximized)
+            SyncTabletWindowConstraints();
+    }
 
     private void OnMainLayoutSettingsChanged()
     {
@@ -265,7 +279,18 @@ public partial class MainWindow : FluentWindow
         if (NavRail != null) NavRail.Visibility = !playerOpen && !tablet ? Visibility.Visible : Visibility.Collapsed;
         if (BottomNavBar != null) BottomNavBar.Visibility = !playerOpen && tablet ? Visibility.Visible : Visibility.Collapsed;
         if (TabletTopActions != null) TabletTopActions.Visibility = tablet ? Visibility.Visible : Visibility.Collapsed;
-        CardWall.RefreshAll();
+        if (!_tabletShellRefreshQueued)
+        {
+            _tabletShellRefreshQueued = true;
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+            {
+                _tabletShellRefreshQueued = false;
+                if (!IsLoaded) return;
+                if (WindowState == WindowState.Maximized)
+                    SyncMaximizedLayoutAfterShellChange();
+                CardWall.RefreshAll();
+            }));
+        }
     }
 
     private void OnBottomNavClick(object sender, RoutedEventArgs e)
@@ -304,9 +329,10 @@ public partial class MainWindow : FluentWindow
 
     internal void SyncTabletWindowConstraints()
     {
-        var allowNarrow = Svc.Settings.TabletMode != TabletMode.Off
-                          || Responsive.GetPosture(RootGrid) == LayoutPosture.TabletPortrait;
-        var targetMin = allowNarrow ? TabletPortraitMinWidth : DesktopMinWidth;
+        // 最大化期间禁止直接修改 Window.MinWidth（会触发无 WM_SIZE 的顶层变换脏标记，
+        // 在无边框 WindowChrome + DWM 玻璃/云母合成下容易导致半截黑屏）；退出最大化时由 OnStateChanged 同步。
+        if (WindowState == WindowState.Maximized) return;
+        var targetMin = EffectiveMinWidth;
         if (Math.Abs(MinWidth - targetMin) > 0.5) MinWidth = targetMin;
     }
 

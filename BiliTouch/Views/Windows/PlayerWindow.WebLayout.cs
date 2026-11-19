@@ -225,24 +225,35 @@ public partial class PlayerWindow
         {
             var fromSplit = current is AlternateLayoutMode.Split or AlternateLayoutMode.TabletPortrait;
             var keepExplicitSurface = target is AlternateLayoutMode.Web or AlternateLayoutMode.Portrait;
+            var pinSurface = keepExplicitSurface && current != AlternateLayoutMode.TabletPortrait;
             // Transitioning from Web -> Portrait drops the top video placeholder above comments,
             // so convert the scroll offset into the comments-only coordinate space.
             var webPlaceholderDrop = current == AlternateLayoutMode.Web && target == AlternateLayoutMode.Portrait
                 ? Math.Max(0, WebVideoPlaceholder.ActualHeight > 0 ? WebVideoPlaceholder.ActualHeight : (double.IsNaN(WebVideoPlaceholder.Height) ? 0 : WebVideoPlaceholder.Height))
                 : 0;
-            if (keepExplicitSurface) PinVideoSurfaceSize();
+            if (pinSurface) PinVideoSurfaceSize();
             if (current == AlternateLayoutMode.Web)
-                UnmountWebLayout(restoreVideoStretch: !keepExplicitSurface, restoreRightTabs: !keepExplicitSurface);
+                UnmountWebLayout(restoreVideoStretch: !pinSurface, restoreRightTabs: !keepExplicitSurface);
             else if (current == AlternateLayoutMode.Portrait)
-                UnmountPortraitLayout(restoreVideoStretch: !keepExplicitSurface, restoreRightTabs: !keepExplicitSurface);
+                UnmountPortraitLayout(restoreVideoStretch: !pinSurface, restoreRightTabs: !keepExplicitSurface);
             else if (current == AlternateLayoutMode.TabletPortrait)
-                UnmountTabletPortraitLayout(restoreVideoStretch: !keepExplicitSurface);
+                UnmountTabletPortraitLayout(restoreVideoStretch: true);
 
             if (webPlaceholderDrop > 0) _webSavedScroll = Math.Max(0, _webSavedScroll - webPlaceholderDrop);
 
             if (target == AlternateLayoutMode.Web) MountWebLayout(fromSplit);
             else if (target == AlternateLayoutMode.Portrait) MountPortraitLayout(fromSplit);
             else if (target == AlternateLayoutMode.TabletPortrait) MountTabletPortraitLayout();
+
+            if (current == AlternateLayoutMode.TabletPortrait && keepExplicitSurface)
+            {
+                Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+                {
+                    if (_closing) return;
+                    if (_webLayoutMounted) UpdateWebMeasurements();
+                    else if (_portraitLayoutMounted) UpdatePortraitMeasurements();
+                }));
+            }
         }
         finally { _webChangingLayout = false; }
     }

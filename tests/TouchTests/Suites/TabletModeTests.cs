@@ -26,6 +26,7 @@ internal static class TabletModeTests
         RunPostureClassificationTests(check);
         RunSettingsTests(check, artifacts);
         RunMainWindowPhase0Tests(check, artifacts);
+        RunMaximizedTabletModeSwitchTests(check, artifacts);
         RunPhase1ShellAndEmbeddedPlayerTests(check, artifacts);
         RunPhase2CommunityAndLiveTests(check, artifacts);
         RunPhase3LongTailPagesTests(check, artifacts);
@@ -217,6 +218,115 @@ internal static class TabletModeTests
             Svc.Settings.SurfaceTabletHintDismissed = oldDismissed;
             Svc.Settings.SetTabletMode(oldMode);
         }
+    }
+
+    private static void RunMaximizedTabletModeSwitchTests(Action<bool, string> check, string artifacts)
+    {
+        var oldMode = Svc.Settings.TabletMode;
+        var oldDismissed = Svc.Settings.SurfaceTabletHintDismissed;
+        MainWindow? main = null;
+        try
+        {
+            Svc.Settings.SurfaceTabletHintDismissed = true;
+            Svc.Settings.SetTabletMode(TabletMode.Off);
+
+            main = new MainWindow { Width = 1100, Height = 760, ShowActivated = false };
+            main.Show();
+            Pump(250);
+
+            var root = (Grid)main.FindName("RootGrid");
+            var contentGrid = (Grid)main.FindName("MainContentGrid");
+            var navRail = (Border)main.FindName("NavRail");
+            var bottomNav = (Border)main.FindName("BottomNavBar");
+
+            main.WindowState = WindowState.Maximized;
+            Pump(350);
+
+            var maxW = main.ActualWidth;
+            var maxH = main.ActualHeight;
+            var minWidthBeforeToggle = main.MinWidth;
+
+            check(main.WindowState == WindowState.Maximized && maxW >= 900 && maxH >= 500,
+                $"MainWindow enters Maximized state cleanly ({maxW:0}x{maxH:0})");
+
+            // 在最大化窗口下反复切换平板模式：Off -> Always -> Auto -> Always -> Off
+            foreach (var mode in new[] { TabletMode.Always, TabletMode.Auto, TabletMode.Always, TabletMode.Off })
+            {
+                Svc.Settings.SetTabletMode(mode);
+                Pump(320);
+
+                var expectedTablet = mode == TabletMode.Always;
+                check(main.WindowState == WindowState.Maximized,
+                    $"MainWindow remains Maximized after switching TabletMode to {mode}");
+                check(Math.Abs(main.MinWidth - minWidthBeforeToggle) < 0.5,
+                    $"MainWindow does not mutate MinWidth while Maximized on TabletMode={mode} (before={minWidthBeforeToggle:0}, now={main.MinWidth:0})");
+                check(root.ActualWidth >= maxW * 0.95 && root.ActualHeight >= maxH * 0.95,
+                    $"RootGrid fills maximized client bounds on TabletMode={mode} (root={root.ActualWidth:0}x{root.ActualHeight:0}, win={maxW:0}x{maxH:0})");
+                check(contentGrid.ActualWidth >= maxW * 0.80 && contentGrid.ActualHeight >= maxH * 0.80,
+                    $"MainContentGrid stays full-span on TabletMode={mode} ({contentGrid.ActualWidth:0}x{contentGrid.ActualHeight:0})");
+                check(expectedTablet
+                        ? (navRail.Visibility == Visibility.Collapsed && bottomNav.Visibility == Visibility.Visible)
+                        : (navRail.Visibility == Visibility.Visible && bottomNav.Visibility == Visibility.Collapsed),
+                    $"Shell chrome matches posture while Maximized on TabletMode={mode}");
+                check(CheckQuadrantsNotBlack(main, Path.Combine(artifacts, $"maximized-tablet-{mode}.png")),
+                    $"Maximized MainWindow renders non-black content across all four quadrants on TabletMode={mode}");
+            }
+
+            // 保持 Always 并退出最大化：此时应立刻同步 MinWidth=480
+            Svc.Settings.SetTabletMode(TabletMode.Always);
+            Pump(200);
+            main.WindowState = WindowState.Normal;
+            Pump(250);
+            check(Math.Abs(main.MinWidth - 480) < 1,
+                $"exiting Maximized immediately applies deferred TabletPortrait MinWidth=480 (got {main.MinWidth:0.#})");
+        }
+        finally
+        {
+            CloseMainForTest(main);
+            Pump(150);
+            Svc.Settings.SurfaceTabletHintDismissed = oldDismissed;
+            Svc.Settings.SetTabletMode(oldMode);
+        }
+    }
+
+    private static bool CheckQuadrantsNotBlack(FrameworkElement element, string path)
+    {
+        var w = Math.Max(1, (int)Math.Ceiling(element.ActualWidth));
+        var h = Math.Max(1, (int)Math.Ceiling(element.ActualHeight));
+        var visual = new DrawingVisual();
+        using (var dc = visual.RenderOpen())
+            dc.DrawRectangle(new VisualBrush(element) { Stretch = Stretch.Fill }, null, new Rect(0, 0, w, h));
+        var bmp = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+        bmp.Render(visual);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bmp));
+        using (var fs = File.Create(path)) encoder.Save(fs);
+
+        var pixels = new byte[w * h * 4];
+        bmp.CopyPixels(pixels, w * 4, 0);
+
+        bool HasNonBlackPixels(int x0, int x1, int y0, int y1)
+        {
+            var count = 0;
+            for (var y = y0; y < y1; y += 2)
+            {
+                for (var x = x0; x < x1; x += 2)
+                {
+                    var idx = (y * w + x) * 4;
+                    var a = pixels[idx + 3];
+                    var lum = pixels[idx] + pixels[idx + 1] + pixels[idx + 2];
+                    if (a > 32 && lum > 24) count++;
+                }
+            }
+            return count > 50;
+        }
+
+        var mx = w / 2;
+        var my = h / 2;
+        return HasNonBlackPixels(0, mx, 0, my)
+            && HasNonBlackPixels(mx, w, 0, my)
+            && HasNonBlackPixels(0, mx, my, h)
+            && HasNonBlackPixels(mx, w, my, h);
     }
 
     private static void RunPhase1ShellAndEmbeddedPlayerTests(Action<bool, string> check, string artifacts)

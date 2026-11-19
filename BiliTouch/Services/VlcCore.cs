@@ -105,6 +105,7 @@ public static class VlcCore
             var caching = BufferPolicy.Resolve(BufferMediaKind.VodSingle, null, shortVideo: false,
                 SettingsStore.Instance.NetworkCachingMs, SettingsStore.Instance.AutoBufferPolicy);
             var options = new List<string>{"--intf=dummy","--no-osd","--no-snapshot-preview","--network-caching="+caching};
+            AppendAudioQualityOptions(options);
             if(profile.Enabled) options.AddRange(profile.Options);
             AppendOptionalDebugLogOptions(options);
             var instance = new LibVLC(options.ToArray());
@@ -147,6 +148,7 @@ public static class VlcCore
                 "--intf=dummy", "--no-osd", "--no-snapshot-preview",
                 "--vout=vmem", "--network-caching=" + caching,
             };
+            AppendAudioQualityOptions(options);
             AppendOptionalDebugLogOptions(options);
             _vmemInstance = new LibVLC(options.ToArray());
             // vmem 不走 D3D11 交换链，不注册 VideoEnhancement.Observe，避免状态永久停留在"等待驱动确认"
@@ -156,6 +158,17 @@ public static class VlcCore
     }
 
     private static LibVLC? _vmemInstance;
+
+    /// <summary>
+    /// 音频重采样品质选项：
+    /// 显式使用 Speex 最高品质（10/10）重采样，消除 44.1/96kHz→48kHz WASAPI 及
+    /// DASH input-slave 微小漂移补偿在默认 3~4 档下的高频混叠与发闷现象。
+    /// </summary>
+    private static void AppendAudioQualityOptions(List<string> options)
+    {
+        options.Add("--audio-resampler=speex_resampler");
+        options.Add("--speex-resampler-quality=10");
+    }
 
     /// <summary>
     /// 可选 LibVLC 原生文件日志开关：设 <c>BILITOUCH_VLC_DEBUG=1</c> 或 <c>BILIDESK_VLC_DEBUG=1</c>

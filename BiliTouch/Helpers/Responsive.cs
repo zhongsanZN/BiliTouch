@@ -332,7 +332,15 @@ public static class Responsive
         if (sender is not FrameworkElement el) return;
         // 还没做过首次应用的话交给 OnLoaded —— 那里能保证"不带动画"
         if (!(bool)el.GetValue(FirstAppliedProperty)) return;
-        Apply(el, animate: true);
+        VisualStateManager.GoToElementState(el, GetClass(el).ToString(), useTransitions: true);
+    }
+
+    private static void OnPosturePropertyChanged(object? sender, EventArgs e)
+    {
+        if (sender is not FrameworkElement el) return;
+        if (!(bool)el.GetValue(FirstAppliedProperty)) return;
+        // 仅切换姿态状态组，绝不连带重播 WidthStates 的 180ms NavRail 宽度动画
+        VisualStateManager.GoToElementState(el, GetPosture(el).ToString(), useTransitions: true);
     }
 
     private static void Subscribe(FrameworkElement el)
@@ -344,7 +352,7 @@ public static class Responsive
             ?.AddValueChanged(el, OnClassChanged);
         DependencyPropertyDescriptor
             .FromProperty(PostureProperty, typeof(FrameworkElement))
-            ?.AddValueChanged(el, OnClassChanged);
+            ?.AddValueChanged(el, OnPosturePropertyChanged);
     }
 
     private static void Unsubscribe(FrameworkElement el)
@@ -356,7 +364,7 @@ public static class Responsive
             ?.RemoveValueChanged(el, OnClassChanged);
         DependencyPropertyDescriptor
             .FromProperty(PostureProperty, typeof(FrameworkElement))
-            ?.RemoveValueChanged(el, OnClassChanged);
+            ?.RemoveValueChanged(el, OnPosturePropertyChanged);
     }
 
     private static void Apply(FrameworkElement el, bool animate)

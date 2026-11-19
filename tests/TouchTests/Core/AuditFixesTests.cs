@@ -46,6 +46,7 @@ internal static class AuditFixesTests
         TestDynamicLikeIconStability(check);
         TestVideoTailEndingAndElstPatch(check);
         TestOfflineOnlineCommentsAndDanmakuContract(check);
+        TestAudioQualityBitrateAndFreezeFixes(check);
         TestMacroArchitectureAndRuntimeHealth(check);
     }
 
@@ -622,6 +623,86 @@ internal static class AuditFixesTests
         }
         check(bindingErrors.Count == 0,
             $"WPF DataBindingSource reports zero binding errors on DynamicFeedCard & VideoCard (errors={bindingErrors.Count}{(bindingErrors.Count > 0 ? ": " + bindingErrors[0] : "")})");
+    }
+
+    private static void TestAudioQualityBitrateAndFreezeFixes(Action<bool, string> check)
+    {
+        // 1. BufferPolicy VodDash 双流自动档不低于 1000ms，防高码率/Hi-Res 欠载重采样
+        var dashAutoMs = BufferPolicy.Resolve(BufferMediaKind.VodDash, "https://upos.bilivideo.com/v.m4s",
+            shortVideo: false, userMs: 500, auto: true);
+        check(dashAutoMs >= 1000,
+            $"BufferPolicy VodDash auto keeps >=1000ms floor for dual-stream stability (actual={dashAutoMs})");
+
+        // 2. BilibiliClientCacheScanner 在无 expectedBytes 精确匹配时必须把 30280(192k) 排在 30232/30216 之前
+        var tempDir = Path.Combine(Path.GetTempPath(), "bt-cache-rank-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            File.WriteAllBytes(Path.Combine(tempDir, "100_1-1-100026.m4s"), new byte[1024]);
+            File.WriteAllBytes(Path.Combine(tempDir, "100_1-1-30216.m4s"), new byte[256]);
+            File.WriteAllBytes(Path.Combine(tempDir, "100_1-1-30232.m4s"), new byte[512]);
+            File.WriteAllBytes(Path.Combine(tempDir, "100_1-1-30280.m4s"), new byte[384]);
+            var resolveStreams = typeof(BilibiliClientCacheScanner).GetMethod("TryLocateMedia", AnyPrivate)!;
+            object?[] invokeArgs = { tempDir, 0L, 12, null, null, null, 0L };
+            var ok = (bool)resolveStreams.Invoke(null, invokeArgs)!;
+            var pickedAudio = invokeArgs[5] as string ?? "";
+            check(ok && pickedAudio.EndsWith("30280.m4s", StringComparison.OrdinalIgnoreCase),
+                $"BilibiliClientCacheScanner prefers 30280 (192k) over 30232/30216 (picked={Path.GetFileName(pickedAudio)})");
+        }
+        finally
+        {
+            try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true); } catch { }
+        }
+
+        // 3. 非 Hi-Res / 杜比时角标仍显示当前码率，且有杜比音轨时在菜单内作为可选项列出
+        var player = new PlayerWindow();
+        try
+        {
+            var tracksField = typeof(PlayerWindow).GetField("_audioTracks", AnyPrivate)!;
+            var actualAudioField = typeof(PlayerWindow).GetField("_actualAudio", AnyPrivate)!;
+            var fillMenu = typeof(PlayerWindow).GetMethod("FillQualityMenu", AnyPrivate)!;
+            var badge = (Border)player.FindName("BtnAudioBadge");
+            var badgeText = (TextBlock)player.FindName("AudioBadgeText");
+            var qualityList = (ListBox)player.FindName("QualityList");
+
+            tracksField.SetValue(player, new List<AudioTrack>
+            {
+                new() { Quality = AudioQuality.High, TrackId = 30280, Label = "高品质", Bandwidth = 192000, Url = "https://example.invalid/192.m4s" },
+                new() { Quality = AudioQuality.Dolby, TrackId = 30250, Label = "杜比全景声", Bandwidth = 448000, Url = "https://example.invalid/dolby.m4s" },
+            });
+            actualAudioField.SetValue(player, AudioQuality.High);
+            fillMenu.Invoke(player, new object[] { 80 });
+
+            check(badge.Visibility == Visibility.Visible && badgeText.Text == "192 kbps",
+                $"non-HiRes/Dolby audio displays current bitrate badge (visible={badge.Visibility}, text={badgeText.Text})");
+            var clickableAudioItems = qualityList.Items.OfType<ListBoxItem>().Where(i => i.Tag is AudioTrack).ToList();
+            check(clickableAudioItems.Count == 2
+                  && clickableAudioItems.Any(i => ((AudioTrack)i.Tag).Quality == AudioQuality.High)
+                  && clickableAudioItems.Any(i => ((AudioTrack)i.Tag).Quality == AudioQuality.Dolby),
+                $"QualityList exposes optional Dolby alongside stereo AAC (clickable={clickableAudioItems.Count})");
+
+            // 纯普通 AAC（无杜比/无 Hi-Res）同样显示码率角标与菜单信息
+            tracksField.SetValue(player, new List<AudioTrack>
+            {
+                new() { Quality = AudioQuality.High, TrackId = 30232, Label = "较高音质", Bandwidth = 132000, Url = "https://example.invalid/132.m4s" },
+            });
+            actualAudioField.SetValue(player, AudioQuality.High);
+            fillMenu.Invoke(player, new object[] { 80 });
+            check(badge.Visibility == Visibility.Visible && badgeText.Text == "132 kbps",
+                $"pure AAC video still displays bitrate badge (text={badgeText.Text})");
+
+            // 4. VmemVideoView 看门狗与 GpuVideoPresenter front-buffer 重绑契约检查
+            check(typeof(VmemVideoView).GetField("_gpuWatchdogTimer", AnyPrivate) != null,
+                "VmemVideoView installs GPU presentation watchdog timer to prevent permanent freeze");
+            var presenterType = typeof(VmemVideoView).Assembly.GetType("BiliTouch.Helpers.GpuVideoPresenter")!;
+            check(presenterType.GetMethod("EnsureFrontBufferBound", AnyPrivate) != null
+                  && presenterType.GetMethod("CheckDeviceHealth", AnyPrivate) != null,
+                "GpuVideoPresenter rebinds D3DImage backbuffer on front-buffer restore and checks D3D9Ex health");
+        }
+        finally
+        {
+            player.Close();
+        }
     }
 
     private sealed class BindingErrorCaptureListener : System.Diagnostics.TraceListener

@@ -610,10 +610,11 @@ public partial class PlayerWindow
         // 覆盖层窗口(VideoView 的 ForegroundWindow)这时才建出来 —— 把键盘处理也挂上去,
         // 否则点过一次视频/控制栏之后快捷键就全哑了(见 HookOverlayKeyboard 的说明)
         HookOverlayKeyboard();
-        // ★ 不重复启动: 新窗口第一次打开时 PlayerService 已经先调过 PlayVideo(→LoadVideoAsync),
-        //   Loaded 事件随后才到。没有这个闸门就会跑两遍详情/取流/测速, 甚至
-        //   "先远端起播、下完再切本地"二次重启(2026-10-30 起播慢的隐藏原因之一)。
-        if (!_loadRunning && !_isLocalPlayback && !_isLive && !string.IsNullOrEmpty(_currentBvid)) await LoadVideoAsync();
+        // ★ 不重复启动: 新窗口第一次打开时 PlayerService 已经先调过 PlayVideo(→ReplaceNativeInputAsync→LoadVideoAsync),
+        //   Loaded 事件随后才到。此时 ReplaceNativeInputAsync 可能仍在后台 Stop(), _loadRunning 尚未置 true，
+        //   必须同时检查 _nativeInputVersion == 0 才能挡住竞态双加载。
+        if (!_loadRunning && _nativeInputVersion == 0 && !_isLocalPlayback && !_isLive && !string.IsNullOrEmpty(_currentBvid))
+            await LoadVideoAsync();
     }
 
     // ------------------------------------------------------------ 加载流程
@@ -1777,7 +1778,11 @@ public partial class PlayerWindow
                     LoadingOverlay != null && LoadingOverlay.Visibility == Visibility.Visible &&
                     LoadingText != null &&
                     (IsStallOverlayText(LoadingText.Text) ||
-                     LoadingText.Text.StartsWith("正在跳转", StringComparison.Ordinal)))
+                     LoadingText.Text.StartsWith("正在缓冲", StringComparison.Ordinal) ||
+                     LoadingText.Text.StartsWith("正在跳转", StringComparison.Ordinal) ||
+                     LoadingText.Text.StartsWith("正在打开本地文件", StringComparison.Ordinal) ||
+                     LoadingText.Text.StartsWith("正在重新播放", StringComparison.Ordinal) ||
+                     LoadingText.Text.StartsWith("正在继续播放", StringComparison.Ordinal)))
                 {
                     HideLoading();
                 }
