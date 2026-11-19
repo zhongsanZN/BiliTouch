@@ -152,7 +152,7 @@ internal static class SeamlessCaptureProbe
         }
         player = (PlayerWindow?)typeof(PlayerService).GetField("_window", Hidden)!.GetValue(Svc.Player);
         var state = typeof(PlayerWindow).GetField("_seamless", Hidden)!.GetValue(player!)!;
-        check(!player.IsVisible && state.GetType().GetField("EntryWindow")!.GetValue(state) is Window { IsVisible: true },
+        check(!player!.IsVisible && state.GetType().GetField("EntryWindow")!.GetValue(state) is Window { IsVisible: true },
             "source card surface is visible before native player Show");
         var entry = (Window)state.GetType().GetField("EntryWindow")!.GetValue(state)!;
         check(ReferenceEquals(player!.Owner, source) && ReferenceEquals(entry.Owner, source),

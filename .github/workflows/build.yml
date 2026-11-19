@@ -14,12 +14,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Restore
-        run: dotnet restore BiliTouch/BiliTouch.csproj
-      - name: Build application
-        run: dotnet build BiliTouch/BiliTouch.csproj -c Release --no-restore
-      - name: Compile WPF regression harness
-        run: dotnet build tests/TouchTests/TouchTests.csproj -c Release
+      - name: Restore solution
+        run: dotnet restore BiliTouch.sln
+      - name: Build application and test harness
+        run: dotnet build BiliTouch.sln -c Release --no-restore
       - name: Run unified offline CI suite
         run: |
           dotnet tests/TouchTests/bin/Release/net10.0-windows/TouchTests.dll --ci

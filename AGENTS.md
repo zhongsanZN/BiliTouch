@@ -30,10 +30,9 @@ $env:NUGET_PACKAGES = (Resolve-Path "..\.tools\nuget").Path
 
 ### 构建与一键回归验证（务必在 `BiliTouch` 仓库根目录执行）
 ```powershell
-# Debug / Release 均须保持 0 错误 0 警告
+# Debug / Release 均须保持 0 错误 0 警告（BiliTouch.sln 已同时纳管主工程与 TouchTests）
 dotnet build BiliTouch.sln -c Debug --no-restore
 dotnet build BiliTouch.sln -c Release --no-restore
-dotnet build tests/TouchTests/TouchTests.csproj -c Debug --no-restore
 
 # 一键跑全量离线核心回归（含运行期绑定错误监听与离屏像素探针）
 .\tests\TouchTests\bin\Debug\net10.0-windows\TouchTests.exe --ci
@@ -59,5 +58,5 @@ dotnet build tests/TouchTests/TouchTests.csproj -c Debug --no-restore
 ## 4. 验证红线
 
 - **严禁口头验收**：所有修复必须经过编译与实测验证；无法真机实测的边界（如物理触控板手感、特定显卡驱动）须明确标注验证范围。
-- **UI 改动查像素与绑定**：不要只凭 XAML 语法正确就认定可见，优先补充 `RenderTargetBitmap` 非空像素断言与 `PresentationTraceSources.DataBindingSource` 零绑定错误断言（见 `tests/TouchTests/AuditFixesTests.cs`）。
+- **UI 改动查像素与绑定**：不要只凭 XAML 语法正确就认定可见，优先补充 `RenderTargetBitmap` 非空像素断言与 `PresentationTraceSources.DataBindingSource` 零绑定错误断言（见 `tests/TouchTests/Core/AuditFixesTests.cs`）。
 - **文档保持精洁**：架构变更更新 `docs/ARCHITECTURE.md`，版本说明放 `docs/release-notes/vX.Y.Z.md`，不在 `docs/` 根目录平铺一次性排障流水账。

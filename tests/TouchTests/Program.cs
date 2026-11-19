@@ -598,7 +598,7 @@ internal static class Program
         return null;
     }
     private static T Field<T>(object obj, string name) => (T)obj.GetType().GetField(name, Private)!.GetValue(obj)!;
-    private static void Call(object obj, string name, params object[] args) => obj.GetType().GetMethod(name, Private)!.Invoke(obj, args);
+    private static void Call(object obj, string name, params object?[] args) => obj.GetType().GetMethod(name, Private)!.Invoke(obj, args);
     private static void Pump(int ms)
     {
         var frame = new DispatcherFrame();

@@ -5,8 +5,8 @@
     <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <!-- 鎵樼洏鍥炬爣鐢?WinForms 鐨?NotifyIcon: 杩欐槸鎵樼洏浜や簰(姘旀场/鍙屽嚮/鍙抽敭鑿滃崟)鏈€鐪佷簨涓旀渶绋崇殑鏂规,
-         姣旀墜鎼?Shell_NotifyIcon P/Invoke 灏戝嚑鐧捐marshalling浠ｇ爜 -->
+    <!-- 托盘图标使用 WinForms 的 NotifyIcon：托盘交互（气泡/双击/右键菜单）最省事且稳定，
+         比手写 Shell_NotifyIcon P/Invoke 少几百行 marshalling 代码 -->
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -31,13 +31,14 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
-    <!-- 涓嶈璺熺潃寮曠敤绋嬪簭闆嗕竴璧锋嫹 .xml/.pdb 绛?鏂囨。/绗﹀彿"绫绘枃浠?WebView2 閭?3 涓?XML 鏂囨。 ~0.8MB 灏辨槸瀹冨甫杩涙潵鐨? -->
+    <!-- 不跟随引用程序集拷贝 .xml/.pdb 等文档/符号文件（避免带入 WebView2 约 0.8MB XML 文档） -->
     <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
 
     <!--
-      鈽?鍏虫帀 LibVLC 鐨?x86 閭ｄ竴浠?鍙戝竷鍖呴噷 126.7MB, 绾补鐧借)銆?
-      涓轰粈涔堜互鍓嶄細甯︿笂: VideoLAN.LibVLC.Windows 鐨?targets 鏄寜 **$(Platform)** 鍒ゆ柇鏋舵瀯鐨?鈥斺€?        VlcWindowsX86Enabled 榛樿鍦?'$(Platform)' == 'x86' **鎴?'AnyCPU'** 鏃朵负 true銆?      鑰屾湰宸ョ▼璁剧殑鏄?<PlatformTarget>x64</PlatformTarget>(閭ｆ槸**缂栬瘧鍣?*鐩爣),
-      $(Platform) 浠嶇劧鏄?AnyCPU, 浜庢槸鍖呮妸 x86 涓?x64 涓ゅ鍘熺敓搴撳叏鎷蜂簡杩涙潵銆?      鏈伐绋嬫槸 x64-only(PlatformTarget=x64), x86 閭ｅ姘歌繙涓嶄細琚姞杞?鈥斺€?鐩存帴鍏虫帀銆?    -->
+      关闭 LibVLC 的 x86 原生库（约 126.7MB 纯冗余）。
+      VideoLAN.LibVLC.Windows 的 targets 按 $(Platform) 判别，$(Platform) 为 AnyCPU 时默认开启 x86；
+      本工程是 x64-only（PlatformTarget=x64），因此显式关闭 x86 与 arm64，并显式开启 x64。
+    -->
     <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
     <!--
       ★★★ 必须显式打开 x64 那一份, 不能再靠 targets 自己推导(2026-10-11 修的"视频无法播放")。
@@ -64,8 +65,10 @@
   </PropertyGroup>
 
   <!--
-    UseWindowsForms 浼氬線姣忎釜鏂囦欢娉ㄥ叆 System.Windows.Forms / System.Drawing 鐨勫叏灞€ using,
-    鍜?WPF 鐨?KeyEventArgs / MouseEventArgs / Point 澶ч潰绉挒鍚嶃€傛湰椤圭洰鍙湁鎵樼洏鏈嶅姟纰?    WinForms, 涓斿畠鍏ㄩ儴鐢ㄥ叏闄愬畾鍚?鈥斺€?鎶婅繖涓ゆ潯鍏ㄥ眬 using 鎽樻帀, 鍏朵綑浠ｇ爜闆舵敼鍔ㄣ€?  -->
+    UseWindowsForms 会向每个文件注入 System.Windows.Forms / System.Drawing 全局 using，
+    与 WPF 的 KeyEventArgs / MouseEventArgs / Point 大面积撞名。本项目仅托盘服务使用
+    WinForms 且采用全限定名，因此摘除这两条全局 using。
+  -->
   <ItemGroup>
     <None Update="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Using Remove="System.Windows.Forms" />
@@ -101,27 +104,13 @@
   </ItemGroup>
 
   <!--
-    ============================ LibVLC 鍘熺敓搴撴€庝箞閮ㄧ讲 ============================
-
-    VideoLAN.LibVLC.Windows 鑷繁浼氭妸鍘熺敓搴撴斁鍒?<OutDir>/libvlc/win-x64/锛堝惈 plugins/锛夛紝
-    杩欏氨澶熶簡 鈥斺€?VlcCore 璧扮殑鏄?Core.Initialize(<閭ｄ釜鐩綍鐨勭粷瀵硅矾寰?)锛屽畠浼氭樉寮?LoadLibrary
-    閭ｄ釜 libvlc.dll锛岃€?libvlccore 3.0.20 鐨勬彃浠舵壂鎻忔壘鐨勬鏄?libvlc.dll **鍚岀洰褰?*涓嬬殑 plugins/銆?
-    鈽?2026-09-26 鐦﹁韩锛堣瑙佹牴鐩綍 鐦﹁韩鏂规.md锛?
-      浠ュ墠杩欓噷棰濆鍐欎簡涓や釜 Target锛屾妸 libvlc.dll / libvlccore.dll / plugins 鍙堟嫹涓€浠藉埌杈撳嚭**鏍圭洰褰?*锛?      鐞嗙敱鏄?LibVLC 鍦?Windows 涓?P/Invoke 鍙湪 exe 鍚岀洰褰曟煡鎵? 鈥斺€?閭ｄ釜鐞嗙敱涓嶆垚绔嬶紙鎴戜滑涓嶆槸闈?      P/Invoke 榛樿鎼滅储锛屾槸 Core.Initialize 鎸囧畾缁濆璺緞锛夈€備簬鏄湪鍙戝竷鍖呴噷鍑虹幇浜嗕笁浠藉悓鏍风殑杩愯鏃?
-      x86 涓€浠?126.7MB) + libvlc/win-x64 涓€浠?92.8MB) + 鏍圭洰褰曚竴浠?90.8MB) = 308MB銆?      瀹炴祴(bd-probe-vlc 鎺㈤拡: 鍦ㄨ娴嬭緭鍑虹洰褰曢噷鐢?app 鑷繁鍚堟祦鍑烘潵鐨?MP4 鐪熸挱涓€閬?:
-        路 涓変唤閮藉湪      鈫?鍔犺浇 497 涓ā鍧楋紝姝ｅ父鎾斁
-        路 鍙暀宓屽閭ｄ唤  鈫?鍔犺浇 497 涓ā鍧楋紝姝ｅ父鎾斁锛圴LC_PLUGIN_PATH 鎸囧悜涓嶅瓨鍦ㄧ殑鐩綍涔熸病鍏崇郴锛?      缁撹: 鏍圭洰褰曢偅浠界函鍐椾綑锛屽凡鍒犻櫎锛泋86 閭ｄ唤鐢ㄤ笂闈㈢殑 <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
-      浠庢簮澶村叧鎺夈€傛敼鍔ㄨ繖涓€鍧椾箣鍚?*蹇呴』**澶嶈窇 bd-probe-vlc 鎺㈤拡銆?  -->
-
-  <!--
-    鍙戝竷鏃惰鍓帀鎾斁璺緞鐢ㄤ笉鍒扮殑鎻掍欢锛堢害 -30MB锛夈€傝鎺夌殑閮芥槸"B绔欏鎴风姘歌繙纰颁笉鍒?鐨勪笢瑗?
-      路 閲囬泦/澶栬: dshow(DirectShow 閲囬泦), cdda(CD 闊宠建), dtv(鏁板瓧鐢佃)
-      路 鍏夌洏/褰遍櫌: dvdnav/dvdread(DVD), libbluray(钃濆厜), dcp(鏁板瓧褰遍櫌鍖?
-      路 浼犺緭鍗忚: srt, vnc, sftp, nfs, rtp, live555(RTSP 鏈嶅姟鍣?
-      路 鐢ㄤ笉鍒扮殑闊充箰鏍煎紡: sid/gme/mod(娓告垙闊虫簮), schroedinger(Dirac), theora, zvbi(鍥炬枃鐢佃)
-      路 鍏冩暟鎹?婊ら暅: taglib(闊抽鏍囩), spatialaudio/mad(閲嶉噰鏍蜂笌绌洪棿闊抽)
-      路 绾紪鐮佸櫒: x264/x265/aom/twolame/shine 鈥斺€?鎴戜滑鍙В鐮侊紝缂栫爜璧拌嚜鐮斾笅杞界閬?      路 VLC 鑷甫鐣岄潰/鎺ㄦ祦/鑴氭湰: gui, visualization, stream_out, access_output, services_discovery, lua, mux
-    鈽?涓€寰?*淇濈暀**: 瑙ｇ爜(avcodec/dav1d)銆佽В灏佽(mp4/mkv/ts/adaptive)銆佽緭鍑?d3d11/d3d11va/dxva2/mmdevice/wasapi)銆?      璁块棶(http/https/file)銆佸瓧骞?libass/freetype)銆佺缉鏀?swscale)銆佹墦鍖?packetizer)銆?  -->
+    LibVLC 原生库部署说明：
+    VideoLAN.LibVLC.Windows 将原生库输出到 <OutDir>/libvlc/win-x64/（含 plugins/），
+    VlcCore 通过 Core.Initialize(<绝对路径>) 显式加载该目录下的 libvlc.dll 与同级 plugins/。
+    发布时裁剪 B 站客户端用不到的采集/光盘/流媒体推流/纯编码器/VLC 自带 GUI 插件（约 -30MB），
+    完整保留解码（avcodec/dav1d）、解封装（mp4/mkv/ts/adaptive）、输出（d3d11/d3d11va/dxva2/mmdevice/wasapi）、
+    访问（http/https/file）、字幕（libass/freetype）、缩放（swscale）与打包（packetizer）。
+  -->
   <Target Name="KeepVlcNativeFilesExternal" BeforeTargets="GenerateSingleFileBundle">
     <ItemGroup><FilesToBundle Condition="$([System.String]::Copy('%(FilesToBundle.RelativePath)').StartsWith('libvlc'))"><ExcludeFromSingleFile>true</ExcludeFromSingleFile></FilesToBundle></ItemGroup>
   </Target>
@@ -177,7 +166,7 @@
     </ItemGroup>
     <RemoveDir Directories="@(_VlcTrimDir)" />
     <Delete Files="@(_VlcTrimFile)" />
-    <Message Text="LibVLC 鎻掍欢宸茶鍓? 鍙繚鐣欐挱鏀惧繀闇€妯″潡" Importance="high" />
+    <Message Text="LibVLC 插件已裁剪，仅保留播放必需模块" Importance="high" />
   </Target>
 
   <ItemGroup>

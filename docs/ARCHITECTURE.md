@@ -46,8 +46,13 @@ BiliTouch/
 
 ## 3. 测试与自检体系（`tests/TouchTests`）
 
+- **分层目录**（已纳入 `BiliTouch.sln`，一次构建同时校验主工程与测试工程）：
+  - `Core/`：核心架构不变量、账号/风控隔离与离线 CI 回归套件；
+  - `Suites/`：窗口/布局/手势/动效/主题/播放体验专项回归套件；
+  - `Releases/`：历史发版定向防回退套件；
+  - `Probes/`：诊断与抓帧探针工具（非默认 CI）。
 - `--ci`：一键运行全部核心离线回归套件（基础账号隔离、限速单通道、全仓审计与运行时健康探针、未读同步、解码与缓冲、弹幕过滤与恢复、更新回退、VSR、上游稳定性同步、动态排序、版本契约）。
-- **运行时自检探针（`AuditFixesTests.cs`）**：
+- **运行时自检探针（`Core/AuditFixesTests.cs`）**：
   - 唯一 `_http.SendAsync` 发包口结构断言；
   - `RenderTargetBitmap` 离屏渲染像素探针（防图标画偏/隐身）；
   - `PresentationTraceSources.DataBindingSource` 静默绑定错误零容忍监听。

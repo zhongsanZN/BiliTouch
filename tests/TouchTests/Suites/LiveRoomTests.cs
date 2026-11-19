@@ -141,8 +141,8 @@ internal static class LiveRoomTests
             check(overlayWindow!=null && !ReferenceEquals(overlayWindow,window),"live native-video overlay forwards keyboard events to the room controls");
             var overlayRoot=(FrameworkElement)window.FindName("VideoOverlay");overlayRoot.Focus();
             check(!((TextBox)window.FindName("ChatInput")).IsKeyboardFocusWithin,"video surface takes focus out of the live composer");
-            var key=new KeyEventArgs(Keyboard.PrimaryDevice,PresentationSource.FromVisual(overlayWindow)!,Environment.TickCount,Key.F){RoutedEvent=Keyboard.PreviewKeyDownEvent};
-            overlayWindow.RaiseEvent(key);Pump(100);
+            var key=new KeyEventArgs(Keyboard.PrimaryDevice,PresentationSource.FromVisual(overlayWindow!)!,Environment.TickCount,Key.F){RoutedEvent=Keyboard.PreviewKeyDownEvent};
+            overlayWindow!.RaiseEvent(key);Pump(100);
             check(Field<bool>(window,"_full") && key.Handled,"F received by the separate video-overlay window enters fullscreen");
             key=new KeyEventArgs(Keyboard.PrimaryDevice,PresentationSource.FromVisual(overlayWindow)!,Environment.TickCount,Key.Escape){RoutedEvent=Keyboard.PreviewKeyDownEvent};
             overlayWindow.RaiseEvent(key);Pump(100);

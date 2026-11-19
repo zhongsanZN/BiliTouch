@@ -5,7 +5,7 @@ Release 的上传附件只保留一个 `BiliTouch-版本号-setup.exe`。便携�
 发布前完成安装器载荷与起播验证，推送对应标签，再从仓库目录运行：
 
 ```powershell
-python Publish/github_release.py --version 0.2.3 --setup ../dist/BiliTouch-0.2.3/BiliTouch-0.2.3-setup.exe --notes docs/RELEASE-0.2.3-2026-11-06.md
+python Publish/github_release.py --version 0.3.5 --setup Publish/BiliTouch-0.3.5-setup.exe --notes docs/release-notes/v0.3.5.md
 ```
 
 脚本只允许向 `zhongsanZN/BiliTouch` 发布，校验安装器 SHA-256 后再公开 Release，并清除该 Release 的其他上传附件。GitHub 自带的 Source code ZIP/TAR 下载项由平台生成，无法当作上传附件删除。

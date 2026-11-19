@@ -16,7 +16,7 @@
 #
 # 注意: 默认版本号自动从 BiliTouch\BiliTouch.csproj 的 <Version> 读取（单一真理源），
 # 也可通过 -Version 显式覆盖。
-param([string]$Version = "", [string]$Configuration = "Release")
+param([string]$Version = "", [string]$Configuration = "Release", [switch]$KeepStaging)
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -161,6 +161,11 @@ try {
     if (Test-Path -LiteralPath $stagedSetup) { Remove-Item -LiteralPath $stagedSetup -Force }
     # 不递归删除，以免误删编译器留下的额外诊断文件。
     if (!(Get-ChildItem -LiteralPath $setupStage -Force | Select-Object -First 1)) { Remove-Item -LiteralPath $setupStage }
+}
+if (-not $KeepStaging) {
+    foreach ($stageDir in @($PortableDir, $InstallerDir)) {
+        if (Test-Path -LiteralPath $stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force }
+    }
 }
 Write-Host "完成:"
 Write-Host "  安装器     : $(Join-Path $Out "BiliTouch-$Version-setup.exe")"

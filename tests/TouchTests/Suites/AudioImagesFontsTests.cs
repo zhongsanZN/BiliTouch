@@ -140,7 +140,7 @@ internal static class AudioImagesFontsTests
    check(media.Tracks.Any(t=>t.TrackType==TrackType.Audio && t.Codec==0x63616c66),"packaged VLC identifies the real FLAC codec in the lossless sample");
    using var decoder=new MediaPlayer(VlcCore.Get());uint decodedRate=0;long samples=0;
    decoder.SetAudioCallbacks((_,_,count,_)=>Interlocked.Add(ref samples,count),null,null,null,null);
-   decoder.SetAudioFormatCallback((ref IntPtr opaque,ref IntPtr format,ref uint rate,ref uint channels)=>{decodedRate=rate;return 0;},null);
+   decoder.SetAudioFormatCallback((ref IntPtr opaque,ref IntPtr format,ref uint rate,ref uint channels)=>{decodedRate=rate;return 0;},null!);
    decoder.Play(media);Pump(850);
    Console.WriteLine($"LOSSLESS decoded_rate={decodedRate} samples={samples}");
    check(decoder.IsPlaying && samples>0 && decodedRate==96000,"packaged VLC decodes actual 96 kHz FLAC PCM into a silent memory output");decoder.Stop();
