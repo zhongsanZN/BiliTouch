@@ -87,6 +87,7 @@ internal static class Program
             else if(args.Contains("--update-fallback")) UpdateFallbackTests.Run(Check);
             else if(args.Contains("--cover-recycle")) CoverRecycleTests.Run(Check, Artifacts);
             else if(args.Contains("--comment-gallery")) CommentGalleryTests.Run(Check);
+            else if(args.Contains("--comment-fixes")) CommentFixesTests.Run(Check);
             else if(args.Contains("--vmem-morph")) VmemMorphTests.Run(Check, Artifacts);
             else if(args.Contains("--vmem-player")) VmemPlayerTests.Run(Check, Artifacts);
             else if(args.Contains("--vmem-view")) VmemViewTests.Run(Check, Artifacts,
@@ -195,6 +196,7 @@ internal static class Program
         Upstream176SyncTests.Run(Check);
         ReviewFixTests.Run(Check);
         Release034Tests.Run(Check);
+        CommentFixesTests.Run(Check);
         FollowSortTests.Run(Check, Artifacts);
     }
 

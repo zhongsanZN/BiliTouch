@@ -676,8 +676,14 @@ public class CommentEmote
 {
     public string Url { get; set; } = "";
 
+    /// <summary>动态表情的 GIF 地址(接口 emote.gif_url)。非空时评论区优先按动图播放。</summary>
+    public string GifUrl { get; set; } = "";
+
     /// <summary>接口 meta.size。1 = 小表情(约一行文字高), 2 = 大表情</summary>
     public int Size { get; set; } = 1;
+
+    /// <summary>展示时优先使用的地址：有动图优先动图，否则回退静态图。</summary>
+    public string PreferredUrl => !string.IsNullOrEmpty(GifUrl) ? GifUrl : Url;
 }
 
 /// <summary>

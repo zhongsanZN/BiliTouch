@@ -106,7 +106,16 @@ public class CommentText : RichTextBox
         };
         menu.Items.Add(copy);
         ContextMenu = menu;
+    }
 
+    private List<Image>? _emoteImages;
+
+    private void DetachEmoteAnimations()
+    {
+        if (_emoteImages == null || _emoteImages.Count == 0) return;
+        foreach (var img in _emoteImages)
+            AnimatedImagePlayer.Detach(img);
+        _emoteImages.Clear();
     }
 
     // The document view assigns its own padding during layout. Coerce it once at
@@ -139,6 +148,7 @@ public class CommentText : RichTextBox
 
     private void Rebuild()
     {
+        DetachEmoteAnimations();
         using var changes = DeclareChangeBlock();
         var p = new Paragraph { Margin = new Thickness(0) };
         Document.Blocks.Clear();
@@ -344,19 +354,28 @@ public class CommentText : RichTextBox
             VerticalAlignment = VerticalAlignment.Center
         };
 
-        // 表情图片很小(源图通常 20~40px), 解码宽度给 40 就够 —— 走的是量化后的 64 档,
-        // 一张只占十几 KB。**不要**用 Cover.ImageSource(它按 512 解码, 一张表情就要 1MB)。
-        _ = LoadEmoteAsync(image, emote.Url, owner);
+        // 表情图片很小(源图通常 20~40px), 解码宽度按控件尺寸与 DPI 计算;
+        // 含 gif_url 的动态表情优先走动图链路播放，加载失败自动回退静态图。
+        _emoteImages ??= new List<Image>(4);
+        _emoteImages.Add(image);
+        _ = LoadEmoteAsync(image, emote, owner);
 
         return new InlineUIContainer(image) { BaselineAlignment = BaselineAlignment.Center };
     }
 
-    private async System.Threading.Tasks.Task LoadEmoteAsync(Image image, string url, CommentItem owner)
+    private async System.Threading.Tasks.Task LoadEmoteAsync(Image image, CommentEmote emote, CommentItem owner)
     {
-        var bmp = await CoverLoader.LoadAsync(url, CoverLoader.DecodeWidthFor(image.Width, VisualTreeHelper.GetDpi(this).DpiScaleX));
-        if (bmp == null) return;
+        var decodeWidth = CoverLoader.DecodeWidthFor(image.Width, VisualTreeHelper.GetDpi(this).DpiScaleX);
+        var primaryUrl = emote.PreferredUrl;
+        var media = await CoverLoader.LoadMediaAsync(primaryUrl, decodeWidth);
+        if (!media.HasImage && !string.IsNullOrEmpty(emote.Url) && !string.Equals(primaryUrl, emote.Url, StringComparison.Ordinal))
+            media = await CoverLoader.LoadMediaAsync(emote.Url, decodeWidth);
+        if (!media.HasImage) return;
         // 控件可能已经被复用到另一条评论上(列表虚拟化), 那就丢弃这次结果
         if (!ReferenceEquals(Comment, owner)) return;
-        image.Source = bmp;
+        if (media.Animated != null)
+            AnimatedImagePlayer.Attach(image, media.Animated);
+        else
+            image.Source = media.Static;
     }
 }

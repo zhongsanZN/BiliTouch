@@ -79,6 +79,117 @@ public sealed class VirtualizingCommentPanel : VirtualizingPanel
         return 0;
     }
 
+    private double PanelYToScrollY(double panelY)
+    {
+        if (_scroll?.Content is UIElement content && IsDescendantOf(content))
+        {
+            try
+            {
+                var mapped = TransformToAncestor(content).Transform(new Point(0, panelY)).Y;
+                if (double.IsFinite(mapped)) return mapped;
+            }
+            catch { }
+        }
+        return OriginY() + panelY;
+    }
+
+    internal static VirtualizingCommentPanel? FindFor(ItemsControl? itemsControl)
+    {
+        if (itemsControl == null) return null;
+        return FindDescendant(itemsControl);
+    }
+
+    private static VirtualizingCommentPanel? FindDescendant(DependencyObject root)
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is VirtualizingCommentPanel panel) return panel;
+            var found = FindDescendant(child);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private static bool TryGetViewportBounds(FrameworkElement element, ScrollViewer scroll, out Rect bounds)
+    {
+        bounds = default;
+        if (!element.IsLoaded || !element.IsVisible || scroll.ViewportHeight <= 0) return false;
+        try
+        {
+            bounds = element.TransformToAncestor(scroll)
+                .TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+            return double.IsFinite(bounds.Top) && double.IsFinite(bounds.Bottom);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 将指定评论条目滚入外层 <see cref="ScrollViewer"/> 视口并确保其虚拟化容器完成实例化。
+    /// 若传入 <paramref name="preferredScrollOffset"/> / <paramref name="preferredViewportTop"/>
+    /// （例如进评论详情前保存的原位置），则优先把目标评论还原到进入前的视口高度，避免退出详情后跳回评论区顶部或发生视野跳动。
+    /// </summary>
+    internal FrameworkElement? ScrollItemIntoView(
+        ItemsControl owner,
+        object targetItem,
+        double? preferredScrollOffset = null,
+        double? preferredViewportTop = null)
+    {
+        HookScroll();
+        if (_scroll == null) return owner.ItemContainerGenerator.ContainerFromItem(targetItem) as FrameworkElement;
+
+        var targetIndex = owner.Items.IndexOf(targetItem);
+        if (targetIndex < 0) return null;
+
+        TrackpadScroll.Cancel(_scroll);
+        // 先让刚从 Collapsed 恢复 Visible 的列表完成一次布局测量，确保 ScrollableHeight 反映真实评论总高
+        _scroll.UpdateLayout();
+
+        double desiredTop = preferredViewportTop is { } savedTop
+            && double.IsFinite(savedTop)
+            && _scroll.ViewportHeight > 0
+            ? Math.Clamp(savedTop, 0, Math.Max(0, _scroll.ViewportHeight - 48))
+            : 24.0;
+
+        if (preferredScrollOffset is { } saved && double.IsFinite(saved) && saved >= 0)
+        {
+            var clamped = Math.Clamp(saved, 0, Math.Max(0, _scroll.ScrollableHeight));
+            _scroll.ScrollToVerticalOffset(clamped);
+            _scroll.UpdateLayout();
+        }
+
+        FrameworkElement? container = null;
+        for (int pass = 0; pass < 5; pass++)
+        {
+            container = owner.ItemContainerGenerator.ContainerFromItem(targetItem) as FrameworkElement;
+            if (container != null && TryGetViewportBounds(container, _scroll, out var rect))
+            {
+                var delta = rect.Top - desiredTop;
+                if (Math.Abs(delta) <= 4)
+                    return container;
+
+                var adjusted = Math.Clamp(_scroll.VerticalOffset + delta, 0, Math.Max(0, _scroll.ScrollableHeight));
+                if (Math.Abs(adjusted - _scroll.VerticalOffset) <= 1)
+                    return container;
+
+                _scroll.ScrollToVerticalOffset(adjusted);
+                _scroll.UpdateLayout();
+                continue;
+            }
+
+            var estimatedY = PanelYToScrollY(GetTop(targetIndex));
+            var targetOffset = Math.Clamp(Math.Max(0, estimatedY - desiredTop), 0, Math.Max(0, _scroll.ScrollableHeight));
+            _scroll.ScrollToVerticalOffset(targetOffset);
+            _scroll.UpdateLayout();
+        }
+
+        return owner.ItemContainerGenerator.ContainerFromItem(targetItem) as FrameworkElement ?? container;
+    }
+
     private (double Top, double Bottom) VisibleBoundsInPanel()
     {
         var scrollOffset = _scroll != null ? _scroll.VerticalOffset : 0;

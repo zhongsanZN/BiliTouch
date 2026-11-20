@@ -308,8 +308,9 @@ public partial class ApiClient
                         if (string.IsNullOrEmpty(text)) continue;
 
                         var url = UrlUtil.Normalize(GetStr(em, "url"));
-                        if (url.Length == 0) url = UrlUtil.Normalize(GetStr(em, "webp_url"));
                         var gifUrl = UrlUtil.Normalize(GetStr(em, "gif_url"));
+                        var webpUrl = UrlUtil.Normalize(GetStr(em, "webp_url"));
+                        if (url.Length == 0) url = gifUrl.Length > 0 ? gifUrl : webpUrl;
                         var size = 1;
                         if (em.TryGetProperty("meta", out var meta) && meta.ValueKind == JsonValueKind.Object)
                         {
@@ -331,8 +332,8 @@ public partial class ApiClient
                         };
                         pkg.Emotes.Add(entry);
 
-                        if (url.Length > 0 && !lookup.ContainsKey(text))
-                            lookup[text] = new CommentEmote { Url = url, Size = size };
+                        if ((url.Length > 0 || gifUrl.Length > 0) && !lookup.ContainsKey(text))
+                            lookup[text] = new CommentEmote { Url = url, GifUrl = gifUrl, Size = size };
                     }
                 }
 
@@ -838,7 +839,9 @@ public partial class ApiClient
                 if (kv.Value.ValueKind != JsonValueKind.Object) continue;
                 if (!item.Content.Contains(kv.Name, StringComparison.Ordinal)) continue;
                 var url = UrlUtil.Normalize(GetStr(kv.Value, "url"));
-                if (url.Length == 0) url = UrlUtil.Normalize(GetStr(kv.Value, "webp_url"));
+                var gifUrl = UrlUtil.Normalize(GetStr(kv.Value, "gif_url"));
+                var webpUrl = UrlUtil.Normalize(GetStr(kv.Value, "webp_url"));
+                if (url.Length == 0) url = gifUrl.Length > 0 ? gifUrl : webpUrl;
                 if (url.Length == 0) continue;
                 var size = 1;
                 if (kv.Value.TryGetProperty("meta", out var meta) && meta.ValueKind == JsonValueKind.Object)
@@ -846,7 +849,7 @@ public partial class ApiClient
                     var s = GetIntSafe(meta, "size");
                     if (s > 1) size = s;
                 }
-                item.Emotes[kv.Name] = new CommentEmote { Url = url, Size = size };
+                item.Emotes[kv.Name] = new CommentEmote { Url = url, GifUrl = gifUrl, Size = size };
             }
         }
 

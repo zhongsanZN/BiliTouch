@@ -82,6 +82,7 @@ public partial class ImagePreviewWindow : FluentWindow
         PreviewImage.MouseMove += OnImageMouseMove;
         PreviewImage.MouseRightButtonUp += (_, _) => Close();
         KeyDown += OnKey;
+        Closed += (_, _) => AnimatedImagePlayer.Detach(PreviewImage);
     }
 
     /// <summary>
@@ -95,6 +96,7 @@ public partial class ImagePreviewWindow : FluentWindow
         var generation=++_imageGeneration;
         HintText.Text="正在加载图片…";
         HintText.Visibility=Visibility.Visible;
+        AnimatedImagePlayer.Detach(PreviewImage);
         PreviewImage.Source=null;
         _imageUrl = UrlUtil.Normalize(url);
         _suggestedName = FileNameUtil.Sanitize(
@@ -107,15 +109,17 @@ public partial class ImagePreviewWindow : FluentWindow
             return;
         }
 
-        var img = await CoverLoader.LoadAsync(_imageUrl, 4096);
+        var media = await CoverLoader.LoadMediaAsync(_imageUrl, 4096);
         if(generation!=_imageGeneration)return;
-        if (img == null)
+        if (!media.HasImage || media.FirstFrame == null)
         {
             HintText.Text = "图片加载失败";
             return;
         }
 
-        ShowImage(img);
+        ShowImage(media.FirstFrame);
+        if (media.Animated != null)
+            AnimatedImagePlayer.Attach(PreviewImage, media.Animated);
     }
 
     /// <summary>

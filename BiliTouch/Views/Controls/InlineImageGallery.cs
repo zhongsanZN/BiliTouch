@@ -87,17 +87,19 @@ public sealed class InlineImageGallery:UserControl
     {var next=_index+direction;if(next<0 || next>=_urls.Length)return;_index=next;_=LoadCurrentAsync();}
     private async Task LoadCurrentAsync()
     {
-        var generation=++_generation;_image.Source=null;_naturalWidth=_naturalHeight=0;
+        var generation=++_generation;AnimatedImagePlayer.Detach(_image);_image.Source=null;_naturalWidth=_naturalHeight=0;
         _status.Text=$"{_index+1} / {_urls.Length}";_previous.IsEnabled=_index>0;_next.IsEnabled=_index+1<_urls.Length;
         _previous.Visibility=_next.Visibility=_urls.Length>1?Visibility.Visible:Visibility.Collapsed;
         _hint.Text="正在加载图片…";_hint.Visibility=Visibility.Visible;ResetView();
         var url=CurrentUrl;if(url.Length==0){_hint.Text="没有可显示的图片";return;}
-        var image=await CoverLoader.LoadAsync(url,4096);
+        var media=await CoverLoader.LoadMediaAsync(url,4096);
         if(generation!=_generation)return;
-        if(image==null){_hint.Text="图片加载失败";return;}
-        _image.Source=image;_naturalWidth=image.Width;_naturalHeight=image.Height;_hint.Visibility=Visibility.Collapsed;ImageReady?.Invoke();ResetView();
+        if(!media.HasImage || media.FirstFrame==null){_hint.Text="图片加载失败";return;}
+        if(media.Animated!=null)AnimatedImagePlayer.Attach(_image,media.Animated);
+        else _image.Source=media.Static;
+        _naturalWidth=media.FirstFrame.Width;_naturalHeight=media.FirstFrame.Height;_hint.Visibility=Visibility.Collapsed;ImageReady?.Invoke();ResetView();
     }
-    public void Cancel(){_generation++;_image.Source=null;_urls=Array.Empty<string>();}
+    public void Cancel(){_generation++;AnimatedImagePlayer.Detach(_image);_image.Source=null;_urls=Array.Empty<string>();}
     public void ResetView()
     {
         _scale.ScaleX=_scale.ScaleY=1;_pan.X=_pan.Y=0;

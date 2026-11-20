@@ -942,6 +942,7 @@ public partial class PlayerWindow : FluentWindow
         // 本次实际排序回到用户偏好(_commentSort); 新视频重新试热门, 热门空再回退成时间
         _loadedCommentSort = _effectiveCommentSort = _commentSort;
         _commentReturnRpid = 0;
+        _commentReturnAnchor = null;
         _videoBackdropGuardTicks = 0;
         // 音频自愈的"上次检查时刻"(_audioHealCheckAt)不清: 它是宽限期计时基准,
         // 跨片保持最多把新片的第一次检查推迟 1.5s; 清零反而会在 aout 未就绪时立刻误检。
@@ -951,7 +952,7 @@ public partial class PlayerWindow : FluentWindow
         UpdateCommentSortUi(visible: false);
         // 换片时把评论详情也收掉(tab 文案与返回链接一并还原),
         // 否则新片子一进来右侧就挂着上一条视频的评论详情页
-        if (CommentDetailPanel != null) CloseCommentDetail();
+        if (CommentDetailPanel != null) CloseCommentDetail(restoreScroll: false);
         if (CommentList != null) CommentList.ItemsSource = null;
         if (CommentHint != null) CommentHint.Text = "加载评论中…";
         // 上一条视频没写完的评论草稿不能带到下一条去(用户点开新视频发现输入框里
@@ -1166,7 +1167,7 @@ public partial class PlayerWindow : FluentWindow
         nameof(_dmClockRate),           // 弹幕时钟倍率: 换片后由 CalibrateDanmakuClock 重新校准
         nameof(_maximizeCoverArmed),    // 最大化黑幕闸: 百毫秒级窗口瞬态, 换片时不会存活
         nameof(_suppressStateCover),    // 状态切换遮罩抑制闸: 同上, 计时器自动收敛
-        nameof(_commentReturnRpid),     // 评论详情返回锚: 属于"上一条评论详情", 换片必须归零
+        nameof(_commentReturnRpid), nameof(_commentReturnAnchor),     // 评论详情返回锚: 属于"上一条评论详情", 换片必须归零
         nameof(_videoBackdropGuardTicks), // vout 底色守护计数: 3 秒自收尾的瞬态
         nameof(_audioHealCheckAt),      // 音频自愈上次检查时刻: 跨片保持宽限意义, 不必清(见该字段)
         // 合集: 「这个视频有没有合集」属于"这一片"的属性, 换片必须重算。

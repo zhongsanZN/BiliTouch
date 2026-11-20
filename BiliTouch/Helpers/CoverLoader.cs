@@ -39,6 +39,13 @@ public static class CoverLoader
         public long LastUse;
     }
 
+    private sealed class AnimatedEntry
+    {
+        public AnimatedBitmap Animation = null!;
+        public long Bytes;
+        public long LastUse;
+    }
+
     private sealed class InFlightEntry
     {
         public Task<BitmapImage?> Task = null!;
@@ -55,9 +62,27 @@ public static class CoverLoader
         }
     }
 
+    private sealed class InFlightMediaEntry
+    {
+        public Task<LoadedImage> Task = null!;
+        public readonly List<LoadInterest?> Interests = new(2);
+
+        public bool IsAllAbandoned()
+        {
+            if (Interests.Count == 0) return false;
+            foreach (var item in Interests)
+            {
+                if (item == null || !item.IsAbandoned) return false;
+            }
+            return true;
+        }
+    }
+
     private static readonly Dictionary<string, Entry> MemCache = new();
+    private static readonly Dictionary<string, AnimatedEntry> AnimatedCache = new();
     /// <summary>正在进行中的加载(键 = 缓存键)。同一张图被多处同时请求时共用一次下载+解码。</summary>
     private static readonly Dictionary<string, InFlightEntry> InFlight = new();
+    private static readonly Dictionary<string, InFlightMediaEntry> InFlightMedia = new();
     private static readonly object Lock = new();
 
     /// <summary>
@@ -156,6 +181,7 @@ public static class CoverLoader
 
     private static long _clock;
     private static long _cachedBytes;
+    private static long _animatedCachedBytes;
 
     /// <summary>
     /// 内存缓存上限。
@@ -171,6 +197,12 @@ public static class CoverLoader
 
     /// <summary>条数上限作为第二道保险(极端情况下大量小图也不至于让字典无限增长)</summary>
     private const int MaxCacheCount = 400;
+
+    /// <summary>多帧动图独立内存缓存上限，避免少量大动图把整屏静态封面全部挤出缓存。</summary>
+    private static readonly long MaxAnimatedCacheBytes =
+        (GC.GetGCMemoryInfo().TotalAvailableMemoryBytes >= 4L * 1024 * 1024 * 1024 ? 48L : 16L) * 1024 * 1024;
+
+    private const int MaxAnimatedCacheCount = 64;
 
     /// <summary>
     /// 解码宽度的"档位"。
@@ -228,6 +260,209 @@ public static class CoverLoader
             entry.Task = Task.Run(() => LoadCoreAsync(url, cacheKey, w, entry));
             InFlight.Add(cacheKey, entry);
             return entry.Task;
+        }
+    }
+
+    /// <summary>
+    /// 加载图片或动图（GIF / 动态 WebP）。
+    /// 对常规静态图片（JPEG / PNG / 静态 WebP）走原有静态解码与缓存，开销与 <see cref="LoadAsync"/> 一致；
+    /// 对多帧 GIF / 动态 WebP 在后台线程完整合成逐帧画布并返回 <see cref="AnimatedBitmap"/>。
+    /// </summary>
+    public static Task<LoadedImage> LoadMediaAsync(string? url, int decodeWidth = 0, LoadInterest? interest = null)
+    {
+        url = UrlUtil.Normalize(url);
+        if (url.Length == 0) return Task.FromResult(default(LoadedImage));
+
+        var w = Quantize(decodeWidth);
+        lock (Lock)
+        {
+            if (TryGetCachedMediaLocked(url, w, out var hit))
+                return Task.FromResult(hit);
+
+            var cacheKey = w > 0 ? $"{url}|w{w}" : url;
+            if (InFlightMedia.TryGetValue(cacheKey, out var running))
+            {
+                running.Interests.Add(interest);
+                return running.Task;
+            }
+            var entry = new InFlightMediaEntry();
+            entry.Interests.Add(interest);
+            entry.Task = Task.Run(() => LoadMediaCoreAsync(url, cacheKey, w, entry));
+            InFlightMedia.Add(cacheKey, entry);
+            return entry.Task;
+        }
+    }
+
+    public static bool TryGetCachedMedia(string? url, int decodeWidth, out LoadedImage media)
+    {
+        url = UrlUtil.Normalize(url);
+        if (url.Length == 0) { media = default; return false; }
+
+        var w = Quantize(decodeWidth);
+        lock (Lock)
+        {
+            if (TryGetCachedMediaLocked(url, w, out media))
+                return true;
+        }
+        media = default;
+        return false;
+    }
+
+    private static bool TryGetCachedAnimatedLocked(string url, int width, out AnimatedEntry hit)
+    {
+        if (AnimatedCache.TryGetValue(width > 0 ? $"{url}|w{width}" : url, out hit!)) return true;
+        if (width > 0 && width <= MaxCoverDecodeWidth)
+            foreach (var step in WidthSteps)
+                if (step > width && step <= MaxCoverDecodeWidth &&
+                    AnimatedCache.TryGetValue($"{url}|w{step}", out hit!)) return true;
+        if (width > 0 && AnimatedCache.TryGetValue(url, out hit!)) return true;
+        hit = null!;
+        return false;
+    }
+
+    private static bool TryGetCachedMediaLocked(string url, int width, out LoadedImage hit)
+    {
+        if (TryGetCachedAnimatedLocked(url, width, out var animHit))
+        {
+            animHit.LastUse = ++_clock;
+            hit = new LoadedImage(animHit.Animation);
+            return true;
+        }
+        if (TryGetCachedLocked(url, width, out var staticHit))
+        {
+            staticHit.LastUse = ++_clock;
+            hit = new LoadedImage(staticHit.Image);
+            return true;
+        }
+        hit = default;
+        return false;
+    }
+
+    private static async Task<LoadedImage> LoadMediaCoreAsync(string url, string cacheKey, int decodeWidth,
+                                                              InFlightMediaEntry inFlight)
+    {
+        try
+        {
+            var isLocalFile = !url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                && !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                && Path.IsPathFullyQualified(url);
+            var cacheFile = isLocalFile
+                ? url
+                : Path.Combine(AppPaths.CacheDir, Hashing.Md5Hex(url) + ".jpg");
+            byte[]? downloaded = null;
+            if (!isLocalFile && !File.Exists(cacheFile))
+            {
+                await DownloadSlots.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    if (!File.Exists(cacheFile))
+                    {
+                        downloaded = await Http.GetByteArrayAsync(url).ConfigureAwait(false);
+                        await AtomicFile.WriteAllBytesAsync(cacheFile, downloaded).ConfigureAwait(false);
+                    }
+                }
+                catch
+                {
+                    // 写盘失败不等于取图失败，下面仍可走内存字节解码
+                }
+                finally
+                {
+                    DownloadSlots.Release();
+                }
+            }
+
+            var haveFile = File.Exists(cacheFile);
+            if (!haveFile && downloaded == null) return default;
+
+            AnimatedBitmap? anim = null;
+            BitmapImage? img = null;
+            await DecodeSlots.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                bool abandoned;
+                lock (Lock) abandoned = inFlight.IsAllAbandoned();
+                if (abandoned) return default;
+
+                bool maybeAnimated = downloaded != null
+                    ? AnimatedImageDecoder.IsPotentiallyAnimated(downloaded)
+                    : AnimatedImageDecoder.IsPotentiallyAnimatedFile(cacheFile);
+
+                if (maybeAnimated)
+                {
+                    anim = downloaded != null
+                        ? AnimatedImageDecoder.TryDecodeBytes(downloaded, decodeWidth)
+                        : AnimatedImageDecoder.TryDecodeFile(cacheFile, decodeWidth);
+                }
+
+                if (anim == null)
+                {
+                    img = downloaded != null
+                        ? FromBytes(downloaded, decodeWidth)
+                        : FromFile(cacheFile, decodeWidth);
+                }
+            }
+            finally
+            {
+                DecodeSlots.Release();
+            }
+
+            if (anim != null)
+            {
+                lock (Lock)
+                {
+                    if (!AnimatedCache.ContainsKey(cacheKey))
+                    {
+                        var entry = new AnimatedEntry
+                        {
+                            Animation = anim,
+                            Bytes = anim.EstimatedBytes,
+                            LastUse = ++_clock
+                        };
+                        AnimatedCache[cacheKey] = entry;
+                        _animatedCachedBytes += entry.Bytes;
+                        TrimAnimatedLocked();
+                    }
+                }
+                return new LoadedImage(anim);
+            }
+
+            if (img == null) return default;
+
+            lock (Lock)
+            {
+                if (!MemCache.ContainsKey(cacheKey))
+                {
+                    var entry = new Entry
+                    {
+                        Image = img,
+                        Bytes = EstimateBytes(img),
+                        LastUse = ++_clock
+                    };
+                    MemCache[cacheKey] = entry;
+                    _cachedBytes += entry.Bytes;
+                    TrimLocked();
+                }
+            }
+            return new LoadedImage(img);
+        }
+        finally
+        {
+            lock (Lock) InFlightMedia.Remove(cacheKey);
+        }
+    }
+
+    private static void TrimAnimatedLocked()
+    {
+        if (_animatedCachedBytes <= MaxAnimatedCacheBytes && AnimatedCache.Count <= MaxAnimatedCacheCount) return;
+
+        var targetBytes = MaxAnimatedCacheBytes * 8 / 10;
+        var targetCount = MaxAnimatedCacheCount * 8 / 10;
+
+        foreach (var kv in AnimatedCache.OrderBy(kv => kv.Value.LastUse))
+        {
+            if (_animatedCachedBytes <= targetBytes && AnimatedCache.Count <= targetCount) break;
+            _animatedCachedBytes -= kv.Value.Bytes;
+            AnimatedCache.Remove(kv.Key);
         }
     }
 
@@ -521,6 +756,8 @@ public static class CoverLoader
         {
             MemCache.Clear();
             _cachedBytes = 0;
+            AnimatedCache.Clear();
+            _animatedCachedBytes = 0;
         }
         long total = 0;
         try
@@ -574,7 +811,15 @@ public static class Cover
         var url = GetSource(border);
         if (string.IsNullOrWhiteSpace(url) || border.ActualWidth <= 0) return false;
         var width = CoverLoader.DecodeWidthFor(border.ActualWidth, VisualTreeHelper.GetDpi(border).DpiScaleX);
-        if (!CoverLoader.TryGetCached(url, width, out var image) || image == null) return false;
+        if (!CoverLoader.TryGetCachedMedia(url, width, out var media) || !media.HasImage) return false;
+        if (media.Animated != null)
+        {
+            if (border.Background is ImageBrush && AnimatedImagePlayer.IsPlaying(border, media.Animated) && border.Opacity >= 1)
+                return true;
+            ApplyAnimated(border, url, media.Animated, width, fade: false);
+            return true;
+        }
+        var image = media.Static!;
         if (border.Background is ImageBrush brush && ReferenceEquals(brush.ImageSource, image) && border.Opacity >= 1) return true;
         ApplyDecoded(border, url, image, width, fade: false);
         return true;
@@ -629,6 +874,7 @@ public static class Cover
         // ★ 2026-11-08: 换源 = 上一次请求作废。虚拟化面板把这一格回收给别的条目时, 上一次的
         //   解码可能还排在 DecodeSlots 里 —— 打上标记, 轮到它时直接跳过, 名额让给视口内的图。
         //   (换源后 LoadAsync 会 new 一个新的标记, 两次请求各算各的。)
+        AnimatedImagePlayer.Detach(border);
         CoverLoader.AbandonInterest(border);
         border.SetValue(DecodedPixelWidthProperty, 0);
         var url = e.NewValue as string;
@@ -739,18 +985,20 @@ public static class Cover
         //   `ShouldPlayFadeIn(prev<=0)` 还是会因为"这是新容器、prev 被重置成 0"而重新播一遍
         //   0→1 淡入, 于是每次切 tab 几百张封面一起闪一遍, 观感就是"封面重新加载了"。
         //   命中缓存说明这格之前见过、不是真正的首次加载, 不该再淡入。
-        if (CoverLoader.TryGetCached(url, w, out var cached) && cached != null)
+        if (CoverLoader.TryGetCachedMedia(url, w, out var cached) && cached.HasImage)
         {
-            ApplyDecoded(border, url, cached, w, fade: false);
+            if (cached.Animated != null) ApplyAnimated(border, url, cached.Animated, w, fade: false);
+            else ApplyDecoded(border, url, cached.Static!, w, fade: false);
             return;
         }
 
         // Only cold images need the viewport's bounded scheduling. Warm images must
         // be restored before returning to layout, including while scrolling backwards.
         if (!await ViewportImageQueue.WaitAsync(border) || GetSource(border) != url) return;
-        if (CoverLoader.TryGetCached(url, w, out cached) && cached != null)
+        if (CoverLoader.TryGetCachedMedia(url, w, out cached) && cached.HasImage)
         {
-            ApplyDecoded(border, url, cached, w, fade: false);
+            if (cached.Animated != null) ApplyAnimated(border, url, cached.Animated, w, fade: false);
+            else ApplyDecoded(border, url, cached.Static!, w, fade: false);
             return;
         }
 
@@ -760,11 +1008,15 @@ public static class Cover
         //
         // ★ 带上"还要不要"标记(2026-11-08): 解码在后台排队, 轮到它时这一格很可能已经被
         //   VirtualizingCardWallPanel 回收给别的条目了。标记让那次解码连同 CPU 一起让出去。
-        var img = await CoverLoader.LoadAsync(url, w, CoverLoader.InterestOf(border)).ConfigureAwait(false);
-        if (img == null) return;
+        var media = await CoverLoader.LoadMediaAsync(url, w, CoverLoader.InterestOf(border)).ConfigureAwait(false);
+        if (!media.HasImage) return;
 
         await Application.Current.Dispatcher.InvokeAsync(
-            () => ApplyDecoded(border, url, img, w, fade: true),System.Windows.Threading.DispatcherPriority.Background);
+            () =>
+            {
+                if (media.Animated != null) ApplyAnimated(border, url, media.Animated, w, fade: true);
+                else ApplyDecoded(border, url, media.Static!, w, fade: true);
+            }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     /// <summary>
@@ -853,6 +1105,43 @@ public static class Cover
         Apply();
     }
 
+    /// <summary>
+    /// 把解好的多帧动图贴到 Border 上并交由共享调度器播放（必须在 UI 线程）。
+    /// </summary>
+    private static void ApplyAnimated(Border border, string url, AnimatedBitmap anim, int requestedWidth, bool fade)
+    {
+        if (GetSource(border) != url) return;
+
+        var prev = (int)border.GetValue(DecodedPixelWidthProperty);
+        var brush = new ImageBrush(anim.FirstFrame)
+        {
+            Stretch = GetFill(border) ? Stretch.Uniform : Stretch.UniformToFill,
+            AlignmentX = AlignmentX.Center,
+            AlignmentY = AlignmentY.Center
+        };
+        var scalingMode = Svc.Settings.HardwareAccelerationEnabled ? BitmapScalingMode.Fant : BitmapScalingMode.LowQuality;
+        border.SetValue(RenderOptions.BitmapScalingModeProperty, scalingMode);
+        border.Background = brush;
+        if (border.Child != null) border.Child.Visibility = Visibility.Collapsed;
+        // 若动图因内存预算主动降采样，用 requestedWidth 记账，防止 SizeChanged 误判反复重解码。
+        border.SetValue(DecodedPixelWidthProperty, Math.Max(anim.PixelWidth, requestedWidth));
+
+        if (fade && ShouldPlayFadeIn(prev))
+        {
+            border.Opacity = 1.0;
+            border.BeginAnimation(UIElement.OpacityProperty,
+                new System.Windows.Media.Animation.DoubleAnimation(0, 1,
+                    TimeSpan.FromMilliseconds(240)) { FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop });
+        }
+        else
+        {
+            border.BeginAnimation(UIElement.OpacityProperty, null);
+            border.Opacity = 1.0;
+        }
+
+        AnimatedImagePlayer.Attach(border, brush, anim);
+    }
+
     /// <summary>纯函数(探针可断言): 这一次上屏要不要播淡入 —— 只有"这一格还没有图"时才播。</summary>
     public static bool ShouldPlayFadeIn(int previouslyDecodedWidth) => previouslyDecodedWidth <= 0;
 
@@ -926,6 +1215,7 @@ public static class Cover
     private static void OnImageSourceChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is not Image image) return;
+        AnimatedImagePlayer.Detach(image);
         var url = e.NewValue as string;
         if (string.IsNullOrWhiteSpace(url))
         {
@@ -938,15 +1228,16 @@ public static class Cover
     private static async Task LoadIntoImageAsync(Image image, string url)
     {
         // 聊天气泡默认 512；小头像可显式使用较低档位，避免联系人列表持有大量大位图。
-        var bmp = await CoverLoader.LoadAsync(url, Math.Clamp(GetImageDecodeWidth(image),16,1280));
-        if (bmp == null) return;
+        var media = await CoverLoader.LoadMediaAsync(url, Math.Clamp(GetImageDecodeWidth(image), 16, 1280));
+        if (!media.HasImage) return;
 
         var dispatcher = Application.Current?.Dispatcher;
         if (dispatcher == null) return;
         await dispatcher.InvokeAsync(() =>
         {
             if (GetImageSource(image) != url) return; // 已换源, 放弃旧结果
-            image.Source = bmp;
+            if (media.Animated != null) AnimatedImagePlayer.Attach(image, media.Animated);
+            else image.Source = media.Static;
         });
     }
 }

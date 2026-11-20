@@ -35,7 +35,7 @@ public partial class PlayerWindow
         CommentsPanel.Visibility = Visibility.Collapsed;
         // 点 tab 也走滑动入场(横滑翻页时由翻页动画接管)
         AnimatePageEntrance(IntroPanel, fromRight: false);
-        CloseCommentDetail();
+        CloseCommentDetail(restoreScroll: false);
         // 切走评论 tab: FAB 与展开的输入面板一起收掉(它们只属于评论区)
         UpdateCommentComposer();
         // 合集现在长在简介页里: 切回简介时把列表定位到"正在播的那一集"
@@ -479,6 +479,13 @@ public partial class PlayerWindow
     private CommentItem? _detailFocus;        // 详情卡片上展示的那一条
     private CommentItem? _replyTarget;        // 详情页输入框当前要回复谁; null = 发表普通评论
 
+    private sealed record CommentReturnAnchor(double ScrollOffset, double? ViewportTop, ScrollViewer? ScrollHost, int Sort);
+    private CommentReturnAnchor? _commentReturnAnchor;
+
+    private ScrollViewer? CurrentCommentsScrollViewer()
+        => VisualTreeUtil.FindAncestor<ScrollViewer>(CommentList)
+           ?? (UsesDetachedCommentsLayout ? WebLeftScroll : InfoScroll);
+
     /// <summary>
     /// 点评论卡片里的**楼中楼方框** → 进详情页看这条评论的全部回复。
     /// 方框长在顶层评论下面, 所以线程根就是这条评论自己。
@@ -492,6 +499,27 @@ public partial class PlayerWindow
 
     private void ShowCommentDetail(CommentItem threadRoot, CommentItem focus)
     {
+        // 只在从顶层评论列表首次进入详情时记录原滚动锚点与目标评论的视口纵坐标；
+        // 在详情页内再次点击某条楼中楼回复的"回复"按钮时，CommentList 已隐藏，不可用详情页的偏移覆盖原锚点。
+        if (!IsCommentDetailOpen)
+        {
+            var scroll = CurrentCommentsScrollViewer();
+            double? viewportTop = null;
+            if (scroll != null
+                && CommentList.ItemContainerGenerator.ContainerFromItem(threadRoot) is FrameworkElement itemFe
+                && itemFe.IsLoaded && itemFe.IsVisible)
+            {
+                try
+                {
+                    var top = itemFe.TransformToAncestor(scroll).Transform(new Point(0, 0)).Y;
+                    if (double.IsFinite(top)) viewportTop = top;
+                }
+                catch { }
+            }
+            _commentReturnAnchor = scroll != null
+                ? new CommentReturnAnchor(scroll.VerticalOffset, viewportTop, scroll, _effectiveCommentSort)
+                : null;
+        }
         _detailThreadRoot = threadRoot;
         _detailFocus = focus;
         // Host 的 DataContext = 线程根: "相关回复共 N 条"/回复列表/加载更多都从它取
@@ -577,14 +605,17 @@ public partial class PlayerWindow
         CommentDetailPanel != null && CommentDetailPanel.Visibility == Visibility.Visible;
 
     /// <summary>关掉详情视图(返回列表 / 切 tab / 换视频时都要调, 防止残留旧内容)</summary>
-    private void CloseCommentDetail()
+    private void CloseCommentDetail() => CloseCommentDetail(restoreScroll: true);
+
+    private void CloseCommentDetail(bool restoreScroll)
     {
         if (CommentDetailPanel.Visibility != Visibility.Visible) return;
         CloseCommentPicture();
         // ★ 记下"刚才在看哪一条", 供返回后滚回去用(见 _commentReturnRpid)。
         //   必须在清空 _detailThreadRoot **之前**取, 否则信息就没了。
         var closingRoot = _detailThreadRoot;
-        _commentReturnRpid = closingRoot?.Rpid ?? 0;
+        _commentReturnRpid = restoreScroll ? (closingRoot?.Rpid ?? 0) : 0;
+        if (!restoreScroll) _commentReturnAnchor = null;
         CommentDetailPanel.Visibility = Visibility.Collapsed;
         CommentDetailCard.Content = null;
         CommentDetailHost.DataContext = null;
@@ -596,13 +627,20 @@ public partial class PlayerWindow
         BtnBackToComments.Visibility = Visibility.Collapsed;
         CommentList.Visibility = Visibility.Visible;
         UpdateCommentPageButton();
-        // ★ 用户报"从某条评论的回复返回后, 列表回到顶部, 得重新下拉找那条评论"
-        //   (2026-10-13): 默认回到**刚才那条评论**所在的位置。
-        //   ★ 走 Dispatcher 排队: 上面刚把 CommentList 从 Collapsed 恢复成 Visible,
-        //     此刻容器还没生成(ContainerFromItem 会返回 null), 直接找必然落空。
-        if (_commentReturnRpid > 0)
-            Dispatcher.BeginInvoke(new Action(ScrollCommentIntoView),
-                System.Windows.Threading.DispatcherPriority.Loaded);
+        // ★ 2026-11-20 修复「评论区退出具体评论后回到最上层」：
+        //   引入 VirtualizingCommentPanel 后，退出详情时外层 ScrollViewer 还停在详情页顶部，
+        //   若仅依赖 ContainerFromItem(target)，视口外的原评论根本尚未实例化，必然返回 null。
+        //   改为通过 VirtualizingCommentPanel.ScrollItemIntoView 先测高并精确恢复滚动偏移/实例化目标容器；
+        //   当 CommentList 已加载时同步恢复，消除返回瞬间的顶部闪烁。
+        if (restoreScroll && _commentReturnRpid > 0 && CommentsPanel.Visibility == Visibility.Visible)
+        {
+            StopWebScrollAnimation();
+            if (CommentList.IsLoaded)
+                ScrollCommentIntoView();
+            else
+                Dispatcher.BeginInvoke(new Action(ScrollCommentIntoView),
+                    System.Windows.Threading.DispatcherPriority.Loaded);
+        }
     }
 
     /// <summary>
@@ -623,15 +661,29 @@ public partial class PlayerWindow
     private void ScrollCommentIntoView()
     {
         var rpid = _commentReturnRpid;
+        var anchor = _commentReturnAnchor;
         _commentReturnRpid = 0;      // 一次性: 用完即清, 免得下次切 tab 又滚一次
-        if (rpid <= 0 || _closing || CommentList == null) return;
+        _commentReturnAnchor = null;
+        if (rpid <= 0 || _closing || CommentList == null || CommentsPanel.Visibility != Visibility.Visible || CommentList.Visibility != Visibility.Visible)
+            return;
 
         var target = (CommentList.ItemsSource as IEnumerable<CommentItem>)
             ?.FirstOrDefault(c => c.Rpid == rpid);
         if (target == null) return;
 
-        if (CommentList.ItemContainerGenerator.ContainerFromItem(target) is not FrameworkElement fe) return;
-        fe.BringIntoView();
+        var currentScroll = CurrentCommentsScrollViewer();
+        bool sameContext = anchor != null
+            && ReferenceEquals(anchor.ScrollHost, currentScroll)
+            && anchor.Sort == _effectiveCommentSort;
+        double? preferredOffset = sameContext ? anchor!.ScrollOffset : null;
+        double? preferredViewportTop = sameContext ? anchor!.ViewportTop : null;
+
+        FrameworkElement? fe = VirtualizingCommentPanel.FindFor(CommentList) is { } panel
+            ? panel.ScrollItemIntoView(CommentList, target, preferredOffset, preferredViewportTop)
+            : CommentList.ItemContainerGenerator.ContainerFromItem(target) as FrameworkElement;
+
+        if (fe == null) return;
+        if (VirtualizingCommentPanel.FindFor(CommentList) == null) fe.BringIntoView();
         // 闪两下: 告诉用户"就是这一条"
         // ★ FillBehavior=Stop 是必须的: 默认 Hold 会让动画把 Opacity 停在末值(0.35),
         //   用户看到的就是"这条评论变透明了, 而且再也回不来"—— 因为它从此被动画接管,
@@ -778,8 +830,12 @@ public partial class PlayerWindow
             Svc.Toast.Show("被回复的那条还没加载, 先点下方\u201c展开更多回复\u201d");
             return;
         }
-        if (DetailRepliesList?.ItemContainerGenerator.ContainerFromItem(parent) is not FrameworkElement fe) return;
-        fe.BringIntoView();
+        if (DetailRepliesList == null) return;
+        FrameworkElement? fe = VirtualizingCommentPanel.FindFor(DetailRepliesList) is { } repliesPanel
+            ? repliesPanel.ScrollItemIntoView(DetailRepliesList, parent)
+            : DetailRepliesList.ItemContainerGenerator.ContainerFromItem(parent) as FrameworkElement;
+        if (fe == null) return;
+        if (VirtualizingCommentPanel.FindFor(DetailRepliesList) == null) fe.BringIntoView();
         // 闪一下: 告诉用户"就是这一条", 不然滚过去了也对不上号
         var flash = new DoubleAnimation(1, 0.35, TimeSpan.FromMilliseconds(140))
         {
