@@ -118,7 +118,46 @@ public partial class PlayerWindow
     //   这样"暂停"根本不是一个需要处理的状态 —— 媒体时间不前进, 弹幕自然就不动;
     //   顺带还白送了 seek(清表重建)与拖进度条时的正确重同步。
     private readonly List<FlyingDanmaku> _flying = new();
+    private readonly Stack<Border> _danmakuBorderPool = new(MaxOnScreenDanmaku);
+    private readonly Stack<FlyingDanmaku> _flyingPool = new(MaxOnScreenDanmaku);
+    private static readonly BitmapCache SharedDanmakuBitmapCache = CreateFrozenDanmakuBitmapCache();
     private bool _danmakuClockAttached;
+
+    private static BitmapCache CreateFrozenDanmakuBitmapCache()
+    {
+        var cache = new BitmapCache
+        {
+            EnableClearType = false,
+            RenderAtScale = 1.0,
+            SnapsToDevicePixels = true
+        };
+        cache.Freeze();
+        return cache;
+    }
+
+    private void RecycleFlyingDanmaku(FlyingDanmaku f)
+    {
+        if (f.Element != null)
+        {
+            DanmakuCanvas?.Children.Remove(f.Element);
+            if (_danmakuBorderPool.Count < MaxOnScreenDanmaku)
+                _danmakuBorderPool.Push(f.Element);
+        }
+        if (_flyingPool.Count < MaxOnScreenDanmaku)
+            _flyingPool.Push(f);
+    }
+
+    private void ClearFlyingAndRecycle()
+    {
+        if (_flying.Count > 0)
+        {
+            for (int i = _flying.Count - 1; i >= 0; i--)
+                RecycleFlyingDanmaku(_flying[i]);
+            _flying.Clear();
+        }
+        if (DanmakuCanvas is { Children.Count: > 0 })
+            DanmakuCanvas.Children.Clear();
+    }
 
     // ---- 弹幕时钟: Stopwatch 走时 + 低频校准(2026-11 修"弹幕滑动很卡, 几帧几帧地跳") ----
     //
@@ -442,18 +481,75 @@ public partial class PlayerWindow
 
         // Bound the work a dense timestamp can put on the UI thread. Retain the full
         // timeline for seeking, but never replay an old burst over later video frames.
+        if (DanmakuCanvas != null && DanmakuCanvas.Children.Count >= MaxOnScreenDanmaku)
+        {
+            _indexInLib = LowerBound(_danmaku, Math.BitIncrement(currentSeconds));
+            return;
+        }
+
         var dispatchStart = Stopwatch.GetTimestamp();
         var dispatched = 0;
+        var spawned = 0;
+        var rollingBlocked = false;
         while (_indexInLib < _danmaku.Count && _danmaku[_indexInLib].Time <= currentSeconds)
         {
             var item = _danmaku[_indexInLib];
+            var isFixed = item.Mode is 4 or 5;
+            if (!isFixed && rollingBlocked)
+            {
+                _indexInLib++;
+                if (++dispatched >= 64)
+                {
+                    _indexInLib = LowerBound(_danmaku, Math.BitIncrement(currentSeconds));
+                    break;
+                }
+                continue;
+            }
+
+            var beforeCount = _flying.Count;
             AddDanmaku(item.Text, item.Mode, item.Time, item.Color);
+            if (_flying.Count > beforeCount)
+            {
+                spawned++;
+            }
+            else if (!isFixed)
+            {
+                // 当前时刻所有滚动泳道入口已满，本帧后续同时间戳滚动弹幕无需再逐条尝试
+                rollingBlocked = !HasAnyOpenRollingLane(currentSeconds);
+            }
+
             _indexInLib++;
-            if (++dispatched >= 128 || Stopwatch.GetElapsedTime(dispatchStart).TotalMilliseconds >= 2)
+            if (spawned >= 16 || ++dispatched >= 64
+                || (DanmakuCanvas != null && DanmakuCanvas.Children.Count >= MaxOnScreenDanmaku)
+                || Stopwatch.GetElapsedTime(dispatchStart).TotalMilliseconds >= 1.5)
             {
                 _indexInLib = LowerBound(_danmaku, Math.BitIncrement(currentSeconds));
                 break;
             }
+        }
+    }
+
+    /// <summary>渲染帧内平滑补发已到点的弹幕（每帧最多 3 条），避免 4Hz TimeChanged 攒批突发建树导致微卡顿。</summary>
+    private void DispatchDueFromRenderFrame(double nowSeconds)
+    {
+        if (!_danmakuOn || _closing || !_dmClockRunning || _mp == null || _danmaku.Count == 0) return;
+        if (DanmakuCanvas == null || DanmakuCanvas.Children.Count >= MaxOnScreenDanmaku) return;
+        if (_indexInLib < 0 || _indexInLib >= _danmaku.Count) return;
+
+        var nextTime = _danmaku[_indexInLib].Time;
+        if (nextTime > nowSeconds) return;
+        if (nowSeconds - nextTime > DanmakuCursorToleranceSec) return;
+
+        int spawned = 0;
+        int scanned = 0;
+        while (_indexInLib < _danmaku.Count && _danmaku[_indexInLib].Time <= nowSeconds)
+        {
+            var item = _danmaku[_indexInLib];
+            var before = _flying.Count;
+            AddDanmaku(item.Text, item.Mode, item.Time, item.Color);
+            _indexInLib++;
+            if (_flying.Count > before && ++spawned >= 3) break;
+            if (++scanned >= 12) break;
         }
     }
 
@@ -485,7 +581,8 @@ public partial class PlayerWindow
         //   收掉之后 DispatchDanmaku 会按新位置重新派发, 这才是"跳过去就该看到那边的弹幕"。
         if (_flying.Count > 0)
         {
-            foreach (var f in _flying) DanmakuCanvas?.Children.Remove(f.Element);
+            for (var i = _flying.Count - 1; i >= 0; i--)
+                RecycleFlyingDanmaku(_flying[i]);
             _flying.Clear();
         }
     }
@@ -541,6 +638,7 @@ public partial class PlayerWindow
         // 弹幕从左(或右)走到完全离开所需时间 = _danmakuScrollSeconds(随速度档位变)
         // 速度(像素/秒) = (canvasWidth + width) / _danmakuScrollSeconds
         var speed = (canvasWidth + width) / _danmakuScrollSeconds;
+        var minGap = Math.Max(20.0, _danmakuFontSize * 0.9);
 
         var bestLane = -1;
         var bestFreeAt = double.MaxValue;
@@ -565,23 +663,61 @@ public partial class PlayerWindow
             // 这样一趟循环就能挑出"最该复用的那条"。
             if (freeAt >= bestFreeAt) continue;
 
-            // remaining: 前一条还要占住右侧入口多久
+            // remaining: 前一条还要多久完全离开画面左缘(X = -prevWidth)
             var remaining = freeAt - currentSeconds;
-            // 前一条弹幕此刻的左边缘位置(近似: 按自身速度反推)
             var prevWidth = _laneLastWidth != null && i < _laneLastWidth.Length ? _laneLastWidth[i] : width;
             var prevSpeed = (canvasWidth + prevWidth) / _danmakuScrollSeconds;
             var prevElapsed = _danmakuScrollSeconds - remaining;
             var prevLeft = canvasWidth - prevElapsed * prevSpeed;
-            // 后一条从 canvasWidth 出发; 只要前一条的右边缘(prevLeft + prevWidth) 与
-            // 后一条的左边缘(canvasWidth) 之间留有安全间距, 就不会视觉重叠
-            if (prevLeft + prevWidth + 12 <= canvasWidth)
-            {
-                bestLane = i;
-                bestFreeAt = freeAt;
-            }
+            var prevRight = prevLeft + prevWidth;
+
+            // 1) 入场间距：前一条弹幕的右尾必须已离开右侧起点至少 minGap
+            if (prevRight + minGap > canvasWidth) continue;
+
+            // 2) 防追尾校验：若新弹幕更长（速度更快），前一条右尾抵达左缘(X=0，即 t=freeAt)时，
+            //    新弹幕左头 (canvasWidth - remaining * speed) 仍须 >= minGap，否则途中必然追尾重叠
+            if (speed > prevSpeed && canvasWidth - remaining * speed < minGap) continue;
+
+            bestLane = i;
+            bestFreeAt = freeAt;
         }
 
         return bestLane;
+    }
+
+    /// <summary>快速判断当前时刻是否至少有一条滚动泳道的右侧入口已腾出基本间隙。</summary>
+    private bool HasAnyOpenRollingLane(double currentSeconds)
+    {
+        EnsureLanes();
+        if (_laneFreeAt == null || _laneFreeAt.Length == 0 || DanmakuCanvas == null) return false;
+        var canvasWidth = DanmakuCanvas.ActualWidth;
+        if (canvasWidth <= 0) return false;
+        var minGap = Math.Max(20.0, _danmakuFontSize * 0.9);
+
+        for (var i = 0; i < _laneFreeAt.Length; i++)
+        {
+            var freeAt = _laneFreeAt[i];
+            if (freeAt <= currentSeconds) return true;
+            var remaining = freeAt - currentSeconds;
+            var prevWidth = _laneLastWidth != null && i < _laneLastWidth.Length ? _laneLastWidth[i] : _danmakuFontSize * 2;
+            var prevSpeed = (canvasWidth + prevWidth) / _danmakuScrollSeconds;
+            var prevElapsed = _danmakuScrollSeconds - remaining;
+            var prevRight = canvasWidth - prevElapsed * prevSpeed + prevWidth;
+            if (prevRight + minGap <= canvasWidth) return true;
+        }
+        return false;
+    }
+
+    /// <summary>零分配字宽快速估算（CJK 全角≈1.0em，ASCII 半角≈0.58em + 左右内边距），用于在建控件前先行完成泳道与防追尾判定。</summary>
+    private static double EstimateDanmakuWidth(string text, double fontSize, bool outline)
+    {
+        double units = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            units += c <= 0x7F ? 0.58 : 1.0;
+        }
+        return Math.Max(1.0, Math.Ceiling(units * fontSize + 12.0 + (outline ? 3.0 : 0.0)));
     }
 
     /// <summary>分配顶部/底部固定弹幕的位置(轮转, 避免连续多条压在同一行)</summary>
@@ -626,55 +762,94 @@ public partial class PlayerWindow
         var currentSeconds = DanmakuClock();
         if (currentSeconds <= 0) currentSeconds = time;   // 还没起播(极少见): 退回这条弹幕自带的时间
 
-        // Reject full lanes before constructing/measuring visual objects. The old path
-        // allocated and measured thousands of elements that were immediately removed.
+        var estimatedWidth = EstimateDanmakuWidth(text, _danmakuFontSize, _danmakuOutline);
+
+        // 先按真实估算宽度做泳道/槽位分配：满泳道或会追尾的弹幕在此处直接返回（零对象分配、零布局测量）
         var lane = -1;
+        var fixedSlot = -1;
         if (mode is 4 or 5)
         {
             var slots = Math.Max(1, (int)(DanmakuCanvas.ActualHeight * _danmakuAreaRatio / _laneHeight));
             var table = mode == 5 ? _topSlots : _bottomSlots;
-            if (table.Count(x => x.until > currentSeconds) >= slots) return;
+            fixedSlot = AllocateFixedSlot(table, currentSeconds, slots);
+            if (fixedSlot < 0) return;
         }
         else
         {
-            lane = AllocateRollingLane(1, currentSeconds);
+            lane = AllocateRollingLane(estimatedWidth, currentSeconds);
             if (lane < 0) return;
         }
 
-        // ★★★ 只留文字, 不要长方形底衬(2026-10-07 用户要求"弹幕文字有长方形背景阴影, 移除它")。
-        //   原先这里给了 Background = 60% 黑 + CornerRadius=3, 屏幕上每条弹幕都压着一块
-        //   深色小方块 —— 用户看到的就是"文字后面有个长方形阴影"。
-        //   ⇒ Background 留 null(完全不画底), CornerRadius 随之无意义、一并去掉。
-        //
-        //   ★ Padding **保留**: 它不是装饰, 而是参与 width 计算(见下面的 Measure),
-        //     泳道分配与"追尾校验"都拿这个宽度当"这条弹幕要占多宽"。
-        //     去掉它会让相邻弹幕的横向间距归零, 密集时文字首尾相接糊成一片。
-        //   ★ 不要为了"看不清"改回加底衬或挂 DropShadowEffect: 前者就是用户要去掉的东西,
-        //     后者违反上面第 1 条铁律(几十条同屏 = 几十次全像素合成)。
-        var border = new Border
-        {
-            Padding = new Thickness(6, 1, 6, 1),
-            // ★ 基线不透明度: 压在亮画面上的白字太实反而晃眼, 这里给用户一个可调的档。
-            //   滚动弹幕此后不会再被改 Opacity, 所以这里设一次就够;
-            //   固定弹幕的淡出是"在这个基线上再乘一个系数"(见 OnDanmakuRendering)。
-            Opacity = _danmakuOpacity,
-            // RenderTransform 在这里预置好, 滚动弹幕直接拿它做位移动画
-            RenderTransform = new TranslateTransform(0, 0),
-            Child = CreateDanmakuTextElement(text, DanmakuBrush(color), _danmakuFontSize, _danmakuOutline)
-        };
-
+        var border = RentDanmakuBorder(text, DanmakuBrush(color), _danmakuFontSize, _danmakuOutline, _danmakuOpacity, out var translate);
         DanmakuCanvas.Children.Add(border);
-        border.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        var width = Math.Max(1, border.DesiredSize.Width);
 
-        if (mode == 5 || mode == 4)
+        if (mode is 4 or 5)
         {
-            RenderFixed(border, mode, currentSeconds);
+            RenderFixed(border, translate, mode, estimatedWidth, currentSeconds, fixedSlot);
         }
         else
         {
-            RenderRolling(border, width, currentSeconds, lane);
+            RenderRolling(border, translate, estimatedWidth, currentSeconds, lane);
         }
+    }
+
+    private Border RentDanmakuBorder(
+        string text,
+        Brush foreground,
+        double fontSize,
+        bool outline,
+        double opacity,
+        out TranslateTransform translate)
+    {
+        var cacheMode = Svc.Settings.HardwareAccelerationEnabled ? SharedDanmakuBitmapCache : null;
+        if (_danmakuBorderPool.TryPop(out var border))
+        {
+            border.Opacity = opacity;
+            if (!ReferenceEquals(border.CacheMode, cacheMode))
+                border.CacheMode = cacheMode;
+
+            if (border.RenderTransform is TranslateTransform existingTransform && !existingTransform.IsFrozen)
+            {
+                translate = existingTransform;
+            }
+            else
+            {
+                translate = new TranslateTransform(0, 0);
+                border.RenderTransform = translate;
+            }
+
+            if (outline)
+            {
+                if (border.Child is OutlinedDanmakuText ot)
+                    ot.SetContent(text, foreground, fontSize);
+                else
+                    border.Child = new OutlinedDanmakuText(text, foreground, fontSize);
+            }
+            else
+            {
+                if (border.Child is TextBlock tb)
+                {
+                    if (!string.Equals(tb.Text, text, StringComparison.Ordinal)) tb.Text = text;
+                    if (!ReferenceEquals(tb.Foreground, foreground)) tb.Foreground = foreground;
+                    if (Math.Abs(tb.FontSize - fontSize) > 0.01) tb.FontSize = fontSize;
+                }
+                else
+                {
+                    border.Child = new TextBlock { Text = text, Foreground = foreground, FontSize = fontSize };
+                }
+            }
+            return border;
+        }
+
+        translate = new TranslateTransform(0, 0);
+        return new Border
+        {
+            Padding = new Thickness(6, 1, 6, 1),
+            Opacity = opacity,
+            CacheMode = cacheMode,
+            RenderTransform = translate,
+            Child = CreateDanmakuTextElement(text, foreground, fontSize, outline)
+        };
     }
 
     // ------------------------------------------------------------ 彩色弹幕
@@ -755,59 +930,46 @@ public partial class PlayerWindow
     /// ★ 这里**不起任何 WPF 动画**, 只把这条弹幕登记进 <see cref="_flying"/>,
     ///   位置由 <see cref="OnDanmakuRendering"/> 按视频时钟每帧算。理由见 _flying 的说明。
     /// </summary>
-    private void RenderRolling(Border border, double width, double currentSeconds, int lane)
+    private void RenderRolling(Border border, TranslateTransform translate, double width, double currentSeconds, int lane)
     {
         if (lane < 0)
         {
-            // 没有可用泳道 —— 宁可丢弃也不叠在一起(这正是"大量重叠"的根治点)
             DanmakuCanvas.Children.Remove(border);
             return;
         }
 
-        // 记录该泳道的占用信息, 供后续追尾校验使用
         _laneFreeAt![lane] = currentSeconds + _danmakuScrollSeconds;
         if (_laneLastWidth != null) _laneLastWidth[lane] = width;
 
+        Canvas.SetLeft(border, 0);
         Canvas.SetTop(border, 6 + lane * _laneHeight);
 
         var canvasWidth = DanmakuCanvas.ActualWidth;
-        // 预置到"刚好在画面右侧外", 这是新弹幕的入场位置（RollingX 在 elapsed=0 时
-        // 同样返回 canvasWidth）。★ 别因为怕"窗口不可见时弹幕停在这里看不见"就把主时钟
-        // 降级成 16ms DispatcherTimer —— 0.1.6 正是这么修的，结果浮层帧率被钉在 ~33fps
-        // （见 docs/FPS-REGRESSION-2026-11-09.md）。正解是主时钟用 CompositionTarget.Rendering
-        // 跟 DWM 合成走，再加一条低频看门狗：合成停摆时补一次推进，弹幕立刻跳到
-        // DanmakuClock() 外推出的正确位置。弹幕时钟基于墙钟外推，停多久都不会丢进度。
-        var translate = new TranslateTransform(
-            Helpers.DanmakuMotion.RollingX(canvasWidth, width, 0, _danmakuScrollSeconds), 0);
-        border.RenderTransform = translate;
+        translate.X = Helpers.DanmakuMotion.RollingX(canvasWidth, width, 0, _danmakuScrollSeconds);
+        translate.Y = 0;
 
-        TrackFlying(new FlyingDanmaku
-        {
-            Element = border,
-            Translate = translate,
-            SpawnClock = currentSeconds,
-            TotalSeconds = _danmakuScrollSeconds,
-            Width = width,
-        });
+        var flying = _flyingPool.TryPop(out var reused) ? reused : new FlyingDanmaku();
+        flying.Element = border;
+        flying.Translate = translate;
+        flying.SpawnClock = currentSeconds;
+        flying.TotalSeconds = _danmakuScrollSeconds;
+        flying.Width = width;
+        flying.IsFixed = false;
+        TrackFlying(flying);
     }
 
     /// <summary>顶部/底部固定弹幕: 居中停留数秒后淡出(透明度同样由视频时钟算, 不用动画)</summary>
-    private void RenderFixed(Border border, int mode, double currentSeconds)
+    private void RenderFixed(Border border, TranslateTransform translate, int mode, double width, double currentSeconds, int slot)
     {
-        var canvasWidth = DanmakuCanvas.ActualWidth;
-        var canvasHeight = DanmakuCanvas.ActualHeight * _danmakuAreaRatio;
-
-        var slotCount = Math.Max(1, (int)(canvasHeight / _laneHeight));
-        var table = mode == 5 ? _topSlots : _bottomSlots;
-        var slot = AllocateFixedSlot(table, currentSeconds, slotCount);
         if (slot < 0)
         {
             DanmakuCanvas.Children.Remove(border);
             return;
         }
 
-        border.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-        var width = border.DesiredSize.Width;
+        var canvasWidth = DanmakuCanvas.ActualWidth;
+        var canvasHeight = DanmakuCanvas.ActualHeight * _danmakuAreaRatio;
+
         Canvas.SetLeft(border, Math.Max(0, (canvasWidth - width) / 2));
 
         // 顶部从上往下排, 底部从下往上排
@@ -816,19 +978,18 @@ public partial class PlayerWindow
             : Math.Max(6, canvasHeight - 6 - (slot + 1) * _laneHeight);
         Canvas.SetTop(border, top);
 
-        // 横向不需要位移, 但 TranslateTransform 仍要挂一个: 逐帧代码按同一套逻辑处理两种弹幕
-        var translate = new TranslateTransform(0, 0);
-        border.RenderTransform = translate;
+        translate.X = 0;
+        translate.Y = 0;
         border.Opacity = _danmakuOpacity;
 
-        TrackFlying(new FlyingDanmaku
-        {
-            Element = border,
-            Translate = translate,
-            SpawnClock = currentSeconds,
-            TotalSeconds = _danmakuFixedSeconds,
-            IsFixed = true,
-        });
+        var flying = _flyingPool.TryPop(out var reused) ? reused : new FlyingDanmaku();
+        flying.Element = border;
+        flying.Translate = translate;
+        flying.SpawnClock = currentSeconds;
+        flying.TotalSeconds = _danmakuFixedSeconds;
+        flying.Width = width;
+        flying.IsFixed = true;
+        TrackFlying(flying);
     }
 
     /// <summary>登记一条在飞的弹幕, 并确保逐帧推进器已经挂上</summary>
@@ -931,27 +1092,31 @@ public partial class PlayerWindow
             var elapsed = now - f.SpawnClock;
             if (elapsed < 0) elapsed = 0;   // 刚上屏/刚重建泳道时的取整误差, 不让它闪到画面外
 
+            if (Helpers.DanmakuMotion.IsFinished(elapsed, f.TotalSeconds))
+            {
+                RecycleFlyingDanmaku(f);
+                _flying.RemoveAt(i);
+                continue;
+            }
+
+            var actualW = f.Element.DesiredSize.Width;
+            if (actualW > 1) f.Width = actualW;
+
             if (f.IsFixed)
             {
-                // ★★★ 必须**乘**基线不透明度, 不能直接赋值(2026-10-12 加不透明度时踩到):
-                //   原来这一行是把 Opacity 直接设成淡出系数(0~1)。用户一旦把"不透明度"调到
-                //   80%, 固定弹幕到了淡出阶段就会被这一行**覆盖回 100%** —— 表现为
-                //   "滑杆拖了没用, 只有滚动弹幕变淡, 顶/底的始终全不透明"。
-                //   现在 Opacity = 用户基线 × 淡出系数, 两个设置才真正叠加。
-                f.Element.Opacity = _danmakuOpacity
-                    * Helpers.DanmakuMotion.FixedOpacity(elapsed, f.TotalSeconds);
+                // 仅在进入淡出区间或透明度实际变化时才写 DependencyProperty，避免非淡出期每帧无效标脏
+                var nextOpacity = _danmakuOpacity * Helpers.DanmakuMotion.FixedOpacity(elapsed, f.TotalSeconds);
+                if (Math.Abs(f.Element.Opacity - nextOpacity) > 0.004)
+                    f.Element.Opacity = nextOpacity;
             }
             else
             {
                 f.Translate.X = Helpers.DanmakuMotion.RollingX(canvasWidth, f.Width, elapsed, f.TotalSeconds);
             }
-
-            if (Helpers.DanmakuMotion.IsFinished(elapsed, f.TotalSeconds))
-            {
-                DanmakuCanvas?.Children.Remove(f.Element);
-                _flying.RemoveAt(i);
-            }
         }
+
+        // 在两次 4Hz TimeChanged 之间，按帧平滑派发已到点的弹幕（每帧最多 3 条），消除 250ms 攒批建树峰值
+        DispatchDueFromRenderFrame(now);
     }
 
     /// <summary>切换弹幕开关(控制栏按钮 / 快捷键 D), 并同步到全局设置</summary>
@@ -1060,7 +1225,9 @@ public partial class PlayerWindow
     private void OnPlayerFontChanged()
     {
         if(_closing)return;
-        ResetLanes();DanmakuCanvas.Children.Clear();_flying.Clear();
+        ResetLanes();
+        ClearFlyingAndRecycle();
+        _danmakuBorderPool.Clear();
         if(_danmakuOn)StartDanmakuClock();
     }
 
@@ -1097,10 +1264,9 @@ public partial class PlayerWindow
 
         if (fontChanged || speedChanged)
         {
-            // 布局变了, 在飞的那些按旧尺寸/旧速度继续飞会突然错位, 一并清掉
+            // 布局变了, 在飞的那些按旧尺寸/旧速度继续飞会突然错位, 一并回收复用
             ResetLanes();
-            DanmakuCanvas.Children.Clear();
-            _flying.Clear();
+            ClearFlyingAndRecycle();
             if (_danmakuOn) StartDanmakuClock();
         }
     }

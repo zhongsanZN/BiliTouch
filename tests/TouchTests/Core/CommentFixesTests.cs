@@ -354,6 +354,73 @@ internal static class CommentFixesTests
             check(AnimatedImagePlayer.ActiveCount == 0,
                 $"hiding CommentsPanel pauses all comment GIF animations (active={AnimatedImagePlayer.ActiveCount})");
 
+            // --- 6. 高密弹幕性能优化：对象池复用、BitmapCache 纹理缓存、防追尾判定与描边零矢量细分开销 ---
+            Svc.Settings.SetWebPlayerLayout(false);
+            Pump(120);
+            var dmCanvas = (Canvas)player.FindName("DanmakuCanvas");
+            InvokePrivate(player, "ResetLanes");
+            InvokePrivate(player, "CalibrateDanmakuClock", 20.0);
+            InvokePrivate(player, "SetDanmakuClockRunning", false);
+
+            InvokePrivate(player, "AddDanmaku", "对象池首波弹幕", 1, 20.0, 0xFFFFFFu);
+            check(dmCanvas.Children.Count == 1, "first danmaku wave spawns 1 element on DanmakuCanvas");
+            var firstBorder = (Border)dmCanvas.Children[0];
+            check(firstBorder.CacheMode is BitmapCache || !Svc.Settings.HardwareAccelerationEnabled,
+                "danmaku Border attaches shared BitmapCache for single-pass GPU texture translation");
+
+            // ResetLanes 将在飞弹幕回收进对象池；再次发射时应直接复用同一个 Border 实例
+            InvokePrivate(player, "ResetLanes");
+            check(dmCanvas.Children.Count == 0, "ResetLanes recycles active danmaku elements off canvas");
+            InvokePrivate(player, "AddDanmaku", "对象池次波复用", 1, 21.0, 0x00FFAAu);
+            check(dmCanvas.Children.Count == 1 && ReferenceEquals(dmCanvas.Children[0], firstBorder),
+                "subsequent danmaku reuses pooled Border and child visual without allocating a new container");
+
+            // 防追尾判定：先在全泳道放短弹幕，0.35s 后短弹幕刚离开右缘一点点，此时超长快速弹幕因会追尾应被拒绝同道
+            InvokePrivate(player, "ResetLanes");
+            InvokePrivate(player, "EnsureLanes");
+            var laneArr = (double[]?)typeof(PlayerWindow).GetField("_laneFreeAt", Private)!.GetValue(player);
+            int totalLanes = laneArr?.Length ?? 1;
+            InvokePrivate(player, "CalibrateDanmakuClock", 30.0);
+            InvokePrivate(player, "SetDanmakuClockRunning", false);
+            for (int l = 0; l < totalLanes; l++)
+                InvokePrivate(player, "AddDanmaku", "短", 1, 30.0, 0xFFFFFFu);
+            var countAfterShort = dmCanvas.Children.Count;
+            // 推进 0.45 秒：短弹幕右尾刚离开右侧约 30px，但超长弹幕速度远快于短弹幕，途中必追尾，故不应被放入
+            InvokePrivate(player, "CalibrateDanmakuClock", 30.45);
+            InvokePrivate(player, "SetDanmakuClockRunning", false);
+            InvokePrivate(player, "AddDanmaku", "这是一条非常长的快速弹幕如果放进同一条泳道中途一定会追尾前面的短弹幕", 1, 30.45, 0xFFFFFFu);
+            check(dmCanvas.Children.Count == countAfterShort,
+                "anti-rear-end lane allocation rejects faster long danmaku that would overtake a slow short danmaku");
+
+            // OutlinedDanmakuText 原地复用与非空像素渲染验证
+            var outlined = new OutlinedDanmakuText("描边性能测试", Brushes.White, 24);
+            outlined.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            outlined.Arrange(new Rect(0, 0, outlined.DesiredSize.Width, outlined.DesiredSize.Height));
+            var initialW = outlined.DesiredSize.Width;
+            check(initialW > 30 && HasNonEmptyPixels(outlined),
+                "OutlinedDanmakuText renders non-empty outlined glyph pixels without PathGeometry stroke tessellation");
+            outlined.SetContent("更长的描边复用文本验证", Brushes.Yellow, 24);
+            outlined.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            check(outlined.DesiredSize.Width > initialW,
+                "OutlinedDanmakuText.SetContent updates text and re-measures in place");
+
+            // LiveOverlayRenderer 去除 DropShadowEffect + 对象池复用验证
+            var liveCanvas = new Canvas { Width = 800, Height = 450 };
+            liveCanvas.Measure(new Size(800, 450));
+            liveCanvas.Arrange(new Rect(0, 0, 800, 450));
+            using (var liveRenderer = new LiveOverlayRenderer(liveCanvas))
+            {
+                liveRenderer.Configure(20, 0.35, 0.85, 2, outline: false);
+                liveRenderer.Add("直播无阴影特效弹幕", 0xFFFFFF);
+                check(liveCanvas.Children.Count == 1, "LiveOverlayRenderer emits live danmaku onto canvas");
+                var liveElem = (FrameworkElement)liveCanvas.Children[0];
+                check(liveElem.Effect == null, "LiveOverlayRenderer no longer attaches per-element DropShadowEffect");
+                liveRenderer.Clear();
+                liveRenderer.Add("直播对象池复用弹幕", 0xFF6699);
+                check(liveCanvas.Children.Count == 1 && ReferenceEquals(liveCanvas.Children[0], liveElem),
+                    "LiveOverlayRenderer reuses pooled text element across waves");
+            }
+
             check(bindingErrors.Count == 0,
                 $"comment GIF & detail return flow produces zero WPF data-binding errors (count={bindingErrors.Count})");
         }

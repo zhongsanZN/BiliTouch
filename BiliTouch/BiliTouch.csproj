@@ -16,7 +16,7 @@
     <AssemblyTitle>BiliTouch</AssemblyTitle>
     <Product>BiliTouch</Product>
     <Authors>中三</Authors>
-    <Version>0.3.8</Version>
+    <Version>0.3.9</Version>
     <!-- 按目标 RID/Platform 选择架构：默认 x64；指定 -r win-arm64 或 Platform=ARM64 时切换原生 ARM64（面向 ARM 版 Surface） -->
     <IsArm64Target>false</IsArm64Target>
     <IsArm64Target Condition="'$(RuntimeIdentifier)' == 'win-arm64' OR '$(Platform)' == 'ARM64'">true</IsArm64Target>

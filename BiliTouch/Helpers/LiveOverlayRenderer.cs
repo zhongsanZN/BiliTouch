@@ -1,8 +1,10 @@
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
+using BiliTouch.Services;
 
 namespace BiliTouch.Helpers;
 
@@ -34,15 +36,35 @@ public sealed class LiveOverlayRenderer : IDisposable
     private const int MaxItems = 48;
     private const int LaneCount = 12;
 
+    private static readonly Brush WhiteBrush = CreateFrozenBrush(0xFFFFFF);
+    private static readonly BitmapCache SharedBitmapCache = CreateFrozenBitmapCache();
+
     private readonly Canvas _canvas;
     private readonly List<(FrameworkElement text, TranslateTransform move, long start, double width)> _items = new();
     private readonly Queue<(string message, uint color)> _pending = new();
+    private readonly Stack<TextBlock> _plainPool = new(MaxItems);
+    private readonly Stack<OutlinedDanmakuText> _outlinedPool = new(MaxItems);
+    private readonly Dictionary<uint, Brush> _brushes = new();
     private readonly long[] _lanes = new long[LaneCount];
     private readonly DispatcherTimer _watchdog;
     private long _lastRenderTicks;
     private bool _clockAttached, _disposed, _outline;
     private TimeSpan _lastRenderingTime = TimeSpan.MinValue;
     private double _fontSize = 20, _area = .35, _opacity = .8, _speed = 150;
+
+    private static Brush CreateFrozenBrush(uint color)
+    {
+        var b = new SolidColorBrush(Color.FromRgb((byte)(color >> 16), (byte)(color >> 8), (byte)color));
+        b.Freeze();
+        return b;
+    }
+
+    private static BitmapCache CreateFrozenBitmapCache()
+    {
+        var cache = new BitmapCache { EnableClearType = false, RenderAtScale = 1.0, SnapsToDevicePixels = true };
+        cache.Freeze();
+        return cache;
+    }
 
     public LiveOverlayRenderer(Canvas canvas)
     {
@@ -119,31 +141,103 @@ public sealed class LiveOverlayRenderer : IDisposable
         if (lane < 0) return;   // 满屏了, 这条丢掉(直播弹幕以"实时感"为先, 不排队补播)
 
         var msg = message.Length > 500 ? message[..500] : message;
-        var brush = new SolidColorBrush(Color.FromRgb((byte)(color >> 16), (byte)(color >> 8), (byte)color));
-        brush.Freeze();
-        FrameworkElement text = _outline
-            ? new OutlinedDanmakuText(msg, brush, _fontSize) { Opacity = _opacity }
-            : new TextBlock
-            {
-                Text = msg,
-                FontSize = _fontSize,
-                Opacity = _opacity,
-                Foreground = brush,
-                IsHitTestVisible = false,
-                Effect = new System.Windows.Media.Effects.DropShadowEffect
-                { Color = Colors.Black, ShadowDepth = 1, BlurRadius = 2, Opacity = .9 }
-            };
-        text.Measure(new Size(double.PositiveInfinity, lineHeight));
-        var width = text.DesiredSize.Width;
+        var brush = ResolveBrush(color);
+        var width = EstimateWidth(msg, _fontSize, _outline);
+        var cacheMode = Svc.Settings.HardwareAccelerationEnabled ? SharedBitmapCache : null;
 
-        var move = new TranslateTransform(_canvas.ActualWidth, lane * lineHeight + 12);
-        text.RenderTransform = move;
+        FrameworkElement text;
+        TranslateTransform move;
+        if (_outline)
+        {
+            if (_outlinedPool.TryPop(out var reusedOutlined))
+            {
+                reusedOutlined.SetContent(msg, brush, _fontSize);
+                reusedOutlined.Opacity = _opacity;
+                text = reusedOutlined;
+            }
+            else
+            {
+                text = new OutlinedDanmakuText(msg, brush, _fontSize) { Opacity = _opacity };
+            }
+        }
+        else
+        {
+            if (_plainPool.TryPop(out var reusedPlain))
+            {
+                if (!string.Equals(reusedPlain.Text, msg, StringComparison.Ordinal)) reusedPlain.Text = msg;
+                if (Math.Abs(reusedPlain.FontSize - _fontSize) > 0.01) reusedPlain.FontSize = _fontSize;
+                if (!ReferenceEquals(reusedPlain.Foreground, brush)) reusedPlain.Foreground = brush;
+                reusedPlain.Opacity = _opacity;
+                text = reusedPlain;
+            }
+            else
+            {
+                // 移除 DropShadowEffect（48 条弹幕逐帧全像素模糊会严重拖慢合成帧率）
+                text = new TextBlock
+                {
+                    Text = msg,
+                    FontSize = _fontSize,
+                    Opacity = _opacity,
+                    Foreground = brush,
+                    IsHitTestVisible = false
+                };
+            }
+        }
+
+        if (!ReferenceEquals(text.CacheMode, cacheMode))
+            text.CacheMode = cacheMode;
+
+        if (text.RenderTransform is TranslateTransform existingMove && !existingMove.IsFrozen)
+        {
+            move = existingMove;
+            move.X = _canvas.ActualWidth;
+            move.Y = lane * lineHeight + 12;
+        }
+        else
+        {
+            move = new TranslateTransform(_canvas.ActualWidth, lane * lineHeight + 12);
+            text.RenderTransform = move;
+        }
+
         // 长弹幕要走更久才让出泳道, 否则后一条会追尾。
         _lanes[lane] = now + (long)((width + 50) / _speed * Stopwatch.Frequency);
 
         _canvas.Children.Add(text);
         _items.Add((text, move, now, width));
         EnsureClock();
+    }
+
+    private Brush ResolveBrush(uint color)
+    {
+        if (color == 0xFFFFFF || color == 0) return WhiteBrush;
+        if (_brushes.TryGetValue(color, out var cached)) return cached;
+        var brush = CreateFrozenBrush(color);
+        _brushes[color] = brush;
+        return brush;
+    }
+
+    private static double EstimateWidth(string text, double fontSize, bool outline)
+    {
+        double units = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            units += c <= 0x7F ? 0.58 : 1.0;
+        }
+        return Math.Max(1.0, Math.Ceiling(units * fontSize + (outline ? 4.0 : 0.0)));
+    }
+
+    private void RecycleElement(FrameworkElement element)
+    {
+        _canvas.Children.Remove(element);
+        if (element is OutlinedDanmakuText ot)
+        {
+            if (_outlinedPool.Count < MaxItems) _outlinedPool.Push(ot);
+        }
+        else if (element is TextBlock tb)
+        {
+            if (_plainPool.Count < MaxItems) _plainPool.Push(tb);
+        }
     }
 
     private void Tick(object? sender, EventArgs e)
@@ -165,8 +259,9 @@ public sealed class LiveOverlayRenderer : IDisposable
         for (var i = _items.Count - 1; i >= 0; i--)
         {
             var item = _items[i];
+            var w = item.text.DesiredSize.Width > 1 ? item.text.DesiredSize.Width : item.width;
             var x = _canvas.ActualWidth - Stopwatch.GetElapsedTime(item.start, now).TotalSeconds * _speed;
-            if (x < -item.width - 8) { _canvas.Children.Remove(item.text); _items.RemoveAt(i); }
+            if (x < -w - 8) { RecycleElement(item.text); _items.RemoveAt(i); }
             else item.move.X = x;
         }
 
@@ -206,6 +301,8 @@ public sealed class LiveOverlayRenderer : IDisposable
     public void Clear()
     {
         StopClock();
+        for (var i = _items.Count - 1; i >= 0; i--)
+            RecycleElement(_items[i].text);
         _items.Clear();
         _pending.Clear();
         _canvas.Children.Clear();

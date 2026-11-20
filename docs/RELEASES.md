@@ -1,12 +1,13 @@
 # 版本归档索引
 
-当前推荐版本：[0.3.8 安装包 (x64 · Intel/AMD)](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.8/BiliTouch-0.3.8-setup.exe) · [0.3.8 安装包 (ARM64 · Surface 等 ARM 设备)](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.8/BiliTouch-0.3.8-setup-arm64.exe)。[全部 Release](https://github.com/zhongsanZN/BiliTouch/releases)。
+当前推荐版本：[0.3.9 安装包 (x64 · Intel/AMD)](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.9/BiliTouch-0.3.9-setup.exe) · [0.3.9 安装包 (ARM64 · Surface 等 ARM 设备)](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.9/BiliTouch-0.3.9-setup-arm64.exe)。[全部 Release](https://github.com/zhongsanZN/BiliTouch/releases)。
 
 下载附件保留 x64 与 ARM64 两份 setup.exe；源码见各版本 Git 标签和 GitHub 自动提供的源码下载。便携包与构建验证文件留在本机归档。
 
 | 版本 | 归档状态 |
 | --- | --- |
-| 0.3.8 | 当前版本：修复评论区无法正常显示动图的问题（新增后台线程 GIF89a 完整逐帧合成与动态 WebP 多帧解码器、独立 LRU 动图缓存与全局单定时器自动停帧播放器，支持评论 GIF 配图缩略图、内联图片画廊、独立大图预览窗与带 `gif_url` 的动态评论表情原生流畅播放）；修复评论区退出具体评论详情后跳回最上层的问题（在 `VirtualizingCommentPanel` 补齐虚拟化条目定位与视口锚点精确恢复，并排布局、网页布局、详情页内二次回复与详情页切换排序后返回均准确定位原评论）；继续同步提供原生 x64 与 ARM64 双架构安装器 |
+| 0.3.9 | 当前版本：高密弹幕渲染与调度性能大幅优化（`OutlinedDanmakuText` 改为 DirectWrite 硬件字形缓存四向描边并消除高分屏双倍构建与矢量路径三角化、点播与直播弹幕引入控件与槽位对象池实现稳态零分配、为在飞弹幕挂载共享冻结 `BitmapCache` 实现单次栅格化 GPU 纹理平移、移除同步 `Measure` 与直播弹幕 `DropShadowEffect`、新增零分配字宽估算与防追尾泳道校验并在渲染帧内平滑补发消除 4Hz 攒批卡顿）；继续同步提供原生 x64 与 ARM64 双架构安装器 |
+| 0.3.8 | 历史版本：修复评论区无法正常显示动图的问题（新增后台线程 GIF89a 完整逐帧合成与动态 WebP 多帧解码器、独立 LRU 动图缓存与全局单定时器自动停帧播放器，支持评论 GIF 配图缩略图、内联图片画廊、独立大图预览窗与带 `gif_url` 的动态评论表情原生流畅播放）；修复评论区退出具体评论详情后跳回最上层的问题（在 `VirtualizingCommentPanel` 补齐虚拟化条目定位与视口锚点精确恢复，并排布局、网页布局、详情页内二次回复与详情页切换排序后返回均准确定位原评论）；继续同步提供原生 x64 与 ARM64 双架构安装器 |
 | 0.3.7 | 历史版本：音频全链路保真修复（LibVLC 显式启用最高档 Speex 10/10 重采样、杜比全景声改为清晰度菜单按需可选并保留空间音频模块、非 Hi-Res/杜比在线视频同步在控制栏角标与菜单显示当前音频码率、修复外部客户端缓存 192k 音轨排序反转及 DASH 双流缓冲下限过低）；修复反复进退全屏或打开视频偶发“画面卡死但声音继续”问题（补齐 `D3DImage` 前台缓冲丢失恢复重绑与 D3D9Ex 健康检查、新增 GPU 帧同步看门狗与偶数输出尺寸对齐、阻断 `PlayVideo`/`OnLoaded` 并发双加载并补齐 `LoadingOverlay`/`SeamlessMorph`/`FullscreenChrome` 遮罩防死锁）；修复最大化窗口下切换平板模式偶发半截黑屏（最大化期冻结 `Window.MinWidth` 写改、不再向 WPF 吞掉 `WM_GETMINMAXINFO`、解耦姿态动画并在切态后同步最大化表面与边界）；继续同步提供原生 x64 与 ARM64 双架构安装器 |
 | 0.3.6 | 历史版本：面向 Windows 平板竖屏的「平板模式」（`Off` 默认 / `Auto` / `Always`、Surface BIOS 首次识别提醒、480 DIP 竖屏宽度解禁、底部四项导航栏、单窗口内嵌播放与直播、对齐安卓端 B 站的视频下方直挂 `简介 \| 评论` 双标签 + 简介内收拢 UP/标题/三连 + 竖屏视频高视口与底部 65% 半屏评论抽屉、动态页顶部 UP 主横向头像条、私信会话↔对话二级下钻）与桌面端「竖屏视频优化」（网页布局竖屏视频左置 + 评论区并排右置）；新增原生 Windows ARM64 构建，自本版起每次 Release 同步发布 x64 与 ARM64 双架构安装器并支持按架构自动匹配更新 |
 | 0.3.5 | 历史版本：离线缓存联网后台加载评论与弹幕（零阻塞本地起播）；全站 `UserStateBus` 弱引用状态实时联动与 `HorizontalSwipePhysics` 统一横滑物理内核；修复动态/专栏点赞图标偶发消失、DASH 尾段音轨提前 EOF 截断结尾、直播间静音失效、播放器换片忙态锁死、WebView2 清理脚本语法错误、`-412` 冷静期踩踏、离线下载卡顿 UI 与多屏异 DPI 尺寸偏差等全仓问题；将 `ApiClient`（唯一发包口 `SendThrottledAsync`）与 `PlayerWindow` 按业务域模块化重构，新增 `AGENTS.md` / `docs/ARCHITECTURE.md` 与 `--ci` 一键离线回归及像素/绑定探针；安装器及完整源码标签 |
