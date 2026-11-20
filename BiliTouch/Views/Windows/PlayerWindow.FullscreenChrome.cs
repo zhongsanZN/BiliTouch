@@ -253,6 +253,7 @@ public partial class PlayerWindow
         _controlsHideTimer?.Stop();
         CloseVolumePopup();                     // 控制栏一藏, 挂在它上面的音量弹层必须跟着收
         CloseDanmakuAreaPopup();
+        if (SubtitlePopup != null) SubtitlePopup.IsOpen = false;
         ControlBar.IsHitTestVisible = false;   // 隐形时不能再吃视频区的点击/滚轮
         VideoAreaRoot.Cursor = System.Windows.Input.Cursors.None;
         var fade = new System.Windows.Media.Animation.DoubleAnimation(1, 0,
@@ -260,6 +261,7 @@ public partial class PlayerWindow
         { FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop };
         ControlBar.BeginAnimation(OpacityProperty, fade);
         ControlBar.Opacity = 0;
+        UpdateSubtitleLayoutPosition();
         UpdateAlternateVideoControls();
     }
 
@@ -272,6 +274,7 @@ public partial class PlayerWindow
             if (ControlBar.Opacity < 1) { ControlBar.BeginAnimation(OpacityProperty, null); ControlBar.Opacity = 1; }
             ControlBar.IsHitTestVisible = true;
             VideoAreaRoot.Cursor = System.Windows.Input.Cursors.Arrow;
+            UpdateSubtitleLayoutPosition();
             UpdateAlternateVideoControls();
             return;
         }
@@ -280,6 +283,7 @@ public partial class PlayerWindow
         ControlBar.BeginAnimation(OpacityProperty, null);
         ControlBar.Opacity = 1;
         ControlBar.IsHitTestVisible = true;
+        UpdateSubtitleLayoutPosition();
         UpdateAlternateVideoControls();
     }
 

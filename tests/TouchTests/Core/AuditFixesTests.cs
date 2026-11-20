@@ -47,6 +47,7 @@ internal static class AuditFixesTests
         TestVideoTailEndingAndElstPatch(check);
         TestOfflineOnlineCommentsAndDanmakuContract(check);
         TestAudioQualityBitrateAndFreezeFixes(check);
+        TestSeekAudioSubtitlesAndRightKeyFixes(check);
         TestMacroArchitectureAndRuntimeHealth(check);
     }
 
@@ -698,6 +699,122 @@ internal static class AuditFixesTests
             check(presenterType.GetMethod("EnsureFrontBufferBound", AnyPrivate) != null
                   && presenterType.GetMethod("CheckDeviceHealth", AnyPrivate) != null,
                 "GpuVideoPresenter rebinds D3DImage backbuffer on front-buffer restore and checks D3D9Ex health");
+        }
+        finally
+        {
+            player.Close();
+        }
+    }
+
+    private static void TestSeekAudioSubtitlesAndRightKeyFixes(Action<bool, string> check)
+    {
+        // 1. VlcCore 不再强制 speex_resampler / quality=10（防止 seek/变速漂移补偿触发无限 flush 断音）
+        var opts = new List<string>();
+        typeof(VlcCore).GetMethod("AppendAudioQualityOptions", AnyPrivate)!.Invoke(null, new object[] { opts });
+        check(!opts.Any(o => o.Contains("speex", StringComparison.OrdinalIgnoreCase)),
+            $"VlcCore does not force speex_resampler (opts=[{string.Join(", ", opts)}])");
+
+        // 2. BufferPolicy 在 11Mbps 宽带下给 DASH 1000ms（不再推到 2000~3000ms 放大变速静音空洞）
+        var lastMeasuredField = typeof(CdnService).GetField("_lastMeasuredBytesPerSecond", AnyPrivate)!;
+        var prevMeasured = (long)(lastMeasuredField.GetValue(CdnService.Instance) ?? 0L);
+        try
+        {
+            lastMeasuredField.SetValue(CdnService.Instance, 1_375_000L); // 11 Mbps
+            var dashMs = BufferPolicy.Resolve(BufferMediaKind.VodDash, "https://upos.bilivideo.com/v.m4s",
+                shortVideo: false, userMs: 1000, auto: true);
+            check(dashMs == 1000, $"BufferPolicy VodDash at 11Mbps resolves to 1000ms instead of 2000-3000ms (actual={dashMs})");
+        }
+        finally
+        {
+            lastMeasuredField.SetValue(CdnService.Instance, prevMeasured);
+        }
+
+        // 3. SubtitleParser 覆盖 B 站 JSON、SRT/VTT、重叠字幕与轨道优先级
+        var biliJson = """
+        {
+          "body": [
+            { "from": 1.0, "to": 3.5, "content": "第一句" },
+            { "from": 2.0, "to": 4.0, "content": "重叠句" },
+            { "from": 5.0, "to": 7.0, "content": "第二句" }
+          ]
+        }
+        """;
+        var biliCues = SubtitleParser.ParseBilibiliJson(biliJson);
+        check(biliCues.Count == 3, $"SubtitleParser.ParseBilibiliJson parses 3 cues (actual={biliCues.Count})");
+        check(SubtitleParser.FindActiveText(biliCues, 0.5) == "", "SubtitleParser returns empty before first cue");
+        check(SubtitleParser.FindActiveText(biliCues, 1.5) == "第一句", "SubtitleParser matches single active cue");
+        check(SubtitleParser.FindActiveText(biliCues, 2.5) == "第一句\n重叠句",
+            "SubtitleParser joins overlapping active cues in order");
+        check(SubtitleParser.FindActiveText(biliCues, 6.0) == "第二句", "SubtitleParser matches later cue");
+
+        var srt = """
+        1
+        00:00:01,500 --> 00:00:03,200
+        <i>Hello</i>
+        World
+
+        2
+        00:01:02,000 --> 00:01:05,500
+        Second line
+        """;
+        var srtCues = SubtitleParser.ParseSrtOrVtt(srt);
+        check(srtCues.Count == 2 && srtCues[0].Content == "Hello\nWorld" && Math.Abs(srtCues[1].FromSec - 62.0) < 1e-6,
+            $"SubtitleParser.ParseSrtOrVtt strips tags and preserves multiline/timestamps (count={srtCues.Count})");
+
+        var tracks = new[]
+        {
+            new SubtitleTrack { Lan = "ai-zh", LanDoc = "中文（自动生成）", IsAi = true, SubtitleUrl = "https://example.invalid/ai.json" },
+            new SubtitleTrack { Lan = "en-US", LanDoc = "English", IsAi = false, SubtitleUrl = "https://example.invalid/en.json" },
+            new SubtitleTrack { Lan = "zh-CN", LanDoc = "中文（简体）", IsAi = false, SubtitleUrl = "https://example.invalid/zh.json" },
+        };
+        check(SubtitleParser.PickPreferredTrack(tracks, "")?.Lan == "zh-CN",
+            "SubtitleParser.PickPreferredTrack prefers human Chinese over English and AI Chinese");
+        check(SubtitleParser.PickPreferredTrack(tracks, "en-US")?.Lan == "en-US",
+            "SubtitleParser.PickPreferredTrack honors explicit preferred language");
+        check(SubtitleParser.NormalizeSubtitleUrl("//aisubtitle.hdslb.com/a.json") == "https://aisubtitle.hdslb.com/a.json",
+            "SubtitleParser.NormalizeSubtitleUrl upgrades protocol-relative URL to https");
+
+        // 4. PlayerWindow 字幕覆盖层、控制栏入口、seek 不再强行静音、以及右方向键长按倍速契约
+        var player = new PlayerWindow();
+        try
+        {
+            var subBtn = player.FindName("BtnSubtitle") as Button;
+            var subPopup = player.FindName("SubtitlePopup") as System.Windows.Controls.Primitives.Popup;
+            var subOverlay = player.FindName("SubtitleOverlay") as Border;
+            var subText = player.FindName("SubtitleText") as TextBlock;
+            check(subBtn != null && subPopup != null && subOverlay != null && subText != null,
+                "PlayerWindow exposes BtnSubtitle, SubtitlePopup, SubtitleOverlay, and SubtitleText");
+
+            // 字幕渲染与重置
+            typeof(PlayerWindow).GetField("_subtitleEnabled", AnyPrivate)!.SetValue(player, true);
+            typeof(PlayerWindow).GetField("_activeSubtitleTrack", AnyPrivate)!.SetValue(player, tracks[2]);
+            typeof(PlayerWindow).GetField("_subtitleCues", AnyPrivate)!.SetValue(player, biliCues);
+            player.UpdateSubtitleDisplay(2.5);
+            check(subOverlay!.Visibility == Visibility.Visible && subText!.Text == "第一句\n重叠句",
+                $"PlayerWindow.UpdateSubtitleDisplay renders active cue text (vis={subOverlay.Visibility}, text={subText!.Text})");
+
+            // MarkSeekIssued 不再把 _seekMuteSavedVolume 置为 >=0（消除 seek 后 200-500ms 人为静音丢音），同时立即刷新字幕
+            typeof(PlayerWindow).GetField("_volumeCache", AnyPrivate)!.SetValue(player, 75);
+            typeof(PlayerWindow).GetMethod("MarkSeekIssued", AnyPrivate)!.Invoke(player, new object[] { 6000L });
+            var savedMute = (int)typeof(PlayerWindow).GetField("_seekMuteSavedVolume", AnyPrivate)!.GetValue(player)!;
+            check(savedMute < 0, $"MarkSeekIssued does not artificially mute audio during seek (savedMute={savedMute})");
+            check(subText!.Text == "第二句", $"MarkSeekIssued refreshes subtitle text immediately to target time (text={subText!.Text})");
+
+            // 右方向键长按进入倍速，取消/松开后干净复位
+            typeof(PlayerWindow).GetField("_rightKeyHeld", AnyPrivate)!.SetValue(player, true);
+            typeof(PlayerWindow).GetMethod("BeginRightKeyFastForward", AnyPrivate)!.Invoke(player, null);
+            var isFf = (bool)typeof(PlayerWindow).GetField("_isFastForwarding", AnyPrivate)!.GetValue(player)!;
+            var rightFf = (bool)typeof(PlayerWindow).GetField("_rightKeyFastForwarding", AnyPrivate)!.GetValue(player)!;
+            check(isFf && rightFf, "Right arrow hold activates temporary fast-forward");
+            typeof(PlayerWindow).GetMethod("CancelRightKeyFastForward", AnyPrivate)!.Invoke(player, null);
+            var isFfAfter = (bool)typeof(PlayerWindow).GetField("_isFastForwarding", AnyPrivate)!.GetValue(player)!;
+            var rightHeldAfter = (bool)typeof(PlayerWindow).GetField("_rightKeyHeld", AnyPrivate)!.GetValue(player)!;
+            check(!isFfAfter && !rightHeldAfter, "CancelRightKeyFastForward cleanly exits fast-forward and clears held state");
+
+            // ResetForNewMedia 清空字幕覆盖层与轨道
+            typeof(PlayerWindow).GetMethod("ResetForNewMedia", AnyPrivate)!.Invoke(player, null);
+            check(subOverlay.Visibility == Visibility.Collapsed && string.IsNullOrEmpty(subText.Text),
+                "ResetForNewMedia clears active subtitle overlay and text");
         }
         finally
         {

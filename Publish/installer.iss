@@ -12,11 +12,11 @@
 #define MyAppName "BiliTouch"
 ; BiliTouch 独立版本，与 App.AppVersion / csproj 保持一致
 #ifndef MyAppVersion
-#define MyAppVersion "0.3.10"
+#define MyAppVersion "0.3.11"
 #endif
 // VersionInfoVersion 必须是纯数字四段 (a.b.c.d), 不能带 -touch
 #ifndef MyFileVersion
-#define MyFileVersion "0.3.10.0"
+#define MyFileVersion "0.3.11.0"
 #endif
 #define MyAppPublisher "中三"
 #define MyAppExeName "BiliTouch.exe"

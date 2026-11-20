@@ -1554,6 +1554,13 @@ public class AppSettings
     /// </summary>
     public int LastSearchKind { get; set; }
 
+    /// <summary>字幕总开关（默认开启，有字幕轨道时自动加载；用户手动关闭后跨片保持关闭）。</summary>
+    public bool? SubtitleEnabled { get; set; }
+    /// <summary>偏好的字幕语言代码（如 zh-CN / ai-zh / en-US；空串表示自动优先人工中文）。</summary>
+    public string PreferredSubtitleLang { get; set; } = "";
+    /// <summary>字幕字号缩放百分比（75~200，默认 100）。</summary>
+    public int SubtitleFontScalePercent { get; set; } = 100;
+
     /// <summary>
     /// 旧字段(仅用于**读取**老配置, 兼容用)。
     ///

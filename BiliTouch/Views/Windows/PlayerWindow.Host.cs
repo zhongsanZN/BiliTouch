@@ -55,6 +55,8 @@ public partial class PlayerWindow
         host.MountEmbeddedPlayer(RootGrid);
         host.PreviewKeyDown -= OnEmbeddedHostKeyDown;
         host.PreviewKeyDown += OnEmbeddedHostKeyDown;
+        host.PreviewKeyUp -= OnEmbeddedHostKeyUp;
+        host.PreviewKeyUp += OnEmbeddedHostKeyUp;
         Responsive.PostureChanged -= OnEmbeddedPostureChanged;
         Responsive.PostureChanged += OnEmbeddedPostureChanged;
 
@@ -73,6 +75,7 @@ public partial class PlayerWindow
     internal void DetachFromMainWindow(bool pausePlayback = true)
     {
         if (!_isEmbeddedInMain) return;
+        CancelRightKeyFastForward();
         SetPortraitCommentDrawerOpen(false);
         if (_isFullscreen) ToggleFullscreen();
 
@@ -89,6 +92,7 @@ public partial class PlayerWindow
         if (host != null)
         {
             host.PreviewKeyDown -= OnEmbeddedHostKeyDown;
+            host.PreviewKeyUp -= OnEmbeddedHostKeyUp;
             host.UnmountEmbeddedPlayer(RootGrid);
         }
         Responsive.PostureChanged -= OnEmbeddedPostureChanged;
@@ -123,6 +127,7 @@ public partial class PlayerWindow
             CloseDanmakuAreaPopup();
             if (QualityPopup != null) QualityPopup.IsOpen = false;
             if (SpeedPopup != null) SpeedPopup.IsOpen = false;
+            if (SubtitlePopup != null) SubtitlePopup.IsOpen = false;
             if (CommentEmotePopup != null) CommentEmotePopup.IsOpen = false;
             return true;
         }
@@ -143,11 +148,22 @@ public partial class PlayerWindow
             e.Handled = HandleEmbeddedBack();
             return;
         }
-        if (e.Key == Key.F && Keyboard.FocusedElement is not TextBox)
+        if (Keyboard.FocusedElement is TextBox { IsReadOnly: false }) return;
+        if (e.Key == Key.F)
         {
             e.Handled = true;
             ToggleFullscreen();
+            return;
         }
+        if (e.Key is Key.Right or Key.Left or Key.Space or Key.C or Key.D or Key.M)
+            OnPreviewKeyDown(sender, e);
+    }
+
+    private void OnEmbeddedHostKeyUp(object sender, KeyEventArgs e)
+    {
+        if (!_isEmbeddedInMain || _closing) return;
+        if (e.Key == Key.Right)
+            OnPreviewKeyUp(sender, e);
     }
 
     private void OnEmbeddedPostureChanged(FrameworkElement source, LayoutPosture posture)

@@ -1062,6 +1062,18 @@
                                 </StackPanel>
                             </Border>
 
+                            <!-- 视频字幕层（B 站 CC / AI 字幕及外挂 SRT/VTT，随控制栏显隐自动抬高/落回） -->
+                            <Border x:Name="SubtitleOverlay"
+                                    HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                                    Margin="36,0,36,88" Padding="14,6" CornerRadius="6"
+                                    Background="#B8000000" IsHitTestVisible="False"
+                                    Visibility="Collapsed" Panel.ZIndex="20" MaxWidth="960">
+                                <TextBlock x:Name="SubtitleText"
+                                           Foreground="#FFFFFFFF" FontSize="20" FontWeight="SemiBold"
+                                           TextAlignment="Center" TextWrapping="Wrap" LineHeight="28"
+                                           Text="" />
+                            </Border>
+
                             <!-- 播放控件栏(底部覆盖在视频上, 渐变底更沉浸) -->
                             <!-- 小窗(网页布局停靠后)的紧凑控制条。
                                  ★ 2026-11-05 对齐: 这三颗按钮的图标与主控制栏**完全一致**
@@ -1127,10 +1139,11 @@
                                             <ColumnDefinition Width="Auto" /><!-- 6 清晰度 -->
                                             <ColumnDefinition Width="Auto" /><!-- 7 音质角标 -->
                                             <ColumnDefinition Width="Auto" /><!-- 8 直播弹幕状态 -->
-                                            <ColumnDefinition Width="Auto" /><!-- 9 弹幕开关 -->
-                                            <ColumnDefinition Width="Auto" /><!-- 10 弹幕设置 -->
-                                            <ColumnDefinition Width="Auto" /><!-- 11 增强 -->
-                                            <ColumnDefinition Width="Auto" /><!-- 12 全屏 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 9 字幕 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 10 弹幕开关 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 11 弹幕设置 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 12 增强 -->
+                                            <ColumnDefinition Width="Auto" /><!-- 13 全屏 -->
                                         </Grid.ColumnDefinitions>
 
                                         <!-- 播放/暂停 -->
@@ -1357,10 +1370,86 @@
                                             </Border>
                                         </Popup>
 
+                                        <!-- 字幕选择与外观设置（CC / AI 字幕 + 本地外挂字幕 + 内嵌字幕） -->
+                                        <Button Grid.Column="9" x:Name="BtnSubtitle" Style="{StaticResource PlayerTextBtn}"
+                                                Margin="4,0,0,0" Click="OnSubtitleClick" ToolTip="字幕 (C)" AutomationProperties.Name="字幕">
+                                            <TextBlock x:Name="SubtitleBtnText" Text="字幕" Foreground="#B3FFFFFF" />
+                                        </Button>
+                                        <Popup x:Name="SubtitlePopup"
+                                               Placement="Top" StaysOpen="False" AllowsTransparency="True"
+                                               PopupAnimation="Fade">
+                                            <Border Background="#F0202226" CornerRadius="8" Padding="8"
+                                                    BorderBrush="#33FFFFFF" BorderThickness="1" Width="226">
+                                                <StackPanel>
+                                                    <ListBox x:Name="SubtitleList" Background="Transparent"
+                                                             BorderThickness="0" Foreground="White" MaxHeight="200"
+                                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                             SelectionChanged="OnSubtitleSelected">
+                                                        <ListBox.ItemContainerStyle>
+                                                            <Style TargetType="ListBoxItem">
+                                                                <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                                                <Setter Property="Padding" Value="10,6" />
+                                                                <Setter Property="Cursor" Value="Hand" />
+                                                                <Setter Property="ContentTemplate">
+                                                                    <Setter.Value>
+                                                                        <DataTemplate>
+                                                                            <TextBlock Text="{Binding}" Foreground="#F2FFFFFF" TextTrimming="CharacterEllipsis" />
+                                                                        </DataTemplate>
+                                                                    </Setter.Value>
+                                                                </Setter>
+                                                                <Setter Property="Template">
+                                                                    <Setter.Value>
+                                                                        <ControlTemplate TargetType="ListBoxItem">
+                                                                            <Border x:Name="Bd" Background="Transparent"
+                                                                                    CornerRadius="5" Padding="{TemplateBinding Padding}">
+                                                                                <ContentPresenter VerticalAlignment="Center" />
+                                                                            </Border>
+                                                                            <ControlTemplate.Triggers>
+                                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                                    <Setter TargetName="Bd" Property="Background" Value="#26FFFFFF" />
+                                                                                </Trigger>
+                                                                                <Trigger Property="IsSelected" Value="True">
+                                                                                    <Setter TargetName="Bd" Property="Background" Value="#33FFFFFF" />
+                                                                                </Trigger>
+                                                                            </ControlTemplate.Triggers>
+                                                                        </ControlTemplate>
+                                                                    </Setter.Value>
+                                                                </Setter>
+                                                            </Style>
+                                                        </ListBox.ItemContainerStyle>
+                                                    </ListBox>
+
+                                                    <Border Height="1" Background="#26FFFFFF" Margin="4,6" />
+                                                    <Button Style="{StaticResource PlayerTextBtn}" HorizontalAlignment="Stretch"
+                                                            HorizontalContentAlignment="Left" Padding="10,6"
+                                                            Click="OnLoadLocalSubtitleClick">
+                                                        <TextBlock Text="加载本地字幕 (.srt / .vtt)…" Foreground="#E6FFFFFF" FontSize="12" />
+                                                    </Button>
+
+                                                    <Border Height="1" Background="#26FFFFFF" Margin="4,6" />
+                                                    <Grid Margin="4,2,4,2">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="56" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="38" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" Text="字号" Style="{StaticResource DanmakuRowLabelStyle}" />
+                                                        <Slider Grid.Column="1" x:Name="SubtitleFontSlider"
+                                                                Style="{StaticResource PlayerSlider}" Focusable="False"
+                                                                Minimum="75" Maximum="200" Value="100"
+                                                                Margin="6,0,6,0" IsSnapToTickEnabled="True"
+                                                                TickFrequency="25" ValueChanged="OnSubtitleFontChanged" />
+                                                        <TextBlock Grid.Column="2" x:Name="SubtitleFontValue" Text="100%"
+                                                                   Style="{StaticResource DanmakuRowValueStyle}" />
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+                                        </Popup>
+
                                         <!-- 弹幕开关。以前只能按快捷键 D, 界面上没有入口 ——
                                              看视频时想随手关掉刷屏弹幕是很常见的操作, 这里必须有个按钮。
                                              文案用"弹幕开/关"而不是图标: 开关状态一眼可读, 不用猜图标含义。 -->
-                                        <Button Grid.Column="9" x:Name="BtnDanmaku" Style="{StaticResource PlayerTextBtn}"
+                                        <Button Grid.Column="10" x:Name="BtnDanmaku" Style="{StaticResource PlayerTextBtn}"
                                                 Margin="4,0,0,0" Click="OnDanmakuToggleClick" ToolTip="开关弹幕 (D)">
                                             <Grid Width="22" Height="20">
                                                 <Path x:Name="DanmakuGlyph" Stroke="White" StrokeThickness="1.6" StrokeLineJoin="Round" Data="M2,2 H20 V15 H14 L10,19 V15 H2 Z M6,6 H9 M12,6 H16 M6,10 H15"/>
@@ -1369,7 +1458,7 @@
                                         </Button>
 
                                         <!-- 弹幕区域占比 -->
-                                        <Button Grid.Column="10" x:Name="BtnDanmakuArea" Style="{StaticResource PlayerTextBtn}"
+                                        <Button Grid.Column="11" x:Name="BtnDanmakuArea" Style="{StaticResource PlayerTextBtn}"
                                                 Margin="4,0,0,0" Click="OnDanmakuAreaClick" ToolTip="弹幕设置" AutomationProperties.Name="弹幕设置">
                                             <helpers:SkinGlyph Kind="DanmakuSettings" IconSize="24" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White"><TextBlock Text="弹幕设置" Foreground="#F2FFFFFF"/></helpers:SkinGlyph>
                                         </Button>
@@ -1488,8 +1577,8 @@
                                         </Popup>
 
                                         <!-- 全屏(离线缓存已挪到右侧信息面板的操作栏, 2026-09-26) -->
-                                        <Button Grid.Column="11" x:Name="BtnEnhancement" Visibility="Collapsed" Content="增强" Width="44" Style="{StaticResource PlayerTextBtn}" Click="OnEnhancementClick" AutomationProperties.Name="画质增强" />
-                                        <Button Grid.Column="12" x:Name="BtnFullscreen2" Style="{StaticResource PlayerRoundBtn}"
+                                        <Button Grid.Column="12" x:Name="BtnEnhancement" Visibility="Collapsed" Content="增强" Width="44" Style="{StaticResource PlayerTextBtn}" Click="OnEnhancementClick" AutomationProperties.Name="画质增强" />
+                                        <Button Grid.Column="13" x:Name="BtnFullscreen2" Style="{StaticResource PlayerRoundBtn}"
                                                 Width="36" Height="36" Click="OnFullscreenClick" ToolTip="全屏 (F)">
                                             <TextBlock Text="&#xE92D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                                        FontSize="14" Foreground="White" />

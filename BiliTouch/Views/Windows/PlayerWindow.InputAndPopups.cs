@@ -486,6 +486,8 @@ public partial class PlayerWindow
             ShowSpeedCustomHint("设置倍速失败, 播放器可能正在切换片源");
             return;
         }
+        EnsureAudioVolumeSynced();
+        ScheduleAudioHealRecheck();
 
         UpdateSpeedText(rate);
         if (SpeedCustomHint != null) SpeedCustomHint.Text = "";
@@ -998,8 +1000,35 @@ public partial class PlayerWindow
 
     // ------------------------------------------------------------ 键盘
 
+    private bool _rightKeyHeld;
+    private bool _rightKeyFastForwarding;
+    private DispatcherTimer? _rightKeyHoldTimer;
+    private const int RightKeyHoldThresholdMs = 260;
+
     internal static bool ShouldBypassShortcutModifiers(ModifierKeys modifiers)
         => (modifiers & (ModifierKeys.Control | ModifierKeys.Alt)) != 0;
+
+    private void BeginRightKeyFastForward()
+    {
+        if (!_rightKeyHeld || _rightKeyFastForwarding || _closing || _isLive || _ended) return;
+        _rightKeyHoldTimer?.Stop();
+        _rightKeyFastForwarding = true;
+        StartFastForward();
+        ShowSpeedHint($"{FormatRate(_fastForwardTarget)} 快进中", hold: true);
+    }
+
+    private void CancelRightKeyFastForward()
+    {
+        _rightKeyHoldTimer?.Stop();
+        var wasFf = _rightKeyFastForwarding;
+        _rightKeyHeld = false;
+        _rightKeyFastForwarding = false;
+        if (wasFf && !_closing)
+        {
+            StopFastForward();
+            ShowSpeedHint($"已恢复 {FormatRate(_rateBeforeFastForward)}", hold: false);
+        }
+    }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
@@ -1010,11 +1039,46 @@ public partial class PlayerWindow
         switch (e.Key)
         {
             case Key.Space: OnPlayPauseClick(this, new RoutedEventArgs()); e.Handled = true; return;
-            // ★ 2026-10-31 长视频快进体验: 普通方向键 ±5s(原样), **Shift+方向键 ±30s** ——
-            //   长视频里 5s 一跳要按十几下才够用, Shift 档一下抵六下。走同一条 SeekRelative,
-            //   所有 seek 防护(看门狗/静音/进度钉制)自动继承。
+            // ★ 2026-10-31 长视频快进体验: 普通左方向键 -5s, Shift+方向键 ±30s；
+            //   右方向键按 B 站习惯: 短按 +5s，长按临时倍速快进、松手恢复原倍速。
             case Key.Left: SeekRelative(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -30 : -5); e.Handled = true; return;
-            case Key.Right: SeekRelative(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? 30 : 5); e.Handled = true; return;
+            case Key.Right:
+                if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+                {
+                    SeekRelative(30);
+                    e.Handled = true;
+                    return;
+                }
+                if (_isLive || _ended)
+                {
+                    e.Handled = true;
+                    return;
+                }
+                if (!_rightKeyHeld)
+                {
+                    _rightKeyHeld = true;
+                    _rightKeyFastForwarding = false;
+                    if (_rightKeyHoldTimer == null)
+                    {
+                        _rightKeyHoldTimer = new DispatcherTimer
+                        {
+                            Interval = TimeSpan.FromMilliseconds(RightKeyHoldThresholdMs)
+                        };
+                        _rightKeyHoldTimer.Tick += (_, _) =>
+                        {
+                            _rightKeyHoldTimer.Stop();
+                            BeginRightKeyFastForward();
+                        };
+                    }
+                    _rightKeyHoldTimer.Stop();
+                    _rightKeyHoldTimer.Start();
+                }
+                else if (e.IsRepeat && !_rightKeyFastForwarding)
+                {
+                    BeginRightKeyFastForward();
+                }
+                e.Handled = true;
+                return;
             // 音量: ↑↓ 走统一入口(顺带弹音量提示), M 在静音与 80 之间切换
             // 基数用 _volumeCache: aout 未就绪时 _mp.Volume 原生读回是 -1/旧值(见 _volumeCache 的说明)
             case Key.Up: SetVolume(_volumeCache + VolumeStep); e.Handled = true; return;
@@ -1024,8 +1088,28 @@ public partial class PlayerWindow
             case Key.L: OnLikeClick(this, new RoutedEventArgs()); e.Handled = true; return;
             case Key.U: OnUpPageClick(this, new RoutedEventArgs()); e.Handled = true; return;
             case Key.D: ToggleDanmaku(); e.Handled = true; return;
+            case Key.C: ToggleSubtitleShortcut(); e.Handled = true; return;
             case Key.Escape: HandleBackRequest(); e.Handled = true; return;
         }
+    }
+
+    private void OnPreviewKeyUp(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Right || !_rightKeyHeld) return;
+        _rightKeyHoldTimer?.Stop();
+        var wasFf = _rightKeyFastForwarding;
+        _rightKeyHeld = false;
+        _rightKeyFastForwarding = false;
+        if (wasFf)
+        {
+            StopFastForward();
+            ShowSpeedHint($"已恢复 {FormatRate(_rateBeforeFastForward)}", hold: false);
+        }
+        else if (!_closing && !_isLive && !_ended)
+        {
+            SeekRelative(5);
+        }
+        e.Handled = true;
     }
 
     /// <summary>
@@ -1045,6 +1129,11 @@ public partial class PlayerWindow
         if (DanmakuAreaPopup?.IsOpen == true)
         {
             CloseDanmakuAreaPopup();
+            return;
+        }
+        if (SubtitlePopup?.IsOpen == true)
+        {
+            SubtitlePopup.IsOpen = false;
             return;
         }
         if (_isFullscreen)

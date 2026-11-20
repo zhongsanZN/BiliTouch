@@ -193,6 +193,7 @@ public partial class PlayerWindow
     /// </summary>
     private bool AnyPlayerPopupOpen
         => (QualityPopup != null && QualityPopup.IsOpen)
+        || (SubtitlePopup != null && SubtitlePopup.IsOpen)
         || (DanmakuAreaPopup != null && DanmakuAreaPopup.IsOpen)
         || (SpeedPopup != null && SpeedPopup.IsOpen)
         || (VolumePopup != null && VolumePopup.IsOpen);

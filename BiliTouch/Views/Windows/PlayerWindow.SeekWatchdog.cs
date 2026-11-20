@@ -296,10 +296,31 @@ public partial class PlayerWindow
         _seekBounceAt = -1;
         if (_progressTimer != null) _progressTimer.Interval = ProgressTickIdle;
         RestoreVolumeAfterSeek();
+        EnsureAudioVolumeSynced();
         if (hideBuffering) HideBufferingIfShown();
         // ★ 2026-10-31: 到位这一刻正是"音轨偶发没跟上"的暴露点, 顺手做一次自愈检查
         //   (见 HealAudioIfDead —— 命中才动作, 不命中零开销)。
         HealAudioIfDead("seek-settled");
+    }
+
+    /// <summary>
+    /// seek 到位后若原生 aout 音量意外停在 0（但应用侧未静音），立即补回权威音量并排队校验，
+    /// 兜住 aout 重建期间偶发的音量丢失。
+    /// </summary>
+    private void EnsureAudioVolumeSynced()
+    {
+        if (_closing || _mp == null || _seekMuteSavedVolume >= 0 || _volumeCache <= 0) return;
+        try
+        {
+            var cur = _mp.Volume;
+            if (cur >= 0 && cur != _volumeCache)
+            {
+                _mp.Volume = _volumeCache;
+                if (_mp.Volume != _volumeCache)
+                    _volumeRestoreDeadline = Environment.TickCount64 + VolumeRestoreTimeoutMs;
+            }
+        }
+        catch { }
     }
 
     // ------------------------------------------------------------ seek 后音频自愈
@@ -612,9 +633,13 @@ public partial class PlayerWindow
     {
         var now = Environment.TickCount64;
         _seekGraceUntil = now + SeekGraceMs;
-        MuteForSeek();
+        // ★ 2026-11-20 不再在常规 seek 时调 MuteForSeek() 强压 _mp.Volume = 0：
+        //   LibVLC 3.0.24 的 WASAPI 在 seek 预滚阶段自身已做 reset/同步起播，
+        //   外层人为静音要等到看门狗连看两跳 Time 变化 + 异步音量补写才能解除，
+        //   会稳定吞掉跳转落点后首 200~500ms 的正常音频。
         // 启动/重置跳转看门狗
         _pendingSeekMs = targetMs;
+        UpdateSubtitleDisplay(targetMs / 1000.0);
         // 记下"跳转前的位置"给看门狗判"是不是真的丢了"
         _seekFromMs = _lastKnownMs > 0 ? _lastKnownMs : -1;
         _seekRetries = 0;

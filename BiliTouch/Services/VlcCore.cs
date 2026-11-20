@@ -160,14 +160,22 @@ public static class VlcCore
     private static LibVLC? _vmemInstance;
 
     /// <summary>
-    /// 音频重采样品质选项：
-    /// 显式使用 Speex 最高品质（10/10）重采样，消除 44.1/96kHz→48kHz WASAPI 及
-    /// DASH input-slave 微小漂移补偿在默认 3~4 档下的高频混叠与发闷现象。
+    /// 音频重采样选项：保留 LibVLC 3.0.24 原生默认重采样策略，不再强制启用 speex_resampler。
+    ///
+    /// ★★★ 实测回归证据（2026-11-20，真实 1080P60 DASH 双流 + vmem + WASAPI 44.1→48kHz）：
+    ///   · 强制 --audio-resampler=speex_resampler --speex-resampler-quality=10 时，
+    ///     跳转后若出现 >60ms 音频漂移触发 up-sampling，speex 重建高阶滤波表会阻塞音频线程 ~295ms，
+    ///     立即落入 "playback too late (340ms): flushing buffers → [wasapi] reset → up-sampling"
+    ///     的无限死循环（实测 10 次跳转触发 64 次连续 flush、698 包丢弃，表现为持续每 0.3s 断音/异响）。
+    ///   · 即使降到 quality=4，连续漂移补偿下仍会偶发 ~90ms 阻塞并触发 49~55 次连续 flush 死循环。
+    ///   · 使用 LibVLC 3.0.24 原生默认（不覆盖 --audio-resampler）在同组 10 次跳转与倍速压测中
+    ///     连续 flush 死循环 = 0、丢包 = 0。
     /// </summary>
     private static void AppendAudioQualityOptions(List<string> options)
     {
-        options.Add("--audio-resampler=speex_resampler");
-        options.Add("--speex-resampler-quality=10");
+        // Intentionally leave --audio-resampler at LibVLC 3.0.24 native default to avoid
+        // speex_resampler drift-compensation stall loops after DASH seeks/rate changes.
+        _ = options;
     }
 
     /// <summary>

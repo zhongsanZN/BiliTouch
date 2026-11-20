@@ -46,10 +46,15 @@ public enum BufferMediaKind
 /// </summary>
 public static class BufferPolicy
 {
-    /// <summary>自动档假设的流码率。DASH 含 1080P60/4K 与高码率/Hi-Res 音轨双流并发，按 6Mbps 估算；durl 单流略低</summary>
-    private const long AssumedDashBitrateBps = 6_000_000;
+    /// <summary>
+    /// 自动档假设的流码率。B 站常见 1080P/1080P60 HEVC DASH 实测约 2~3.5Mbps，按 2.5Mbps 估算；
+    /// 之前调高到 6Mbps 会把正常宽带(10Mbps+)的预读推到 2000~3000ms，而 LibVLC 3 变速时的
+    /// PTS 时钟偏移 = network_caching × (1/r₁ − 1/r₂)，3000ms 会把 2x→1x 退倍速静音拉长到 1.5s。
+    /// 线路真实卡顿时仍由 StallBoostMs 按需自动 +1000ms 兜底。
+    /// </summary>
+    private const long AssumedDashBitrateBps = 2_500_000;
     private const long AssumedSingleBitrateBps = 2_000_000;
-    /// <summary>DASH 双流（video + input-slave 音轨）自动档最低缓冲下限，防止 500ms 诱发音频漂移重采样与欠载</summary>
+    /// <summary>DASH 双流（video + input-slave 音轨）自动档最低缓冲下限，兼顾抗抖动与变速低延迟恢复。</summary>
     private const int VodDashAutoFloorMs = 1000;
 
     /// <summary>"极短片"的时长上限 —— 与 ApiClient.ShortVideoRemuxThresholdMs 对齐(60s)。

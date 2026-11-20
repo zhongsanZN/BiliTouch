@@ -518,6 +518,7 @@ public partial class PlayerWindow : FluentWindow
         // 同 StartFastForward: 先落定弹幕时钟, 再改速率
         SyncDanmakuClockRate(back);
         try { _mp.SetRate(back); } catch { /* 播放器已失效 */ }
+        EnsureAudioVolumeSynced();
         // ★ 2026-10-31: 变速收尾也是音轨偶发掉线的暴露点(同 seek 后没声的机理)。
         //   挂一次带宽限期的自愈检查, 命中才动手(见 HealAudioIfDead)。
         HealAudioIfDead("fastforward-end");
@@ -587,6 +588,9 @@ public partial class PlayerWindow : FluentWindow
         Loaded += OnLoaded;
         SizeChanged += OnWindowSizeChangedForInfoPanel;
         PreviewKeyDown += OnPreviewKeyDown;
+        PreviewKeyUp += OnPreviewKeyUp;
+        Deactivated += (_, _) => CancelRightKeyFastForward();
+        if (VideoAreaRoot != null) VideoAreaRoot.SizeChanged += (_, _) => UpdateSubtitleFontAppearance();
         // 鼠标侧键返回 + 非模态弹层点外部收起: 挂在窗口上, 也挂在视频区覆盖窗口上(见 HookOverlayKeyboard)
         PreviewMouseDown += OnPreviewMouseDown;
         PreviewTouchDown += OnPreviewTouchDown;
@@ -624,6 +628,7 @@ public partial class PlayerWindow : FluentWindow
         DanmakuAreaPopup.PlacementTarget = BtnDanmakuArea;
         HookPopupToggle(SpeedPopup, SpeedBtn);
         HookPopupToggle(QualityPopup, BtnQuality);
+        InitializeSubtitleUi();
         // 右缘对齐(弹层右缘 = 按钮右缘)。注意必须等弹层布局完成后再量宽:
         // Opened 那一刻 ActualWidth 还是 0, 偏移会算成正数把弹层推出窗口右缘(真机实证)。
         // Loaded 优先级在 Popup 自身布局跑完之后, 那时 ActualWidth 才可信。
@@ -985,8 +990,10 @@ public partial class PlayerWindow : FluentWindow
         // ★ 长按快进也要收: 若停在长按态换片, MediaPlayer 上的速率会**跟着留到新片子**
         //   (速率是 MediaPlayer 的属性, 不随 Media 重置 —— 实测)。所以这里必须先恢复。
         //   顺带把 _longPressFired 清掉 —— 否则新片的第一次 Up 会走进"结束快进"分支。
+        CancelRightKeyFastForward();
         StopFastForward();
         _longPressFired = false;
+        ResetSubtitlesForNewMedia();
         _tripleComboAt = 0;
         _tripleComboBusy = false;
         _favBusy = false;
@@ -1184,6 +1191,9 @@ public partial class PlayerWindow : FluentWindow
         nameof(_likePressCommitted), nameof(_likeConfirmed), nameof(_activeLikeTouchId),
         nameof(_followBusy),
         nameof(_detectedVideoWidth), nameof(_detectedVideoHeight), nameof(_videoSizeFromMetadata),
+        // 字幕（每片菜单与当前渲染文本）与右方向键长按瞬态
+        nameof(_fillingSubtitleMenu), nameof(_lastSubtitleRendered),
+        nameof(_rightKeyHeld), nameof(_rightKeyFastForwarding),
     };
 
     /// <summary>
@@ -1276,6 +1286,8 @@ public partial class PlayerWindow : FluentWindow
         nameof(_tabletPortraitLayoutMounted),
         nameof(_tabletPortraitVideoCompact),
         nameof(_portraitDrawerOpen),
+        // 字幕代次/偏好（跨片保持）
+        nameof(_subtitleGen), nameof(_syncingSubtitleSlider), nameof(_subtitleEnabled),
     };
 
     /// <summary>
@@ -1405,6 +1417,7 @@ public partial class PlayerWindow : FluentWindow
             if (ReferenceEquals(fw, _overlayKeyboardWindow)) return;
             _overlayKeyboardWindow = fw;
             fw.PreviewKeyDown += OnPreviewKeyDown;
+            fw.PreviewKeyUp += OnPreviewKeyUp;
             fw.PreviewMouseDown += OnPreviewMouseDown;
             fw.PreviewTouchDown += OnPreviewTouchDown;
             fw.Deactivated += OnTouchWindowDeactivated;
@@ -1754,6 +1767,7 @@ public partial class PlayerWindow : FluentWindow
         {
             _overlayKeyboardWindow.SourceInitialized -= OnVideoOverlaySourceInitialized;
             _overlayKeyboardWindow.PreviewKeyDown -= OnPreviewKeyDown;
+            _overlayKeyboardWindow.PreviewKeyUp -= OnPreviewKeyUp;
             _overlayKeyboardWindow.PreviewMouseDown -= OnPreviewMouseDown;
             _overlayKeyboardWindow.PreviewTouchDown -= OnPreviewTouchDown;
             _overlayKeyboardWindow.Deactivated -= OnTouchWindowDeactivated;
@@ -1761,6 +1775,8 @@ public partial class PlayerWindow : FluentWindow
             _overlayKeyboardWindow = null;
         }
         try { _danmakuLoadCancellation?.Cancel(); _danmakuLoadCancellation?.Dispose(); _danmakuLoadCancellation = null; } catch { }
+        try { _subtitleLoadCts?.Cancel(); _subtitleLoadCts?.Dispose(); _subtitleLoadCts = null; } catch { }
+        CancelRightKeyFastForward();
         try { _offlinePrepCts?.Cancel(); _offlinePrepCts?.Dispose(); _offlinePrepCts = null; } catch { }
         try { _offlineOnlineCts?.Cancel(); _offlineOnlineCts?.Dispose(); _offlineOnlineCts = null; } catch { }
         _playerTouchpad?.Dispose(); _overlayTouchpad?.Dispose();

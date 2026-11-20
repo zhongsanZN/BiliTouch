@@ -456,6 +456,24 @@ public class SettingsStore
     /// ★ 与 <see cref="Models.AppSettings.LastSearchKind"/> 是读写契约, 两处必须一致。
     /// </summary>
     public ContentKind SearchKind { get; set; } = ContentKind.Video;
+    public bool SubtitleEnabled { get; set; } = true;
+    public string PreferredSubtitleLang { get; set; } = "";
+    public int SubtitleFontScalePercent { get; set; } = 100;
+
+    public void UpdateSubtitleSettings(bool? enabled = null, string? preferredLang = null, int? fontScalePercent = null)
+    {
+        var nextEnabled = enabled ?? SubtitleEnabled;
+        var nextLang = preferredLang != null ? preferredLang.Trim() : PreferredSubtitleLang;
+        var nextScale = fontScalePercent.HasValue ? Math.Clamp(fontScalePercent.Value, 75, 200) : SubtitleFontScalePercent;
+        if (nextEnabled == SubtitleEnabled &&
+            string.Equals(nextLang, PreferredSubtitleLang, StringComparison.Ordinal) &&
+            nextScale == SubtitleFontScalePercent)
+            return;
+        SubtitleEnabled = nextEnabled;
+        PreferredSubtitleLang = nextLang;
+        SubtitleFontScalePercent = nextScale;
+        Save();
+    }
 
     /// <summary>设置搜索类别并落盘(越界值回落视频)</summary>
     public void SetSearchKind(ContentKind kind)
@@ -718,6 +736,13 @@ public class SettingsStore
         SearchKind = Enum.IsDefined(typeof(ContentKind), s.LastSearchKind)
             ? (ContentKind)s.LastSearchKind
             : ContentKind.Video;
+
+        // 字幕偏好：老配置缺 SubtitleEnabled 时默认开启，字号缩放夹回 75~200。
+        SubtitleEnabled = s.SubtitleEnabled ?? true;
+        PreferredSubtitleLang = (s.PreferredSubtitleLang ?? "").Trim();
+        SubtitleFontScalePercent = s.SubtitleFontScalePercent <= 0
+            ? 100
+            : Math.Clamp(s.SubtitleFontScalePercent, 75, 200);
     }
 
     // ------------------------------------------------------------ 列表屏蔽的清洗
@@ -903,7 +928,10 @@ public class SettingsStore
         PlayerVolume = PlayerVolume,
         NetworkCachingMs = NetworkCachingMs,
         AutoBufferPolicy = AutoBufferPolicy,
-        LastSearchKind = (int)SearchKind
+        LastSearchKind = (int)SearchKind,
+        SubtitleEnabled = SubtitleEnabled,
+        PreferredSubtitleLang = PreferredSubtitleLang,
+        SubtitleFontScalePercent = SubtitleFontScalePercent
     };
 
     /// <summary>

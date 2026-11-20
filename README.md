@@ -8,9 +8,9 @@
 
 面向 Windows 平板（Surface 等二合一设备，原生提供 **x64** 与 **ARM64** 双版本）和触控板用户的哔哩哔哩第三方客户端。兼顾横屏桌面模式与**竖屏「平板模式」（安卓端 B 站布局）**，用横滑切页、手势调节进度与音量、长按加速／一键三连和捏合全屏，把竖屏握持、桌面浏览与视频播放无缝串起来；同时保留鼠标、键盘的完整操作方式。
 
-作者：**中三** · 公开发布版本：**0.3.10**
+作者：**中三** · 公开发布版本：**0.3.11**
 
-[下载安装 (x64 · Intel/AMD)](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.10/BiliTouch-0.3.10-setup.exe) · [下载安装 (ARM64 · Surface 等 ARM 设备)](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.10/BiliTouch-0.3.10-setup-arm64.exe) · [平板模式](#平板模式与竖屏优化) · [触控与手势](#触控与手势) · [功能改进](#功能改进) · [架构说明](docs/ARCHITECTURE.md) · [版本记录](docs/RELEASES.md) · [上游鸣谢](docs/ACKNOWLEDGEMENTS.md)
+[下载安装 (x64 · Intel/AMD)](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.11/BiliTouch-0.3.11-setup.exe) · [下载安装 (ARM64 · Surface 等 ARM 设备)](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.11/BiliTouch-0.3.11-setup-arm64.exe) · [平板模式](#平板模式与竖屏优化) · [触控与手势](#触控与手势) · [功能改进](#功能改进) · [架构说明](docs/ARCHITECTURE.md) · [版本记录](docs/RELEASES.md) · [上游鸣谢](docs/ACKNOWLEDGEMENTS.md)
 
 *WPF · .NET 10 · LibVLC · Windows 10 / 11 (原生 x64 & ARM64)*
 

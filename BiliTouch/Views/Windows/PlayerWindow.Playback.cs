@@ -528,6 +528,8 @@ public partial class PlayerWindow
             // 若用户此时已经切到评论页（或处于网页布局评论常显），立刻拉取评论列表
             if (_aid > 0 && CommentsPanel != null && CommentsPanel.Visibility == Visibility.Visible)
                 _ = LoadCommentsAsync(force: true);
+            if (_currentCid > 0 && _subtitleTracks.Count == 0)
+                _ = LoadSubtitlesAsync(bvid, _currentCid, _aid);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -582,6 +584,7 @@ public partial class PlayerWindow
             _lastPlayUrl = path;
             // 本地文件是单文件源, seek 一次到位(与 durl 合流单流同性质)
             _isReliableSeekSource = true;
+            TryAutoLoadSidecarSubtitle(path);
             PlayMedia(media);
         }
         catch (Exception ex)
@@ -693,6 +696,7 @@ public partial class PlayerWindow
             // 并行发出, 不 await、不阻塞起播; 带上详情里的时长(多P 取当前那一 P 的), 免得多发十几个空段请求。
             var danmakuHintSec = detail.Pages.FirstOrDefault(p => p.Cid == _currentCid)?.DurationSec ?? detail.DurationSec;
             _ = LoadDanmakuAsync(_currentCid, danmakuHintSec > 0 ? danmakuHintSec : -1);
+            _ = LoadSubtitlesAsync(_currentBvid, _currentCid, _aid);
 
             // ★ 片段查询**立刻发起, 与下面"取播放地址 / 合流下载"并行** ——
             // 起播**不等它**(服务端首包实测 2.6s, 等了也拿不到); 回来得早才做开场空降,
@@ -1796,6 +1800,7 @@ public partial class PlayerWindow
             //   后果是 seek 静音提前解除、缓冲提示提前消失(画面没回来声音先到)。
             //   定时器全程在跑(构造里 Start, 等待期 100ms / 平时 500ms), 少这一个调用不丢刷新。
             DispatchDanmaku();
+            UpdateSubtitleDisplay(e.Time / 1000.0);
             MaybeSyncProgress();
         }));
 
@@ -1924,6 +1929,7 @@ public partial class PlayerWindow
         }
 
         _ended = true;
+        HideSubtitleOverlay();
         RestoreVolumeAfterSeek();   // 播完若还挂在 seek 静音里, 立刻恢复(重播/下一条别哑)
         if (!_isLive && !_isLocalPlayback && !_eofSeekRebuildTried &&
             !string.IsNullOrEmpty(_lastPlayUrl) &&
