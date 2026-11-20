@@ -1,7 +1,9 @@
 using System;
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.WebSockets;
@@ -63,9 +65,11 @@ public sealed class LiveDanmakuService : IDisposable
     private long _roomId;
     private volatile bool _running;
     private volatile bool _authenticated;
-    private int _generation, _dispatchQueued;
+    private int _generation, _dispatchQueued, _chatDispatchQueued;
+    private long _lastWatchedTicks;
     private readonly AsyncLocal<int?> _parseGeneration = new();
     private readonly ConcurrentQueue<(int generation, Action action)> _events = new();
+    private readonly ConcurrentQueue<(int generation, LiveChatEntry entry)> _chatEvents = new();
     public event Action<LiveChatEntry>? ChatReceived;
     public event Action<string, JsonElement>? RoomEvent;
     public event Action<IReadOnlyList<string>>? SuperChatDeleted;
@@ -232,22 +236,65 @@ public sealed class LiveDanmakuService : IDisposable
                     break;
                 case 2:
                 case 3:
-                    // zlib: 解压后是多个完整包, 递归解
+                    // zlib / brotli: 解压后是多个完整包, 递归解；使用 ArrayPool 避免高密下反复堆分配
+                    byte[]? inBuf = null;
+                    byte[]? readBuf = null;
                     try
                     {
-                        using var input = new MemoryStream(body.ToArray());
+                        inBuf = ArrayPool<byte>.Shared.Rent(body.Length);
+                        body.CopyTo(inBuf);
+                        using var input = new MemoryStream(inBuf, 0, body.Length, writable: false);
                         using Stream z = version == 3 ? new BrotliStream(input, CompressionMode.Decompress) : new ZLibStream(input, CompressionMode.Decompress);
-                        using var output = new MemoryStream();
-                        var buffer = new byte[8192]; int read;
-                        while ((read = z.Read(buffer)) > 0) { if (output.Length + read > 8 * 1024 * 1024) return; output.Write(buffer, 0, read); }
+                        using var output = new MemoryStream(Math.Min(body.Length * 4, 65536));
+                        readBuf = ArrayPool<byte>.Shared.Rent(8192);
+                        int read;
+                        while ((read = z.Read(readBuf, 0, 8192)) > 0)
+                        {
+                            if (output.Length + read > 8 * 1024 * 1024) return;
+                            output.Write(readBuf, 0, read);
+                        }
                         ParsePacketsCore(output.GetBuffer().AsSpan(0, (int)output.Length), depth + 1);
                     }
                     catch { }
+                    finally
+                    {
+                        if (readBuf != null) ArrayPool<byte>.Shared.Return(readBuf);
+                        if (inBuf != null) ArrayPool<byte>.Shared.Return(inBuf);
+                    }
                     break;
             }
 
             offset += packetLen;
         }
+    }
+
+    private static bool IsActionablePacket(ReadOnlySpan<byte> body, bool hasLegacyReceiver)
+    {
+        // 快速 UTF-8 预筛：高并发直播间 80~90% 为 SEND_GIFT/INTERACT_WORD/LIKE_INFO_V3/ONLINE_RANK/STOP_LIVE_ROOM_LIST 等噪音包，
+        // 跳过整包 JsonDocument.Parse 与 byte[] 拷贝，大幅降低接收线程 CPU 与 GC 压力。
+        if (body.IndexOf("DANMU_MSG"u8) >= 0) return true;
+        if (body.IndexOf("SUPER_CHAT_MESSAGE"u8) >= 0) return true;
+        if (hasLegacyReceiver && body.IndexOf("INTERACT_WORD"u8) >= 0) return true;
+        if (body.IndexOf("WATCHED_CHANGE"u8) >= 0) return true;
+        if (body.IndexOf("\"PREPARING\""u8) >= 0 || body.IndexOf("\"LIVE\""u8) >= 0) return true;
+        if (body.IndexOf("ROOM_CHANGE"u8) >= 0 || body.IndexOf("ROOM_LOCK"u8) >= 0 ||
+            body.IndexOf("ROOM_SILENT_"u8) >= 0 || body.IndexOf("\"WARNING\""u8) >= 0 ||
+            body.IndexOf("\"CUT_OFF\""u8) >= 0) return true;
+        return false;
+    }
+
+    private static long ParseJsonLong(JsonElement elem)
+    {
+        if (elem.ValueKind == JsonValueKind.Number && elem.TryGetInt64(out var n)) return n;
+        if (elem.ValueKind == JsonValueKind.String && long.TryParse(elem.GetString(), out var s)) return s;
+        return 0;
+    }
+
+    private static uint ParseJsonColor(JsonElement elem)
+    {
+        if (elem.ValueKind == JsonValueKind.Number && elem.TryGetUInt32(out var n)) return n & 0xFFFFFF;
+        if (elem.ValueKind == JsonValueKind.String && uint.TryParse(elem.GetString(), out var s)) return s & 0xFFFFFF;
+        return 0xFFFFFF;
     }
 
     internal void HandlePacket(int op, ReadOnlySpan<byte> body)
@@ -271,10 +318,15 @@ public sealed class LiveDanmakuService : IDisposable
             return;
         }
         if (op != OpMessage || body.Length == 0) return;
+        bool hasLegacyReceiver = Received != null;
+        if (!IsActionablePacket(body, hasLegacyReceiver)) return;
 
+        byte[]? jsonBuf = null;
         try
         {
-            using var doc = JsonDocument.Parse(body.ToArray());
+            jsonBuf = ArrayPool<byte>.Shared.Rent(body.Length);
+            body.CopyTo(jsonBuf);
+            using var doc = JsonDocument.Parse(new ReadOnlyMemory<byte>(jsonBuf, 0, body.Length));
             var root = doc.RootElement;
             var cmd = root.TryGetProperty("cmd", out var c) ? c.GetString() ?? "" : "";
 
@@ -283,42 +335,53 @@ public sealed class LiveDanmakuService : IDisposable
             {
                 if (!root.TryGetProperty("info", out var info) || info.ValueKind != JsonValueKind.Array) return;
                 // info[1] = 弹幕文本, info[2][1] = 用户名, info[3] = 粉丝牌
-                var text = info.GetArrayLength() > 1 && info[1].ValueKind == JsonValueKind.String
+                var infoLen = info.GetArrayLength();
+                var text = infoLen > 1 && info[1].ValueKind == JsonValueKind.String
                     ? info[1].GetString() ?? "" : "";
                 if (text.Length == 0) return;
 
                 var user = "";
-                if (info.GetArrayLength() > 2 && info[2].ValueKind == JsonValueKind.Array &&
-                    info[2].GetArrayLength() > 1)
-                    user = info[2][1].GetString() ?? "";
+                long uid = 0;
+                if (infoLen > 2 && info[2].ValueKind == JsonValueKind.Array)
+                {
+                    var uLen = info[2].GetArrayLength();
+                    if (uLen > 0) uid = ParseJsonLong(info[2][0]);
+                    if (uLen > 1 && info[2][1].ValueKind == JsonValueKind.String) user = info[2][1].GetString() ?? "";
+                }
 
                 var medalLevel = 0;
                 var medalName = "";
-                if (info.GetArrayLength() > 3 && info[3].ValueKind == JsonValueKind.Array &&
-                    info[3].GetArrayLength() > 1)
+                if (infoLen > 3 && info[3].ValueKind == JsonValueKind.Array && info[3].GetArrayLength() > 1)
                 {
                     medalLevel = info[3][0].ValueKind == JsonValueKind.Number ? info[3][0].GetInt32() : 0;
                     medalName = info[3][1].ValueKind == JsonValueKind.String ? info[3][1].GetString() ?? "" : "";
                 }
 
-                Raise(new Message
+                if (hasLegacyReceiver)
                 {
-                    User = user,
-                    Text = text,
-                    MedalLevel = medalLevel,
-                    MedalName = medalName,
-                });
-                var uid = info.GetArrayLength() > 2 && info[2].ValueKind == JsonValueKind.Array && info[2].GetArrayLength() > 0 && long.TryParse(info[2][0].ToString(), out var parsedUid) ? parsedUid : 0;
-                uint color = 0xFFFFFF;
-                if (info.GetArrayLength() > 0 && info[0].ValueKind == JsonValueKind.Array && info[0].GetArrayLength() > 3 && uint.TryParse(info[0][3].ToString(), out var parsedColor)) color = parsedColor & 0xFFFFFF;
-                var entry = new LiveChatEntry { UserId = uid, User = user, Text = text, Color = color, Medal = medalLevel > 0 ? $"{medalName} {medalLevel}" : "" };
-                Dispatch(() => ChatReceived?.Invoke(entry));
+                    Raise(new Message
+                    {
+                        User = user,
+                        Text = text,
+                        MedalLevel = medalLevel,
+                        MedalName = medalName,
+                    });
+                }
+                if (ChatReceived != null)
+                {
+                    uint color = 0xFFFFFF;
+                    if (infoLen > 0 && info[0].ValueKind == JsonValueKind.Array && info[0].GetArrayLength() > 3)
+                        color = ParseJsonColor(info[0][3]);
+                    var entry = new LiveChatEntry { UserId = uid, User = user, Text = text, Color = color, Medal = medalLevel > 0 ? $"{medalName} {medalLevel}" : "" };
+                    DispatchChat(entry);
+                }
                 return;
             }
 
             // 进场 / 关注 / 礼物 / 上舰: 统一按系统消息显示(不刷屏, 只留重要的)
             if (cmd is "INTERACT_WORD" or "INTERACT_WORD_V2")
             {
+                if (!hasLegacyReceiver) return;
                 var user = root.TryGetProperty("data", out var d) && d.ValueKind == JsonValueKind.Object
                     ? Str(d, "uname") : "";
                 if (user.Length == 0) return;
@@ -333,8 +396,9 @@ public sealed class LiveDanmakuService : IDisposable
             {
                 if (!root.TryGetProperty("data", out var d) || d.ValueKind != JsonValueKind.Object) return;
                 var entry = LiveChatEntry.ParseSuperChat(d);
-                Raise(new Message { User = entry.User, Text = "醒目留言: " + entry.Text, IsHighlight = true });
-                Dispatch(() => ChatReceived?.Invoke(entry));
+                if (hasLegacyReceiver)
+                    Raise(new Message { User = entry.User, Text = "醒目留言: " + entry.Text, IsHighlight = true });
+                DispatchChat(entry);
                 return;
             }
             if (cmd == "SUPER_CHAT_MESSAGE_DELETE")
@@ -344,13 +408,27 @@ public sealed class LiveDanmakuService : IDisposable
                     foreach (var id in list.EnumerateArray()) ids.Add(id.ValueKind == JsonValueKind.String ? id.GetString() ?? "" : id.GetRawText());
                 DispatchCritical(() => SuperChatDeleted?.Invoke(ids)); return;
             }
-            if (cmd is "LIVE" or "PREPARING" or "ROOM_CHANGE" or "ROOM_LOCK" or "WARNING" or "CUT_OFF" or "ROOM_SILENT_ON" or "ROOM_SILENT_OFF" or "WATCHED_CHANGE")
+            if (cmd == "WATCHED_CHANGE")
+            {
+                var now = Stopwatch.GetTimestamp();
+                var prev = Volatile.Read(ref _lastWatchedTicks);
+                if (prev != 0 && Stopwatch.GetElapsedTime(prev, now).TotalMilliseconds < 1500) return;
+                Volatile.Write(ref _lastWatchedTicks, now);
+                var data = root.TryGetProperty("data", out var payload) ? payload.Clone() : default;
+                Dispatch(() => RoomEvent?.Invoke(cmd, data));
+                return;
+            }
+            if (cmd is "LIVE" or "PREPARING" or "ROOM_CHANGE" or "ROOM_LOCK" or "WARNING" or "CUT_OFF" or "ROOM_SILENT_ON" or "ROOM_SILENT_OFF")
             {
                 var data = root.TryGetProperty("data", out var payload) ? payload.Clone() : default;
                 DispatchCritical(() => RoomEvent?.Invoke(cmd, data));
             }
         }
         catch { }
+        finally
+        {
+            if (jsonBuf != null) ArrayPool<byte>.Shared.Return(jsonBuf);
+        }
     }
 
     private static string Str(JsonElement e, string name) =>
@@ -405,6 +483,25 @@ public sealed class LiveDanmakuService : IDisposable
     {
         int generation = _parseGeneration.Value ?? _generation;
         _dispatcher.BeginInvoke(DispatcherPriority.Normal, () => { if (generation == _generation) action(); });
+    }
+
+    private void DispatchChat(LiveChatEntry entry)
+    {
+        if (_chatEvents.Count > 2048) _chatEvents.TryDequeue(out _);
+        _chatEvents.Enqueue((_parseGeneration.Value ?? _generation, entry));
+        if (Interlocked.CompareExchange(ref _chatDispatchQueued, 1, 0) == 0)
+            _dispatcher.BeginInvoke(DispatcherPriority.Background, DrainChatEvents);
+    }
+
+    private void DrainChatEvents()
+    {
+        int count = 0;
+        var handler = ChatReceived;
+        while (count++ < 96 && _chatEvents.TryDequeue(out var item))
+            if (item.generation == _generation && handler != null) { try { handler(item.entry); } catch { } }
+        Interlocked.Exchange(ref _chatDispatchQueued, 0);
+        if (!_chatEvents.IsEmpty && Interlocked.CompareExchange(ref _chatDispatchQueued, 1, 0) == 0)
+            _dispatcher.BeginInvoke(DispatcherPriority.Background, DrainChatEvents);
     }
 
     private void Dispatch(Action action)

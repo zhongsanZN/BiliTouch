@@ -137,15 +137,20 @@ internal static class LiveRoomTests
             volumePopup.IsOpen = false;
             check(pauseGlyph != null && pauseGlyph.Data != null, "live play/pause uses the same vector glyph as the player");
             var nativeReady = player.IsPlaying; check(nativeReady, "independent live player actually decodes the local silent video fixture");
-            var overlayWindow=Field<Window>(window,"_liveOverlayWindow");
-            check(overlayWindow!=null && !ReferenceEquals(overlayWindow,window),"live native-video overlay forwards keyboard events to the room controls");
-            var overlayRoot=(FrameworkElement)window.FindName("VideoOverlay");overlayRoot.Focus();
+            var overlayRoot=(FrameworkElement)window.FindName("VideoOverlay");
+            var vmemMode=Field<bool>(window,"_vmemMode");
+            var overlayTarget=vmemMode?(IInputElement)overlayRoot:Field<Window>(window,"_liveOverlayWindow")!;
+            if(vmemMode)
+                check(Window.GetWindow(overlayRoot)==window && ((FrameworkElement)window.FindName("LiveVmem")).Visibility==Visibility.Visible,"live composited vmem overlay stays in the main hardware-accelerated window");
+            else
+                check(overlayTarget!=null && !ReferenceEquals(overlayTarget,window),"live native-video overlay forwards keyboard events to the room controls");
+            overlayRoot.Focus();
             check(!((TextBox)window.FindName("ChatInput")).IsKeyboardFocusWithin,"video surface takes focus out of the live composer");
-            var key=new KeyEventArgs(Keyboard.PrimaryDevice,PresentationSource.FromVisual(overlayWindow!)!,Environment.TickCount,Key.F){RoutedEvent=Keyboard.PreviewKeyDownEvent};
-            overlayWindow!.RaiseEvent(key);Pump(100);
-            check(Field<bool>(window,"_full") && key.Handled,"F received by the separate video-overlay window enters fullscreen");
-            key=new KeyEventArgs(Keyboard.PrimaryDevice,PresentationSource.FromVisual(overlayWindow)!,Environment.TickCount,Key.Escape){RoutedEvent=Keyboard.PreviewKeyDownEvent};
-            overlayWindow.RaiseEvent(key);Pump(100);
+            var key=new KeyEventArgs(Keyboard.PrimaryDevice,PresentationSource.FromVisual(overlayRoot)!,Environment.TickCount,Key.F){RoutedEvent=Keyboard.PreviewKeyDownEvent};
+            overlayTarget!.RaiseEvent(key);Pump(100);
+            check(Field<bool>(window,"_full") && key.Handled,"F received by the video overlay enters fullscreen");
+            key=new KeyEventArgs(Keyboard.PrimaryDevice,PresentationSource.FromVisual(overlayRoot)!,Environment.TickCount,Key.Escape){RoutedEvent=Keyboard.PreviewKeyDownEvent};
+            overlayTarget!.RaiseEvent(key);Pump(100);
             check(!Field<bool>(window,"_full") && !window.IsClosing,"Escape from the video overlay exits fullscreen without closing the room");
             var model = window.Model;
             settings.UpdateDanmakuSettings(true, 50, true, "屏蔽词", true, opacityPercent: 60, fontScalePercent: 150, speedLevel: 3);

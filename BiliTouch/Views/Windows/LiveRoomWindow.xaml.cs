@@ -43,7 +43,8 @@ public partial class LiveRoomWindow : FluentWindow
     private int _request, _streamRequest, _quality, _retryCount;
     private long _chatRoom;
     private bool _qualityUpdating, _changingStream, _chatVisible = true, _full, _closeReady, _paused, _muted, _following;
-    private bool _followLatest = true, _scrollScheduled;
+    private bool _followLatest = true, _scrollScheduled, _programmaticChatScroll;
+    private ScrollViewer? _chatScroll;
     private bool _syncingOverlay;
     private bool _fillWindow;
     private bool _controlsHidden;
@@ -63,10 +64,16 @@ public partial class LiveRoomWindow : FluentWindow
     public LiveRoomWindow()
     {
         InitializeComponent(); DataContext = Model; Root.DataContext = Model;
-        _liveCore = VlcCore.Get();
-        _player = new MediaPlayer(_liveCore) { EnableHardwareDecoding = VideoDecode.HardwareEnabled };
-        VlcCore.RegisterPlayer(); LiveVideo.MediaPlayer = _player;
+        _vmemMode = Svc.Settings.UseVmemRenderer && MountLiveVmemSurface();
+        _liveCore = _vmemMode ? VlcCore.GetVmem() : VlcCore.Get();
+        _player = new MediaPlayer(_liveCore);
+        VlcCore.RegisterPlayer();
+        // ★ vmem 回调必须在 Play 之前挂好; libvlc_video_set_callbacks 会把 avcodec-hw 置 none,
+        //   所以硬解开关必须在 Attach **之后**再设(与 PlayerWindow.CreateNativeVideoPlayer 同序)。
+        if (_vmemMode) LiveVmem.Attach(_player); else LiveVideo.MediaPlayer = _player;
+        _player.EnableHardwareDecoding = VideoDecode.HardwareEnabled;
         _player.EnableKeyInput = false; _player.EnableMouseInput = false;
+        if (_vmemMode) VideoOverlay.PreviewMouseWheel += LivePrecisionWheel;
         _chat = new LiveDanmakuService(Svc.Api, Dispatcher);
         _overlay = new LiveOverlayRenderer(LiveCanvas);
         _chat.ChatReceived += ReceiveChat;
@@ -111,6 +118,7 @@ public partial class LiveRoomWindow : FluentWindow
             _volumeHover = _volumePinned = false;
             if (!IsClosing) StartControlsCountdown();
         };
+        LiveSettingsPopup.PlacementTarget = LiveSettingsButton;
         LiveSettingsPopup.Opened += (_, _) => _controlsTimer.Stop();
         LiveSettingsPopup.Closed += (_, _) => { if (!IsClosing) StartControlsCountdown(); };
         QualityPopup.PlacementTarget = QualityButton;
@@ -124,7 +132,7 @@ public partial class LiveRoomWindow : FluentWindow
         _chatRoom = 0;
         _ = StopPlaybackAsync();
         Model.Reset(roomId); if (!string.IsNullOrEmpty(title)) Model.Title = title;
-        ChatInput.Text = ""; _followLatest = true; _unread = 0; LatestButton.Visibility = Visibility.Collapsed;
+        ChatInput.Text = ""; SetFollowLatest(true); _unread = 0; LatestButton.Visibility = Visibility.Collapsed;
         _quality = 0; _retryCount = 0; _paused = false; _changingStream = false; _startedAt = default; _nextRetry = DateTimeOffset.MaxValue;
         _qualityUpdating = true; QualityList.ItemsSource = null; QualityList.SelectedItem = null; _qualityUpdating = false;
         SetPauseGlyph(playing: true);
@@ -226,6 +234,43 @@ public partial class LiveRoomWindow : FluentWindow
         finally { if (stream == _streamRequest) _changingStream = false; }
     }
     private Window? _liveOverlayWindow;
+    /// <summary>vmem 合成模式: 视频是普通 WPF Image(LiveVmem), 没有 VideoView 的分层浮层窗口。</summary>
+    private bool _vmemMode;
+
+    /// <summary>
+    /// 把 VideoOverlay(弹幕层 + 控制栏 + 弹层)从 VideoView.Content 搬回主窗口可视树, 叠在 LiveVmem 上。
+    /// 失败则返回 false 退回 VideoView(不能出现"内核是 vmem、宿主还是 VideoView"的半吊子状态, 会黑屏)。
+    /// </summary>
+    private bool MountLiveVmemSurface()
+    {
+        try
+        {
+            var overlay = VideoOverlay;
+            if (overlay.Parent is Panel panel) panel.Children.Remove(overlay);
+            else if (overlay.Parent is ContentControl owner) owner.Content = null;
+            else if (overlay.Parent is Decorator decorator) decorator.Child = null;
+            try { LiveVideo.Content = null; } catch { }
+            LiveVideo.Visibility = Visibility.Collapsed;
+            Panel.SetZIndex(LiveVmem, 0);
+            Panel.SetZIndex(overlay, 10);
+            VideoPanel.Children.Add(overlay);
+            LiveVmem.Visibility = Visibility.Visible;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            App.ReportError(new InvalidOperationException("直播间合成输出挂载失败，已退回原生输出", ex));
+            try
+            {
+                if (VideoOverlay.Parent is Panel p) p.Children.Remove(VideoOverlay);
+                LiveVideo.Content = VideoOverlay;
+                LiveVideo.Visibility = Visibility.Visible;
+                LiveVmem.Visibility = Visibility.Collapsed;
+            }
+            catch { }
+            return false;
+        }
+    }
     private DispatcherTimer? _liveBackdropGuard;
     private DispatcherTimer? _liveBackdropResumeTimer;
     private bool _liveBackdropSuspendQueued;
@@ -282,6 +327,7 @@ public partial class LiveRoomWindow : FluentWindow
     }
     private void HookLiveOverlayInput()
     {
+        if (_vmemMode) return;
         var overlay = LiveVideo.GetType().GetProperty("ForegroundWindow", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(LiveVideo) as Window;
         if (overlay == null || ReferenceEquals(overlay, _liveOverlayWindow)) return;
         if (_liveOverlayWindow != null)
@@ -301,7 +347,7 @@ public partial class LiveRoomWindow : FluentWindow
     }
     private void StartLiveBackdropGuard()
     {
-        if (IsClosing) return;
+        if (IsClosing || _vmemMode) return;
         RefreshLiveBackdrop();
         _liveBackdropTicks = 25;
         if (_liveBackdropGuard == null) {
@@ -385,13 +431,68 @@ public partial class LiveRoomWindow : FluentWindow
         try { if (IsClosing || (request == _request && stream == _streamRequest)) await Task.Run(() => { try { _player.Stop(); } catch { } }); }
         finally { _mediaGate.Release(); }
     }
+    private void SetFollowLatest(bool value)
+    {
+        _followLatest = value;
+        Model.FollowLatest = value;
+    }
+
+    private ScrollViewer? ResolveChatScrollViewer()
+    {
+        if (_chatScroll != null) return _chatScroll;
+        if (ChatList == null) return null;
+        _chatScroll = FindVisualChild<ScrollViewer>(ChatList);
+        return _chatScroll;
+    }
+
+    private static T? FindVisualChild<T>(DependencyObject root) where T : DependencyObject
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T found) return found;
+            var nested = FindVisualChild<T>(child);
+            if (nested != null) return nested;
+        }
+        return null;
+    }
+
+    private void ScrollChatToBottomNow()
+    {
+        if (IsClosing || !_followLatest || Model.Messages.Count == 0) return;
+        if (ChatPanel.Visibility != Visibility.Visible) return;
+        var scroll = ResolveChatScrollViewer();
+        _programmaticChatScroll = true;
+        try
+        {
+            if (scroll != null) scroll.ScrollToBottom();
+            else ChatList.ScrollIntoView(Model.Messages[^1]);
+        }
+        finally
+        {
+            _programmaticChatScroll = false;
+        }
+    }
+
     private void OnChatBatch(IReadOnlyList<LiveChatEntry> batch)
     {
         if (IsClosing) return;
         if (Model.OverlayEnabled)
-            foreach (var item in batch.Where(m => m.Kind == LiveChatKind.Danmaku))
-                _overlay.Add(item.Text, Svc.Settings.DanmakuColorful ? item.Color : 0xFFFFFF);
-        if (_followLatest) ScheduleLatest();
+        {
+            var colorful = Svc.Settings.DanmakuColorful;
+            for (int i = 0; i < batch.Count; i++)
+            {
+                var item = batch[i];
+                if (item.Kind == LiveChatKind.Danmaku)
+                    _overlay.Add(item.Text, colorful ? item.Color : 0xFFFFFF);
+            }
+        }
+        if (_followLatest)
+        {
+            if (ChatPanel.Visibility == Visibility.Visible)
+                ScheduleLatest();
+        }
         else
         {
             _unread += batch.Count; LatestButton.Content = $"{Math.Min(_unread, 999)} 条新弹幕 · 回到最新"; LatestButton.Visibility = Visibility.Visible;
@@ -399,24 +500,28 @@ public partial class LiveRoomWindow : FluentWindow
     }
     private void ScheduleLatest()
     {
-        if (_scrollScheduled) return; _scrollScheduled = true;
-        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, () =>
+        if (_scrollScheduled || ChatPanel.Visibility != Visibility.Visible) return;
+        _scrollScheduled = true;
+        // 在 Render/Loaded 阶段内直接 ScrollToBottom，避免先按旧位置跑完一次完整 Layout1，
+        // 又在 ContextIdle 阶段再触发第二次 Layout2
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
             _scrollScheduled = false;
-            if (IsClosing || !_followLatest || Model.Messages.Count == 0) return;
-            ChatList.ScrollIntoView(Model.Messages[^1]);
+            ScrollChatToBottomNow();
         });
     }
-    private void ChatWheel(object sender, MouseWheelEventArgs e) { if (e.Delta > 0) _followLatest = false; }
-    private void ChatTouchDown(object sender, TouchEventArgs e) => _followLatest = false;
+    private void ChatWheel(object sender, MouseWheelEventArgs e) { if (e.Delta > 0) SetFollowLatest(false); }
+    private void ChatTouchDown(object sender, TouchEventArgs e) => SetFollowLatest(false);
     private void ChatScrollChanged(object sender, ScrollChangedEventArgs e)
     {
-        if (e.OriginalSource is not ScrollViewer scroll || e.VerticalChange == 0) return;
+        if (e.OriginalSource is not ScrollViewer scroll) return;
+        _chatScroll ??= scroll;
+        if (_programmaticChatScroll || e.VerticalChange == 0) return;
         if (e.ExtentHeightChange == 0 && e.VerticalChange > 0 && scroll.ScrollableHeight - scroll.VerticalOffset < 4)
-        { _followLatest = true; _unread = 0; LatestButton.Visibility = Visibility.Collapsed; }
-        else if (e.ExtentHeightChange == 0 && e.VerticalChange < 0) _followLatest = false;
+        { SetFollowLatest(true); _unread = 0; LatestButton.Visibility = Visibility.Collapsed; }
+        else if (e.ExtentHeightChange == 0 && e.VerticalChange < 0) SetFollowLatest(false);
     }
-    private void LatestClick(object sender, RoutedEventArgs e) { _followLatest = true; _unread = 0; LatestButton.Visibility = Visibility.Collapsed; ScheduleLatest(); }
+    private void LatestClick(object sender, RoutedEventArgs e) { SetFollowLatest(true); _unread = 0; LatestButton.Visibility = Visibility.Collapsed; ScheduleLatest(); }
     private void ClearChatClick(object sender, RoutedEventArgs e) { Model.ClearMessages(); _unread = 0; LatestButton.Visibility = Visibility.Collapsed; _overlay.Clear(); }
 
     private async Task SendMessageAsync()
@@ -516,7 +621,9 @@ public partial class LiveRoomWindow : FluentWindow
     {
         if (VolumeGlyphText == null) return;
         var silent = _muted || LiveVolume.Value <= 0;
-        VolumeGlyphText.Text = PlayerGlyphs.VolumeGlyph(silent);
+        var glyph = PlayerGlyphs.VolumeGlyph(silent);
+        VolumeGlyphText.Text = glyph;
+        if (VolumeGlyph != null) VolumeGlyph.State = glyph;
     }
     private void MuteClick(object sender, RoutedEventArgs e)
     {
@@ -814,9 +921,11 @@ public partial class LiveRoomWindow : FluentWindow
             Grid.SetColumnSpan(ChatPanel, 1);
             ChatPanel.BorderThickness = new Thickness(1, 0, 0, 0);
         }
+        var wasVisible = ChatPanel.Visibility == Visibility.Visible;
         ChatPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         var hostW = _isEmbeddedInMain && _embeddedHost != null ? _embeddedHost.ActualWidth : ActualWidth;
         ChatColumn.Width = new GridLength(show ? (hostW < 1100 ? 300 : 360) : 0);
+        if (show && !wasVisible && _followLatest) ScheduleLatest();
     }
 
     /// <summary>
@@ -917,6 +1026,7 @@ public partial class LiveRoomWindow : FluentWindow
                 _liveBackdropGuard?.Stop();
                 _liveBackdropResumeTimer?.Stop();
                 UnhookLiveTrackpad();
+                if (_vmemMode) VideoOverlay.PreviewMouseWheel -= LivePrecisionWheel;
                 if (_liveOverlayWindow != null)
                 {
                     UnhookLiveTrackpad();
@@ -942,6 +1052,7 @@ public partial class LiveRoomWindow : FluentWindow
             {
                 try { await Task.Run(mp.Dispose); } catch { }
             }
+            if (_vmemMode) { try { LiveVmem.Dispose(); } catch { } }
         }
         finally
         {

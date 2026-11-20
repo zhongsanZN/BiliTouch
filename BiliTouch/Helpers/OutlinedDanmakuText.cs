@@ -21,6 +21,7 @@ public sealed class OutlinedDanmakuText : FrameworkElement
     private const double OutlineOffset = 1.1;
     private static readonly Brush OutlineBrush = CreateFrozenOutlineBrush();
 
+    private static readonly FontFamily SystemCjkFirstFamily = new("Microsoft YaHei UI, Segoe UI Variable Text, Segoe UI");
     private static FontFamily? s_cachedFamily;
     private static Typeface? s_cachedTypeface;
 
@@ -68,8 +69,10 @@ public sealed class OutlinedDanmakuText : FrameworkElement
 
     private static Typeface ResolveTypeface()
     {
-        var family = Application.Current?.TryFindResource(AppTypography.ResourceKey) as FontFamily
-            ?? SystemFonts.MessageFontFamily;
+        var family = AppTypography.Normalize(Svc.Settings.FontId) == "System"
+            ? SystemCjkFirstFamily
+            : Application.Current?.TryFindResource(AppTypography.ResourceKey) as FontFamily
+              ?? SystemFonts.MessageFontFamily;
         if (s_cachedTypeface != null && ReferenceEquals(s_cachedFamily, family))
             return s_cachedTypeface;
 

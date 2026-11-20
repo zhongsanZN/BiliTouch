@@ -17,10 +17,14 @@ public sealed class LiveChatEntry : INotifyPropertyChanged
     public uint Color { get; init; } = 0xFFFFFF;
     public LiveChatKind Kind { get; init; }
     public int Price { get; init; }
+    private string? _timeText;
+    private string? _identity;
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.Now;
     public DateTimeOffset ExpiresAt { get; init; }
-    public string TimeText => Timestamp.ToLocalTime().ToString("HH:mm:ss");
-    public string Identity => string.Join(" · ", new[] { Badge, Medal }.Where(s => s.Length > 0));
+    public string TimeText => _timeText ??= Timestamp.ToLocalTime().ToString("HH:mm:ss");
+    public string Identity => _identity ??= (Badge.Length > 0 && Medal.Length > 0
+        ? Badge + " · " + Medal
+        : Badge.Length > 0 ? Badge : Medal);
     public string PriceText => Price > 0 ? $"¥{Price}" : "SC";
     public bool IsExpired => ExpiresAt <= DateTimeOffset.UtcNow;
     public string RemainingText => IsExpired ? "已结束" : TimeSpan.FromSeconds(Math.Ceiling((ExpiresAt - DateTimeOffset.UtcNow).TotalSeconds)).ToString(ExpiresAt - DateTimeOffset.UtcNow >= TimeSpan.FromHours(1) ? @"h\:mm\:ss" : @"mm\:ss");

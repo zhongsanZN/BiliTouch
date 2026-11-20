@@ -423,6 +423,11 @@ internal static class CommentFixesTests
 
             check(bindingErrors.Count == 0,
                 $"comment GIF & detail return flow produces zero WPF data-binding errors (count={bindingErrors.Count})");
+
+            player?.Close();
+            player = null;
+            Pump(200);
+            TestLiveRoomHighDensityDanmaku(check, bindingErrors);
         }
         finally
         {
@@ -650,6 +655,150 @@ internal static class CommentFixesTests
     {
         s.WriteByte((byte)(value & 0xFF));
         s.WriteByte((byte)((value >> 8) & 0xFF));
+    }
+
+    private static void TestLiveRoomHighDensityDanmaku(Action<bool, string> check, List<string> bindingErrors)
+    {
+        bindingErrors.Clear();
+        var live = new LiveRoomWindow { Width = 1360, Height = 840, WindowState = WindowState.Maximized };
+        try
+        {
+            live.Show();
+            Pump(250);
+            check(bindingErrors.Count == 0,
+                $"LiveRoomWindow produces zero WPF data-binding errors (count={bindingErrors.Count})");
+
+            var vmemMode = (bool)typeof(LiveRoomWindow).GetField("_vmemMode", Private)!.GetValue(live)!;
+            check(vmemMode, "LiveRoomWindow mounts VmemVideoView in main hardware-accelerated window without layered ForegroundWindow");
+
+            var chatList = (ListBox)live.FindName("ChatList");
+            var liveCanvas = (Canvas)live.FindName("LiveCanvas");
+            var overlay = (LiveOverlayRenderer)typeof(LiveRoomWindow).GetField("_overlay", Private)!.GetValue(live)!;
+
+            // 1. 满 500 条上限时连续 10 批 40 条弹幕的侧栏刷新 + 布局耗时验证（修复前 ~25-48ms/批）
+            live.Model.OverlayEnabled = false;
+            for (int i = 0; i < 500; i++)
+            {
+                live.Model.Enqueue(new LiveChatEntry
+                {
+                    User = "观众_" + i,
+                    Text = "这是一条直播间的测试弹幕内容，用来验证侧边栏高密度刷新性能 " + i,
+                    Medal = "粉丝牌 20",
+                    Badge = "舰长",
+                    Color = 0x00FFCC
+                });
+            }
+            for (int i = 0; i < 15; i++) live.Model.Flush();
+            Pump(150);
+
+            var rows = FindDescendants<LiveChatRow>(chatList).ToList();
+            check(rows.Count > 0 && HasNonEmptyPixels(rows[0]),
+                $"LiveChatRow renders non-empty chat pixels directly (realizedRows={rows.Count})");
+
+            var beforeRows = FindDescendants<LiveChatRow>(chatList).ToHashSet();
+            var sw = new Stopwatch();
+            double totalFlushMs = 0, totalLayoutMs = 0;
+            for (int b = 0; b < 10; b++)
+            {
+                for (int j = 0; j < 40; j++)
+                {
+                    live.Model.Enqueue(new LiveChatEntry
+                    {
+                        User = $"突发观众_{b}_{j}",
+                        Text = $"突发高密度弹幕刷屏测试内容，测试满 500 条时的批量刷新与轻量直绘性能 {b}_{j}",
+                        Medal = "真爱粉 30",
+                        Badge = "房管",
+                        Color = 0xFF6699
+                    });
+                }
+                sw.Restart();
+                live.Model.Flush();
+                totalFlushMs += sw.Elapsed.TotalMilliseconds;
+
+                sw.Restart();
+                chatList.UpdateLayout();
+                totalLayoutMs += sw.Elapsed.TotalMilliseconds;
+            }
+            var afterRows = FindDescendants<LiveChatRow>(chatList).ToList();
+            var reusedRowCount = afterRows.Count(r => beforeRows.Contains(r));
+            var avgBatchMs = (totalFlushMs + totalLayoutMs) / 10.0;
+            check(reusedRowCount > 0 && reusedRowCount == afterRows.Count,
+                $"LiveRoom ChatList reuses existing LiveChatRow containers in-place across 400 steady-state messages ({reusedRowCount}/{afterRows.Count})");
+            check(avgBatchMs < 20.0,
+                $"LiveRoom ChatList 40-item flush+layout at 500 cap stays fast ({avgBatchMs:F2}ms/batch < 20ms)");
+
+            // 2. 真实视频播放 + 画面弹幕 + 侧栏持续洪峰下的渲染帧率验证（修复前仅 ~6-8 FPS / 204ms 跳帧）
+            var mp = (LibVLCSharp.Shared.MediaPlayer)typeof(LiveRoomWindow).GetField("_player", Private)!.GetValue(live)!;
+            var core = (LibVLCSharp.Shared.LibVLC)typeof(LiveRoomWindow).GetField("_liveCore", Private)!.GetValue(live)!;
+            mp.Volume = 0;
+            var samplePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../artifacts/touch-sample-silent.mp4"));
+            if (File.Exists(samplePath))
+            {
+                using var media = new LibVLCSharp.Shared.Media(core, samplePath, LibVLCSharp.Shared.FromType.FromPath);
+                media.AddOption(":input-repeat=65535");
+                mp.Play(media);
+                WaitUntil(() => mp.IsPlaying, 5000);
+            }
+
+            live.Model.OverlayEnabled = true;
+            overlay.Configure(24, 1.0, 0.85, 2, outline: true);
+            for (int k = 0; k < 24; k++)
+                overlay.Add($"直播画面滚动弹幕流畅度测试_{k}", (uint)(0x808080 + (k * 11111 % 0x7F7F7F)));
+
+            var deltas = new List<double>();
+            long prev = 0;
+            EventHandler onRender = (_, _) =>
+            {
+                long now = Stopwatch.GetTimestamp();
+                if (prev != 0) deltas.Add(Stopwatch.GetElapsedTime(prev, now).TotalMilliseconds);
+                prev = now;
+            };
+            int floodSeq = 0;
+            var floodTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(40) };
+            floodTimer.Tick += (_, _) =>
+            {
+                for (int k = 0; k < 12; k++)
+                {
+                    floodSeq++;
+                    live.Model.Enqueue(new LiveChatEntry
+                    {
+                        User = "洪峰观众_" + floodSeq,
+                        Text = "高并发直播间持续刷屏弹幕内容 " + floodSeq,
+                        Medal = "真爱粉 20",
+                        Color = 0xFFFFFF
+                    });
+                }
+            };
+            CompositionTarget.Rendering += onRender;
+            floodTimer.Start();
+            Pump(1200);
+            floodTimer.Stop();
+            CompositionTarget.Rendering -= onRender;
+            deltas.Sort();
+            double p50 = deltas.Count > 0 ? deltas[deltas.Count / 2] : 999;
+            double p95 = deltas.Count > 0 ? deltas[(int)(deltas.Count * 0.95)] : 999;
+            double fps = deltas.Count / 1.2;
+            Console.WriteLine($"[LIVE-AFTER-RENDER] Video+Danmaku+ChatFlood 1.2s: frames={deltas.Count} ({fps:F1} fps), p50={p50:F2}ms, p95={p95:F2}ms, canvasChildren={liveCanvas.Children.Count}");
+            check(fps >= 25.0 && p50 < 40.0,
+                $"LiveRoom stays smooth under video + outlined danmaku + chat flood ({fps:F1} fps, p50={p50:F2}ms, p95={p95:F2}ms)");
+
+            // 3. LiveDanmakuService 噪音包零分配预筛验证（2000 个非弹幕大包跳过 JsonDocument.Parse）
+            using var svc = new LiveDanmakuService(Svc.Api, Dispatcher.CurrentDispatcher);
+            var noiseBytes = System.Text.Encoding.UTF8.GetBytes("{\"cmd\":\"STOP_LIVE_ROOM_LIST\",\"data\":{\"room_id_list\":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]}}");
+            var allocBefore = GC.GetAllocatedBytesForCurrentThread();
+            sw.Restart();
+            for (int i = 0; i < 2000; i++) svc.HandlePacket(5, noiseBytes);
+            sw.Stop();
+            var noiseAlloc = GC.GetAllocatedBytesForCurrentThread() - allocBefore;
+            Console.WriteLine($"[LIVE-AFTER-NOISE] 2000 noise packets filtered in {sw.Elapsed.TotalMilliseconds:F2}ms, alloc={noiseAlloc} bytes");
+            check(noiseAlloc < 4096 && sw.Elapsed.TotalMilliseconds < 50,
+                $"LiveDanmakuService pre-filters 2,000 noise packets with near-zero allocation ({noiseAlloc} B, {sw.Elapsed.TotalMilliseconds:F2}ms)");
+        }
+        finally
+        {
+            live.Close();
+            Pump(500);
+        }
     }
 
     private sealed class BindingErrorCapture : TraceListener

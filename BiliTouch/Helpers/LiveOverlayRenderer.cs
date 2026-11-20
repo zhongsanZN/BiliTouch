@@ -9,39 +9,31 @@ using BiliTouch.Services;
 namespace BiliTouch.Helpers;
 
 /// <summary>
-/// 直播画面弹幕渲染器(2026-11-05 重写)。
+/// 直播画面弹幕渲染器。
 ///
-/// ★★★ 为什么重写 —— 用户报"视频弹幕怎么好像看不见了":
-///   旧版靠 <c>CompositionTarget.Rendering</c> 驱动位移。那条链有两个致命前提:
-///     ① 每一帧都要有人真的在渲染(窗口最小化/被挡住/只截图不呈现时, 这条事件会停);
-///     ② 加弹幕那一刻画布已经有真实尺寸。
-///   任一前提不成立, 文本就会**停在初始位置**(画布右缘之外), 用户看到的就是"弹幕没了"。
-///   探针截图 live-room-video-overlay.png 里那几行"这是—"贴着右边缘不动, 正是这个症状。
-///   ⇒ 0.1.6 一度改成 16ms DispatcherTimer 自己走时，但它受系统定时器粒度限制
-///     实际 ~30ms 一跳，把整个浮层呈现帧率钉在 ~33fps（见 docs/FPS-REGRESSION-2026-11-09.md）。
-///   ⇒ 现在: 主时钟仍是 CompositionTarget.Rendering 跟 DWM 合成走，另加一条 250ms
-///     低频看门狗，只在合成真的停摆时补一次推进；位置由 Stopwatch 外推，停多久都不丢进度。
-///     预加载队列继续承担"画布还没尺寸时不丢弹幕"。
-///
-/// ★ "弹幕要预加载, 权重要高"(用户原话)的落地:
-///   · <see cref="Add"/> 在画布还没尺寸时**不丢弃**, 而是进 pending 队列, 等第一次
-///     有尺寸的 Tick 立刻铺上去 —— 于是直播间一打开就能看到最近几条弹幕,
-///     不必等 WebSocket 推一条新的;
-///   · 房间一进来(进房历史)就把最近几条塞进队列, 与视频流并行, 不占起播路径。
-///
-/// ★ 仍保持"有界": 最多 48 条同屏、12 条泳道、超长文本截断。
+/// 性能优化架构：
+///   1. 与 LiveRoomWindow 的 vmem 合成宿主协同工作：弹幕层与视频画布同处主窗口硬件交换链，
+///      彻底消除旧版 VideoView 分层窗口（AllowsTransparency / UpdateLayeredWindow）每帧整窗 GPU→CPU 回读。
+///   2. 稳态常驻对象池：弹幕飞出左边界时仅设 Visibility.Collapsed 归池，不从 Canvas.Children 移除，
+///      避免反复触发布局树重排与销毁重建 BitmapCache GPU 纹理。
+///   3. 帧间平滑节流：单次批量推送（如 40 条）按每渲染帧最多发射 3 条拆散入场，消除单帧建树尖峰与垂直弹幕墙。
+///   4. 零布局宽度估算与满泳道快速短路：所有泳道占满时零分配直接丢弃（直播弹幕以实时感为先）。
 /// </summary>
 public sealed class LiveOverlayRenderer : IDisposable
 {
     private const int MaxItems = 48;
     private const int LaneCount = 12;
+    private const int MaxBurstQueue = 32;
+    private const int MaxEmitPerFrame = 3;
 
     private static readonly Brush WhiteBrush = CreateFrozenBrush(0xFFFFFF);
     private static readonly BitmapCache SharedBitmapCache = CreateFrozenBitmapCache();
+    private static readonly double InvFrequency = 1.0 / Stopwatch.Frequency;
 
     private readonly Canvas _canvas;
-    private readonly List<(FrameworkElement text, TranslateTransform move, long start, double width)> _items = new();
-    private readonly Queue<(string message, uint color)> _pending = new();
+    private readonly List<(FrameworkElement text, TranslateTransform move, long start, double width)> _items = new(MaxItems);
+    private readonly Queue<(string message, uint color)> _pending = new(24);
+    private readonly Queue<(string message, uint color)> _burst = new(MaxBurstQueue);
     private readonly Stack<TextBlock> _plainPool = new(MaxItems);
     private readonly Stack<OutlinedDanmakuText> _outlinedPool = new(MaxItems);
     private readonly Dictionary<uint, Brush> _brushes = new();
@@ -50,6 +42,7 @@ public sealed class LiveOverlayRenderer : IDisposable
     private long _lastRenderTicks;
     private bool _clockAttached, _disposed, _outline;
     private TimeSpan _lastRenderingTime = TimeSpan.MinValue;
+    private int _emittedInFrame;
     private double _fontSize = 20, _area = .35, _opacity = .8, _speed = 150;
 
     private static Brush CreateFrozenBrush(uint color)
@@ -69,14 +62,10 @@ public sealed class LiveOverlayRenderer : IDisposable
     public LiveOverlayRenderer(Canvas canvas)
     {
         _canvas = canvas;
-        // ★ 主时钟跟 DWM 合成节奏（CompositionTarget.Rendering），不用 16ms 定时器：
-        //   后者受系统定时器粒度限制实际 ~30ms 一跳，会把浮层呈现帧率钉在 ~33fps
-        //   （实测见 docs/FPS-REGRESSION-2026-11-09.md）。
-        //   低频看门狗只在合成停摆（窗口被遮挡/最小化）时补一次，避免弹幕停在右缘外。
         _watchdog = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(250) };
         _watchdog.Tick += (_, _) => WatchdogTick();
         canvas.Unloaded += (_, _) => StopClock();
-        canvas.Loaded += (_, _) => EnsureClock();
+        canvas.Loaded += (_, _) => { if (_items.Count > 0 || _burst.Count > 0) EnsureClock(); };
     }
 
     /// <summary>应用弹幕外观(字号/区域/不透明度/速度档位/描边)。会清空当前画面 —— 与旧行为一致。</summary>
@@ -87,27 +76,34 @@ public sealed class LiveOverlayRenderer : IDisposable
         _area = Math.Clamp(area, .25, 1);
         _opacity = Math.Clamp(opacity, 0, 1);
         _outline = outline;
-        // 速度档位 → 每秒像素。DanmakuMotion.ScrollSeconds 是"横穿一屏要几秒",
-        // 这里按 1200px 视作一屏宽折算成速度, 与点播弹幕手感一致。
         _speed = 1200 / DanmakuMotion.ScrollSeconds(speedLevel);
     }
 
     /// <summary>
-    /// 塞一条弹幕。画布还没尺寸时先进队列(预加载), 不会丢。
+    /// 塞一条弹幕。画布还没尺寸时先进预加载队列；画布就绪后在单帧预算内立即上屏，超预算则平滑排入后续帧。
     /// </summary>
     public void Add(string message, uint color)
     {
         if (_disposed || string.IsNullOrWhiteSpace(message)) return;
         if (_canvas.ActualWidth < 1 || _canvas.ActualHeight < 1)
         {
-            // 预加载阶段: 画布还没量出尺寸。留最近 24 条；不挂 Rendering 帧回调避免最小化/隐藏时 60~144Hz 空转，
-            // 等画布 SizeChanged 恢复有效尺寸后自动排干。
             if (_pending.Count >= 24) _pending.Dequeue();
             _pending.Enqueue((message, color));
             EnsureSizeHook();
             return;
         }
-        Emit(message, color);
+
+        if (_emittedInFrame < MaxEmitPerFrame)
+        {
+            if (Emit(message, color))
+                _emittedInFrame++;
+            return;
+        }
+
+        if (_items.Count >= MaxItems) return;
+        if (_burst.Count >= MaxBurstQueue) _burst.Dequeue();
+        _burst.Enqueue((message, color));
+        EnsureClock();
     }
 
     private bool _sizeHooked;
@@ -125,20 +121,27 @@ public sealed class LiveOverlayRenderer : IDisposable
         while (_pending.Count > 0)
         {
             var (message, color) = _pending.Dequeue();
-            Emit(message, color);
+            Add(message, color);
         }
     }
 
-    private void Emit(string message, uint color)
+    private bool Emit(string message, uint color)
     {
-        if (_items.Count >= MaxItems) return;
+        if (_items.Count >= MaxItems) return false;
+        var canvasW = _canvas.ActualWidth;
+        var canvasH = _canvas.ActualHeight;
+        if (canvasW < 1 || canvasH < 1) return false;
+
         var now = Stopwatch.GetTimestamp();
         var lineHeight = _fontSize * 1.5;
-        var lanes = Math.Clamp((int)(_canvas.ActualHeight * _area / lineHeight), 1, LaneCount);
+        var lanes = Math.Clamp((int)(canvasH * _area / lineHeight), 1, LaneCount);
 
-        // 找一条"已经让出"的泳道: 上一行整条尾巴完全进入画面才允许复用。
-        var lane = Array.FindIndex(_lanes, 0, lanes, released => released <= now);
-        if (lane < 0) return;   // 满屏了, 这条丢掉(直播弹幕以"实时感"为先, 不排队补播)
+        var lane = -1;
+        for (int i = 0; i < lanes; i++)
+        {
+            if (_lanes[i] <= now) { lane = i; break; }
+        }
+        if (lane < 0) return false;
 
         var msg = message.Length > 500 ? message[..500] : message;
         var brush = ResolveBrush(color);
@@ -152,7 +155,8 @@ public sealed class LiveOverlayRenderer : IDisposable
             if (_outlinedPool.TryPop(out var reusedOutlined))
             {
                 reusedOutlined.SetContent(msg, brush, _fontSize);
-                reusedOutlined.Opacity = _opacity;
+                if (Math.Abs(reusedOutlined.Opacity - _opacity) > 0.004) reusedOutlined.Opacity = _opacity;
+                if (reusedOutlined.Visibility != Visibility.Visible) reusedOutlined.Visibility = Visibility.Visible;
                 text = reusedOutlined;
             }
             else
@@ -167,12 +171,12 @@ public sealed class LiveOverlayRenderer : IDisposable
                 if (!string.Equals(reusedPlain.Text, msg, StringComparison.Ordinal)) reusedPlain.Text = msg;
                 if (Math.Abs(reusedPlain.FontSize - _fontSize) > 0.01) reusedPlain.FontSize = _fontSize;
                 if (!ReferenceEquals(reusedPlain.Foreground, brush)) reusedPlain.Foreground = brush;
-                reusedPlain.Opacity = _opacity;
+                if (Math.Abs(reusedPlain.Opacity - _opacity) > 0.004) reusedPlain.Opacity = _opacity;
+                if (reusedPlain.Visibility != Visibility.Visible) reusedPlain.Visibility = Visibility.Visible;
                 text = reusedPlain;
             }
             else
             {
-                // 移除 DropShadowEffect（48 条弹幕逐帧全像素模糊会严重拖慢合成帧率）
                 text = new TextBlock
                 {
                     Text = msg,
@@ -190,21 +194,22 @@ public sealed class LiveOverlayRenderer : IDisposable
         if (text.RenderTransform is TranslateTransform existingMove && !existingMove.IsFrozen)
         {
             move = existingMove;
-            move.X = _canvas.ActualWidth;
+            move.X = canvasW;
             move.Y = lane * lineHeight + 12;
         }
         else
         {
-            move = new TranslateTransform(_canvas.ActualWidth, lane * lineHeight + 12);
+            move = new TranslateTransform(canvasW, lane * lineHeight + 12);
             text.RenderTransform = move;
         }
 
-        // 长弹幕要走更久才让出泳道, 否则后一条会追尾。
         _lanes[lane] = now + (long)((width + 50) / _speed * Stopwatch.Frequency);
 
-        _canvas.Children.Add(text);
+        if (VisualTreeHelper.GetParent(text) == null)
+            _canvas.Children.Add(text);
         _items.Add((text, move, now, width));
         EnsureClock();
+        return true;
     }
 
     private Brush ResolveBrush(uint color)
@@ -227,16 +232,27 @@ public sealed class LiveOverlayRenderer : IDisposable
         return Math.Max(1.0, Math.Ceiling(units * fontSize + (outline ? 4.0 : 0.0)));
     }
 
-    private void RecycleElement(FrameworkElement element)
+    private void RecycleElement(FrameworkElement element, bool detachFromCanvas)
     {
-        _canvas.Children.Remove(element);
+        if (detachFromCanvas)
+        {
+            _canvas.Children.Remove(element);
+        }
+        else
+        {
+            // 稳态回收不移出 Canvas.Children，避免反复触发布局树重排与释放 BitmapCache GPU 纹理
+            element.Visibility = Visibility.Collapsed;
+        }
+
         if (element is OutlinedDanmakuText ot)
         {
             if (_outlinedPool.Count < MaxItems) _outlinedPool.Push(ot);
+            else if (!detachFromCanvas) _canvas.Children.Remove(ot);
         }
         else if (element is TextBlock tb)
         {
             if (_plainPool.Count < MaxItems) _plainPool.Push(tb);
+            else if (!detachFromCanvas) _canvas.Children.Remove(tb);
         }
     }
 
@@ -249,10 +265,23 @@ public sealed class LiveOverlayRenderer : IDisposable
         }
         _lastRenderTicks = Stopwatch.GetTimestamp();
         if (_disposed) { StopClock(); return; }
-        // 先补预加载队列: 画布一有尺寸就把攒着的弹幕铺上去。
-        if (_pending.Count > 0 && _canvas.ActualWidth >= 1 && _canvas.ActualHeight >= 1)
+        _emittedInFrame = 0;
+
+        var canvasW = _canvas.ActualWidth;
+        var canvasH = _canvas.ActualHeight;
+        if (canvasW >= 1 && canvasH >= 1)
         {
-            while (_pending.Count > 0) { var (message, color) = _pending.Dequeue(); Emit(message, color); }
+            while (_pending.Count > 0 && _emittedInFrame < MaxEmitPerFrame)
+            {
+                var (message, color) = _pending.Dequeue();
+                if (Emit(message, color)) _emittedInFrame++;
+            }
+            while (_burst.Count > 0 && _emittedInFrame < MaxEmitPerFrame)
+            {
+                var (message, color) = _burst.Dequeue();
+                if (Emit(message, color)) _emittedInFrame++;
+                else break; // 泳道全满时留到下一帧或自然淘汰
+            }
         }
 
         var now = Stopwatch.GetTimestamp();
@@ -260,20 +289,26 @@ public sealed class LiveOverlayRenderer : IDisposable
         {
             var item = _items[i];
             var w = item.text.DesiredSize.Width > 1 ? item.text.DesiredSize.Width : item.width;
-            var x = _canvas.ActualWidth - Stopwatch.GetElapsedTime(item.start, now).TotalSeconds * _speed;
-            if (x < -w - 8) { RecycleElement(item.text); _items.RemoveAt(i); }
-            else item.move.X = x;
+            var elapsedSec = (now - item.start) * InvFrequency;
+            var x = canvasW - elapsedSec * _speed;
+            if (x < -w - 8)
+            {
+                RecycleElement(item.text, detachFromCanvas: false);
+                _items.RemoveAt(i);
+            }
+            else
+            {
+                item.move.X = x;
+            }
         }
 
-        // 没东西可动（或画布已不可见）就停表: 直播挂机/最小化时不空转 UI 线程。
-        if (_items.Count == 0 && (_pending.Count == 0 || _canvas.ActualWidth < 1 || _canvas.ActualHeight < 1))
+        if (_items.Count == 0 && _burst.Count == 0 && (_pending.Count == 0 || canvasW < 1 || canvasH < 1))
             StopClock();
     }
 
     private void WatchdogTick()
     {
         if (!_clockAttached || _disposed) return;
-        // Rendering 正常跑时这里几乎零成本：距上次回调还不到 200ms 就直接返回。
         var now = Stopwatch.GetTimestamp();
         if (Stopwatch.GetElapsedTime(_lastRenderTicks, now).TotalMilliseconds < 200) return;
         Tick(this, EventArgs.Empty);
@@ -302,11 +337,13 @@ public sealed class LiveOverlayRenderer : IDisposable
     {
         StopClock();
         for (var i = _items.Count - 1; i >= 0; i--)
-            RecycleElement(_items[i].text);
+            RecycleElement(_items[i].text, detachFromCanvas: true);
         _items.Clear();
         _pending.Clear();
+        _burst.Clear();
         _canvas.Children.Clear();
         Array.Clear(_lanes);
+        _emittedInFrame = 0;
     }
 
     public void Dispose()

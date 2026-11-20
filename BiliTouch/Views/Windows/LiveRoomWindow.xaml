@@ -40,19 +40,7 @@
             </Style>
 
             <DataTemplate x:Key="ChatTemplate">
-                <Border x:Name="MessageBody" Padding="12,7" CornerRadius="8" Margin="2,2">
-                    <StackPanel>
-                        <DockPanel LastChildFill="True">
-                            <TextBlock DockPanel.Dock="Right" Text="{Binding TimeText}" FontSize="10" Foreground="{DynamicResource TextTertiaryBrush}" Margin="8,0,0,0"/>
-                            <TextBlock Text="{Binding User}" FontWeight="SemiBold" Foreground="{DynamicResource AccentTextOnCardBrush}" TextTrimming="CharacterEllipsis"/>
-                        </DockPanel>
-                        <TextBlock Text="{Binding Identity}" FontSize="10" Foreground="{DynamicResource TextTertiaryBrush}" Visibility="{Binding Identity,Converter={StaticResource StrToVis}}"/>
-                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" Margin="0,3,0,0" Foreground="{DynamicResource TextPrimaryBrush}"/>
-                    </StackPanel>
-                </Border>
-                <DataTemplate.Triggers>
-                    <DataTrigger Binding="{Binding Kind}" Value="SuperChat"><Setter TargetName="MessageBody" Property="Background" Value="{DynamicResource AccentSoftFillStrongBrush}"/></DataTrigger>
-                </DataTemplate.Triggers>
+                <controls:LiveChatRow Entry="{Binding}"/>
             </DataTemplate>
         </Grid.Resources>
         <Grid.RowDefinitions><RowDefinition x:Name="ChromeRow" Height="44"/><RowDefinition x:Name="HeaderRow" Height="92"/><RowDefinition Height="*"/></Grid.RowDefinitions>
@@ -131,6 +119,11 @@
             <Grid.RowDefinitions><RowDefinition x:Name="VideoRow" Height="*"/><RowDefinition x:Name="ChatRow" Height="0"/></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition x:Name="ChatColumn" Width="360"/></Grid.ColumnDefinitions>
             <Grid Background="#101116" x:Name="VideoPanel">
+                <!-- ★ 2026-11-20 直播弹幕卡顿根治: 与点播播放器一致默认走 vmem 合成。
+                     VideoView 会把 VideoOverlay(弹幕层+控制栏)搬进一个 AllowsTransparency 的分层顶层窗口,
+                     弹幕每移动一帧都要整窗 GPU→CPU 回读(UpdateLayeredWindow), 实测 100~200ms 周期性卡顿。
+                     vmem 下视频是普通 WPF Image, VideoOverlay 作为兄弟元素直接叠在主窗口可视树里。 -->
+                <helpers:VmemVideoView x:Name="LiveVmem" Visibility="Collapsed" IsHitTestVisible="False"/>
                 <vlc:VideoView x:Name="LiveVideo" Background="Black" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
                     <Grid x:Name="VideoOverlay" Focusable="True" Background="#01000000" MouseLeftButtonDown="VideoMouseDown"
                           MouseMove="VideoMouseMove" MouseLeave="VideoMouseLeave">
@@ -232,7 +225,7 @@
                                             Width="36" Height="36" Click="MuteClick"
                                             MouseEnter="VolumeHoverEnter" MouseLeave="VolumeHoverLeave"
                                             ToolTip="点击静音 / 悬停或点一下展开音量条">
-                                        <helpers:SkinGlyph Kind="Volume" IconSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White" State="{Binding Text,ElementName=VolumeGlyphText}"><TextBlock x:Name="VolumeGlyphText" Text="&#xE767;"
+                                        <helpers:SkinGlyph x:Name="VolumeGlyph" Kind="Volume" IconSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White"><TextBlock x:Name="VolumeGlyphText" Text="&#xE767;"
                                                    FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                                    FontSize="14" Foreground="White"/></helpers:SkinGlyph>
                                     </Button>
@@ -300,7 +293,7 @@
                                             Margin="4,0,0,0" Click="OverlaySettingsClick" ToolTip="弹幕设置">
                                         <helpers:SkinGlyph Kind="DanmakuSettings" IconSize="24" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White"><TextBlock Text="弹幕设置" Foreground="#F2FFFFFF"/></helpers:SkinGlyph>
                                     </Button>
-                                    <Popup x:Name="LiveSettingsPopup" PlacementTarget="{Binding ElementName=LiveSettingsButton}"
+                                    <Popup x:Name="LiveSettingsPopup"
                                            Placement="Top" StaysOpen="True" AllowsTransparency="True" PopupAnimation="None">
                                         <Border Background="#F0202226" BorderBrush="#33FFFFFF" BorderThickness="1"
                                                 CornerRadius="10" Padding="12,10" Width="248">
