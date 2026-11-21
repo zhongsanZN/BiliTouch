@@ -53,6 +53,9 @@ public class SettingsStore
     public bool PortraitVideoOptimization { get; set; }
     public void SetPortraitVideoOptimization(bool enabled)
     {if(PortraitVideoOptimization==enabled)return;PortraitVideoOptimization=enabled;Save();LayoutChanged?.Invoke();}
+    public bool PlayerDefaultMaximized { get; set; }
+    public void SetPlayerDefaultMaximized(bool enabled)
+    {if(PlayerDefaultMaximized==enabled)return;PlayerDefaultMaximized=enabled;Save();}
     public TabletMode TabletMode { get; set; } = TabletMode.Off;
     public bool SurfaceTabletHintDismissed { get; set; }
     public void SetTabletMode(TabletMode mode)
@@ -341,6 +344,14 @@ public class SettingsStore
     ///   那边是可空类型, 缺字段(null)在 ApplySanitized 里被归一成 true。
     /// </summary>
     public bool HardwareAccelerationEnabled { get; set; } = true;
+    public string UiAdapterId { get; private set; } = "auto";
+    public void SetUiAdapter(string? id)
+    {
+        var normalized = GraphicsAdapters.NormalizeUiAdapter(id);
+        if (UiAdapterId == normalized) return;
+        UiAdapterId = normalized;
+        Save();
+    }
     public string DecoderAdapterId { get; private set; } = "auto";
     public void SetDecoderAdapter(string? id)
     {
@@ -601,6 +612,7 @@ public class SettingsStore
         FontId=AppTypography.Normalize(s.FontId);
         UseWebPlayerLayout = s.UseWebPlayerLayout;
         PortraitVideoOptimization = s.PortraitVideoOptimization;
+        PlayerDefaultMaximized = s.PlayerDefaultMaximized;
         TabletMode = Enum.IsDefined(typeof(TabletMode), s.TabletMode) ? s.TabletMode : TabletMode.Off;
         SurfaceTabletHintDismissed = s.SurfaceTabletHintDismissed;
         ExperimentalVideoEnhancement=s.ExperimentalVideoEnhancement;VideoEnhancementActive=s.VideoEnhancementActive;
@@ -694,6 +706,7 @@ public class SettingsStore
         //   null 必须按"开"处理 —— bool 默认的 false 会被误读成"用户主动关了",
         //   升级后全体老用户静默掉进软件渲染, 那是比崩溃更难查的性能回归。
         HardwareAccelerationEnabled = s.HardwareAccelerationEnabled ?? true;
+        UiAdapterId = GraphicsAdapters.NormalizeUiAdapter(s.UiAdapterId);
         DecoderAdapterId = VideoDecode.Normalize(s.DecoderAdapterId ?? s.EnhancementAdapterId);
 
         // All profiles use composited video, including legacy profiles with false.
@@ -874,6 +887,7 @@ public class SettingsStore
         FontId=FontId,
         UseWebPlayerLayout = UseWebPlayerLayout,
         PortraitVideoOptimization = PortraitVideoOptimization,
+        PlayerDefaultMaximized = PlayerDefaultMaximized,
         TabletMode = TabletMode,
         SurfaceTabletHintDismissed = SurfaceTabletHintDismissed,
         ExperimentalVideoEnhancement=ExperimentalVideoEnhancement,VideoEnhancementActive=VideoEnhancementActive,
@@ -919,6 +933,7 @@ public class SettingsStore
         SkippedVersion = SkippedVersion,
         NoLogin1080P = NoLogin1080P,
         HardwareAccelerationEnabled = HardwareAccelerationEnabled,
+        UiAdapterId = UiAdapterId,
         DecoderAdapterId = DecoderAdapterId,
         CdnMode = CdnMode,
         CdnManualId = CdnManualId,

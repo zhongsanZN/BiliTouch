@@ -43,9 +43,22 @@ internal static class VideoDecodeTests
             var choices = VideoDecode.Choices;
             check(choices[0].Id == "auto" && choices[^1].Id == "software", "decoder choices retain automatic and compatible playback modes");
             check(choices.Select(c => c.Id).Distinct().Count() == choices.Count, "available decoder devices have unique identifiers");
+
+            foreach (var uiId in new[] { "auto", "00000000:00ABCDEF" })
+            {
+                Svc.Settings.SetUiAdapter(uiId); Svc.Settings.SaveNow();
+                var loadedUi = new SettingsStore(); loadedUi.Load();
+                check(loadedUi.UiAdapterId == uiId, "UI rendering adapter selection survives saving and loading: " + uiId);
+            }
+            Svc.Settings.SetUiAdapter("bad ui adapter"); Svc.Settings.SaveNow();
+            check(Svc.Settings.UiAdapterId == "auto", "invalid UI rendering adapter identifiers fall back to automatic display-direct selection");
+            var uiChoices = GraphicsAdapters.UiChoices;
+            check(uiChoices.Count > 0 && uiChoices[0].Id == "auto", "UI rendering adapter choices default to automatic display-direct / iGPU mode");
+            check(!string.IsNullOrWhiteSpace(GraphicsAdapters.ActiveUiStatusText), "active UI rendering adapter status text is populated");
         }
         finally
         {
+            Svc.Settings.SetUiAdapter("auto");
             Svc.Settings.SetDecoderAdapter(original); Svc.Settings.SaveNow();
             typeof(AppPaths).GetProperty(nameof(AppPaths.DataDir))!.SetValue(null, root);
         }

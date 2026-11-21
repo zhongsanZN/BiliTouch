@@ -369,7 +369,8 @@ internal static class SeamlessTransitionDirector
         double startRadius,
         Brush? heroBrush,
         SeamlessAnchor? anchor,
-        string? bvid)
+        string? bvid,
+        Rect? playerWindowScreenRect = null)
     {
         if (targetWindow.Content is not Panel rootPanel || !targetWindow.IsVisible || targetWindow.WindowState == WindowState.Minimized)
             return false;
@@ -394,6 +395,18 @@ internal static class SeamlessTransitionDirector
 
             var rootW = rootPanel.ActualWidth > 0 ? rootPanel.ActualWidth : targetWindow.ActualWidth;
             var rootH = rootPanel.ActualHeight > 0 ? rootPanel.ActualHeight : targetWindow.ActualHeight;
+
+            Rect shellStartRect = new Rect(0, 0, Math.Max(1, rootW), Math.Max(1, rootH));
+            if (playerWindowScreenRect is { Width: > 16, Height: > 16 } pwScreen)
+            {
+                var wTl = rootPanel.PointFromScreen(pwScreen.TopLeft);
+                var wBr = rootPanel.PointFromScreen(pwScreen.BottomRight);
+                shellStartRect = new Rect(
+                    Math.Min(wTl.X, wBr.X),
+                    Math.Min(wTl.Y, wBr.Y),
+                    Math.Max(16, Math.Abs(wBr.X - wTl.X)),
+                    Math.Max(16, Math.Abs(wBr.Y - wTl.Y)));
+            }
 
             Rect endRect = Rect.Empty;
             double endRadius = 8.0;
@@ -444,9 +457,8 @@ internal static class SeamlessTransitionDirector
             var artScale = new ScaleTransform(1, 1);
             var clip = new RectangleGeometry(new Rect(0, 0, baseW, baseH));
 
-            var shellW = Math.Max(1, rootW);
-            var shellH = Math.Max(1, rootH);
-            var shellStartRect = new Rect(0, 0, shellW, shellH);
+            var shellW = Math.Max(1, shellStartRect.Width);
+            var shellH = Math.Max(1, shellStartRect.Height);
             var shellScale = new ScaleTransform(1, 1);
             var shellTranslate = new TranslateTransform(0, 0);
             var shellGroup = new TransformGroup();
@@ -460,7 +472,6 @@ internal static class SeamlessTransitionDirector
                 ?? Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF);
             var shellBorderBrush = new SolidColorBrush(shellBorderColor);
 
-            // 轻量级详情页容器壳体（无 BitmapCache、无每帧 Clip、无 PushOpacity 离屏缓冲）：从满窗平滑收拢回卡片
             var shell = new Border
             {
                 Width = shellW,

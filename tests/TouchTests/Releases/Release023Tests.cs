@@ -74,11 +74,19 @@ internal static class Release023Tests
   Call(player,"OnSeasonCloseClick",btnSeasonToggle,new RoutedEventArgs());
   check(seasonList.Visibility==Visibility.Visible && Equals(btnSeasonToggle.Content,"收起合集"),"clicking 展开合集 re-expands the episode list");
   player.Close();Pump(100);
+  Svc.Settings.SetPlayerDefaultMaximized(false);
   Svc.Player.WarmUp();Pump(50);
   Svc.Player.PlayVideo("BV1warmupTest", "Warmup Test");Pump(150);
   var warmed=(PlayerWindow)typeof(PlayerService).GetField("_window",Hidden)!.GetValue(Svc.Player)!;
-  check(warmed.IsVisible && warmed.WindowState==WindowState.Maximized && warmed.ShowActivated,"warmed-up player window opens maximized without ShowActivated conflict");
+  check(warmed.IsVisible && warmed.WindowState==WindowState.Normal && warmed.ShowActivated,"warmed-up player window defaults to Normal state when PlayerDefaultMaximized is off");
   warmed.Close();Pump(100);
+  Svc.Settings.SetPlayerDefaultMaximized(true);
+  Svc.Player.WarmUp();Pump(50);
+  Svc.Player.PlayVideo("BV1warmupMaxTest", "Warmup Max Test");Pump(150);
+  var warmedMax=(PlayerWindow)typeof(PlayerService).GetField("_window",Hidden)!.GetValue(Svc.Player)!;
+  check(warmedMax.IsVisible && warmedMax.WindowState==WindowState.Maximized && warmedMax.ShowActivated,"warmed-up player window opens maximized when PlayerDefaultMaximized is enabled");
+  warmedMax.Close();Pump(100);
+  Svc.Settings.SetPlayerDefaultMaximized(false);
   var build=typeof(ApiClient).GetMethod("BuildDynamicLikeRequest",BindingFlags.NonPublic|BindingFlags.Static)!;
   foreach(var liked in new[]{true,false})
   {

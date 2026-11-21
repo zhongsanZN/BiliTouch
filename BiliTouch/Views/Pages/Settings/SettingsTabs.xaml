@@ -338,6 +338,21 @@
                             Minimum="25" Maximum="175" TickFrequency="5" IsSnapToTickEnabled="True" Value="{Binding TouchpadFeedSensitivity,Mode=TwoWay}" />
                 </Grid>
             </Border>
+            <ContentControl ContentTemplate="{StaticResource SectionHeaderTemplate}" Content="界面渲染" />
+            <Border Style="{StaticResource SettingsCardStyle}">
+                <StackPanel>
+                    <Grid Style="{StaticResource SettingsRowStyle}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,20,0">
+                            <TextBlock Text="界面渲染显卡" Style="{StaticResource SettingsRowTitleStyle}"/>
+                            <TextBlock Text="{Binding UiAdapterHint}" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
+                        </StackPanel>
+                        <ComboBox Grid.Column="1" Width="240" ItemsSource="{Binding UiAdapters}" DisplayMemberPath="Name" SelectedValuePath="Id"
+                                  SelectedValue="{Binding UiAdapterId,Mode=TwoWay}" Style="{StaticResource SettingsComboStyle}" VerticalAlignment="Center"/>
+                    </Grid>
+                    <TextBlock Text="{Binding UiAdapterStatus}" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
+                </StackPanel>
+            </Border>
             <ContentControl ContentTemplate="{StaticResource SectionHeaderTemplate}" Content="视频详情" />
             <Border Style="{StaticResource SettingsCardStyle}">
                 <StackPanel>
@@ -363,6 +378,21 @@
                                   VerticalAlignment="Center"
                                   AutomationProperties.Name="竖屏优化"
                                   IsChecked="{Binding PortraitVideoOptimization, Mode=TwoWay}" />
+                    </Grid>
+                    <Border Style="{StaticResource SettingsRowDivider}" />
+                    <Grid Style="{StaticResource SettingsRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                            <TextBlock Text="打开视频详情页时默认最大化" Style="{StaticResource SettingsRowTitleStyle}" />
+                            <TextBlock Text="开启后点开视频自动将详情页最大化；关闭则以常规窗口尺寸打开。" Style="{StaticResource SettingsRowDescStyle}" />
+                        </StackPanel>
+                        <CheckBox Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
+                                  VerticalAlignment="Center"
+                                  AutomationProperties.Name="打开视频详情页时默认最大化"
+                                  IsChecked="{Binding PlayerDefaultMaximized, Mode=TwoWay}" />
                     </Grid>
                 </StackPanel>
             </Border>
@@ -472,10 +502,21 @@
                     <Grid Style="{StaticResource SettingsRowStyle}">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <StackPanel Margin="0,0,20,0">
+                            <TextBlock Text="界面渲染显卡" FontWeight="SemiBold"/>
+                            <TextBlock Text="{Binding UiAdapterHint}" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
+                        </StackPanel>
+                        <ComboBox Grid.Column="1" Width="240" ItemsSource="{Binding UiAdapters}" DisplayMemberPath="Name" SelectedValuePath="Id"
+                                  SelectedValue="{Binding UiAdapterId,Mode=TwoWay}" Style="{StaticResource SettingsComboStyle}"/>
+                    </Grid>
+                    <TextBlock Text="{Binding UiAdapterStatus}" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
+                    <Border Style="{StaticResource SettingsRowDivider}"/>
+                    <Grid Style="{StaticResource SettingsRowStyle}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,20,0">
                             <TextBlock Text="解码显卡" FontWeight="SemiBold"/>
                             <TextBlock Text="选择用于播放视频的显卡，更改后重启应用生效。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>
                         </StackPanel>
-                        <ComboBox Grid.Column="1" Width="220" ItemsSource="{Binding DecoderAdapters}" DisplayMemberPath="Name" SelectedValuePath="Id"
+                        <ComboBox Grid.Column="1" Width="240" ItemsSource="{Binding DecoderAdapters}" DisplayMemberPath="Name" SelectedValuePath="Id"
                                   SelectedValue="{Binding DecoderAdapterId,Mode=TwoWay}" Style="{StaticResource SettingsComboStyle}"/>
                     </Grid>
                     <TextBlock Text="{Binding DecodeStatus.Status}" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescStyle}"/>

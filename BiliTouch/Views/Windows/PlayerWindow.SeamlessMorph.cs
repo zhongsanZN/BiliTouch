@@ -41,7 +41,9 @@ public partial class PlayerWindow
         public Rect CurrentRect;
         public double StartRadius = 8.0;
         public double EndRadius;
+        public Rect ShellStartRect;
         public Rect ShellEndRect;
+        public Rect CurrentShellRect;
         public long LastFrameTicks;
         public TimeSpan LastRenderingTime = TimeSpan.MinValue;
         public readonly ScaleTransform HeroScale = new(1, 1);
@@ -50,6 +52,8 @@ public partial class PlayerWindow
         public readonly RectangleGeometry HeroClip = new();
         public readonly ScaleTransform ShellScale = new(1, 1);
         public readonly TranslateTransform ShellTranslate = new(0, 0);
+        public readonly SolidColorBrush ShellBrush = new(Color.FromArgb(0, 20, 22, 26));
+        public readonly SolidColorBrush ShellBorderBrush = new(Color.FromArgb(0, 255, 255, 255));
         public readonly SolidColorBrush BackdropBrush = new(Color.FromArgb(0, 6, 8, 12));
         public readonly TranslateTransform TopBarShift = new(0, 0);
         public readonly TranslateTransform InfoPanelShift = new(0, 0);
@@ -126,6 +130,8 @@ public partial class PlayerWindow
             SeamlessPlayerShell.RenderTransformOrigin = new Point(0, 0);
             SeamlessPlayerShell.Clip = null;
             SeamlessPlayerShell.CornerRadius = new CornerRadius(10);
+            SeamlessPlayerShell.Background = _seamless.ShellBrush;
+            SeamlessPlayerShell.BorderBrush = _seamless.ShellBorderBrush;
             SeamlessPlayerShell.Opacity = 1.0;
             SeamlessPlayerShell.UseLayoutRounding = false;
             SeamlessPlayerShell.SnapsToDevicePixels = false;
@@ -331,6 +337,8 @@ public partial class PlayerWindow
         var current = _seamless.CurrentRect.Width >= 2 && _seamless.CurrentRect.Height >= 2
             ? _seamless.CurrentRect
             : _seamless.StartRect;
+        if (_seamless.CurrentShellRect.Width >= 2 && _seamless.CurrentShellRect.Height >= 2)
+            _seamless.ShellStartRect = _seamless.CurrentShellRect;
         _seamless.StartRect = current;
         _seamless.StartRadius = SpringMotion.InterpolateRadius(_seamless.StartRadius, _seamless.EndRadius, _seamless.Progress);
         _seamless.EndRect = nextEnd;
@@ -339,6 +347,7 @@ public partial class PlayerWindow
         _seamless.Velocity = Math.Clamp(_seamless.Velocity * 0.5, 0, 3.0);
         _seamless.Omega = SpringMotion.HyperOmegaInterrupt;
         ConfigureSeamlessHeroBaseSize();
+        ConfigureSeamlessShellBaseSize();
         ApplySeamlessMorphFrame(0);
     }
 
@@ -439,7 +448,19 @@ public partial class PlayerWindow
                 startScreenRect = new Rect(tl, br);
             }
 
-            if (SeamlessTransitionDirector.PlayReturnMorph(srcWin, startScreenRect, ResolveVideoStageTargetRadius(), heroBrush, anchor, _currentBvid))
+            Rect windowScreenRect;
+            if (IsVisible && PresentationSource.FromVisual(this) is { CompositionTarget: not null })
+            {
+                var wTl = PointToScreen(new Point(0, 0));
+                var wBr = PointToScreen(new Point(ActualWidth > 0 ? ActualWidth : Width, ActualHeight > 0 ? ActualHeight : Height));
+                windowScreenRect = new Rect(wTl, wBr);
+            }
+            else
+            {
+                windowScreenRect = startScreenRect;
+            }
+
+            if (SeamlessTransitionDirector.PlayReturnMorph(srcWin, startScreenRect, ResolveVideoStageTargetRadius(), heroBrush, anchor, _currentBvid, windowScreenRect))
             {
                 Close();
                 return true;
@@ -512,6 +533,7 @@ public partial class PlayerWindow
         {
             // 中途打断：从当前屏幕上的真实瞬时矩形出发，并将已有速度投影到新方向
             _seamless.StartRect = _seamless.CurrentRect;
+            _seamless.ShellStartRect = _seamless.CurrentShellRect.Width >= 2 ? _seamless.CurrentShellRect : _seamless.CurrentRect;
             _seamless.StartRadius = SpringMotion.InterpolateRadius(_seamless.StartRadius, _seamless.EndRadius, _seamless.Progress);
             _seamless.EndRect = reverse ? startRect : endRect;
             _seamless.EndRadius = reverse ? startRadius : endRadius;
@@ -523,6 +545,7 @@ public partial class PlayerWindow
         else
         {
             _seamless.StartRect = reverse ? endRect : startRect;
+            _seamless.ShellStartRect = Rect.Empty;
             _seamless.EndRect = reverse ? startRect : endRect;
             _seamless.StartRadius = reverse ? endRadius : startRadius;
             _seamless.EndRadius = reverse ? startRadius : endRadius;
@@ -570,11 +593,9 @@ public partial class PlayerWindow
     private void ConfigureSeamlessShellBaseSize()
     {
         if (SeamlessPlayerShell == null) return;
-        var stageW = SeamlessStage.ActualWidth > 1 ? SeamlessStage.ActualWidth : (_seamless.EntryWindow?.Width ?? (ActualWidth > 1 ? ActualWidth : 1280));
-        var stageH = SeamlessStage.ActualHeight > 1 ? SeamlessStage.ActualHeight : (_seamless.EntryWindow?.Height ?? (ActualHeight > 1 ? ActualHeight : 760));
-        _seamless.ShellEndRect = new Rect(0, 0, Math.Max(1, stageW), Math.Max(1, stageH));
-        SeamlessPlayerShell.Width = _seamless.ShellEndRect.Width;
-        SeamlessPlayerShell.Height = _seamless.ShellEndRect.Height;
+        _seamless.ShellEndRect = ResolvePlayerWindowTargetRect();
+        SeamlessPlayerShell.Width = Math.Max(1, _seamless.ShellEndRect.Width);
+        SeamlessPlayerShell.Height = Math.Max(1, _seamless.ShellEndRect.Height);
     }
 
     /// <summary>
@@ -592,11 +613,11 @@ public partial class PlayerWindow
 
         ApplySeamlessMorphFrame(_seamless.Progress);
 
-        // 主体展开全程（0 -> 0.86）仅由单窗 EntryWindow 独占 GPU 呈现（满帧 60~120Hz，零双窗竞争）；
-        // 临近落位（p >= 0.86）时在 Topmost EntryWindow 背后静默 Show() 播放器，
-        // 保持 EntryWindow 持续遮挡直到落位收尾单帧原子卸下，兼得满帧与绝对零闪烁。
+        // 容器壳体（SeamlessPlayerShell）在 p = 0 -> 0.88 期间平滑展开至详情页目标窗口 100% 边界；
+        // 当 p >= 0.88 时壳体已完全覆盖目标窗口位置，此时在 Topmost EntryWindow 背后静默 Show() 播放器，
+        // 既不会有播放器边缘提前露出的突兀感，又能在 p = 0.88 -> 1.0 期间让播放器在后台完成首帧渲染，实现落位零闪烁。
         if (_seamless.EntryWindow != null && !_seamless.IsReverse && !_seamless.IsClosingMorph && !IsVisible && !_closing
-            && _seamless.Progress >= 0.86 && DoesEntryCoverPlayerTarget())
+            && _seamless.Progress >= 0.88)
         {
             PreRevealPlayerBehindEntry();
             var exactEnd = ResolveVideoStageTargetRect();
@@ -614,7 +635,8 @@ public partial class PlayerWindow
             var wasClosing = _seamless.IsClosingMorph;
             if (!wasClosing && !_seamless.IsReverse && _seamless.EntryWindow != null && !IsVisible && !_closing)
             {
-                // 非最大化源窗打开最大化播放器时：先在 Topmost 入场舞台背后完成 Show 与首帧渲染，再原子卸下舞台，杜绝闪烁
+                // 透明舞台全程透出真实 3K 主窗口（零截图）；待容器壳体与封面 100% 展开到位后，
+                // 在 Topmost 舞台遮挡下一次性 Show() 播放器并原子卸下舞台，兼得真实背景与零闪烁。
                 RevealPlayerAndFinishSeamless();
                 return;
             }
@@ -673,26 +695,42 @@ public partial class PlayerWindow
         if (Math.Abs(_seamless.HeroClip.RadiusX - nextClipRadius) > 0.05)
             _seamless.HeroClip.RadiusX = _seamless.HeroClip.RadiusY = nextClipRadius;
 
-        // 澎湃 OS 详情页容器壳体：与英雄封面同步从卡片边界展开到整窗（或在逆向时从整窗收回卡片），
-        // 纯 GPU 矩阵变换 + 零 BitmapCache + 零每帧 Clip 重建 + 零全屏 PushOpacity 离屏缓冲。
+        // 澎湃 OS 详情页半透明 UI 容器壳体（SeamlessPlayerShell）：
+        // 与英雄封面同步从被点击卡片展开到详情页窗口目标矩形（或在逆向时收回卡片），
+        // 底层直接透出真实 3K 主窗口，零截图、零 BitmapCache、零 PushOpacity。
         if (SeamlessPlayerShell != null)
         {
             if (_seamless.EntryWindow != null)
             {
                 var shellEnd = _seamless.ShellEndRect.Width > 1 && _seamless.ShellEndRect.Height > 1
                     ? _seamless.ShellEndRect
-                    : new Rect(0, 0, Math.Max(1, SeamlessStage.ActualWidth), Math.Max(1, SeamlessStage.ActualHeight));
-                var shellFrom = _seamless.IsReverse ? shellEnd : _seamless.StartRect;
+                    : ResolvePlayerWindowTargetRect();
+                var shellFrom = _seamless.ShellStartRect.Width >= 2 && _seamless.ShellStartRect.Height >= 2
+                    ? _seamless.ShellStartRect
+                    : (_seamless.IsReverse ? shellEnd : _seamless.StartRect);
                 var shellTo = _seamless.IsReverse ? _seamless.EndRect : shellEnd;
-                var shellRect = SpringMotion.InterpolateRect(shellFrom, shellTo, p);
+                var shellProgress = _seamless.IsReverse
+                    ? p
+                    : SpringMotion.SmoothStep(SpringMotion.StageProgress(p, 0.0, 0.88));
+                var shellRect = SpringMotion.InterpolateRect(shellFrom, shellTo, shellProgress);
+                _seamless.CurrentShellRect = shellRect;
                 var sw = Math.Max(1, SeamlessPlayerShell.Width > 0 ? SeamlessPlayerShell.Width : shellEnd.Width);
                 var sh = Math.Max(1, SeamlessPlayerShell.Height > 0 ? SeamlessPlayerShell.Height : shellEnd.Height);
                 _seamless.ShellScale.ScaleX = shellRect.Width / sw;
                 _seamless.ShellScale.ScaleY = shellRect.Height / sh;
                 _seamless.ShellTranslate.X = shellRect.X;
                 _seamless.ShellTranslate.Y = shellRect.Y;
+
+                var shellColor = (Application.Current?.TryFindResource("AppBackgroundBrush") as SolidColorBrush)?.Color
+                    ?? Color.FromRgb(0x14, 0x16, 0x1A);
+                var borderColor = (Application.Current?.TryFindResource("DividerBrush") as SolidColorBrush)?.Color
+                    ?? Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF);
+                double shellAlphaFactor = _seamless.IsReverse
+                    ? 1.0 - SpringMotion.SmoothStep(SpringMotion.StageProgress(p, 0.12, 0.85))
+                    : 0.52 + 0.48 * shellProgress;
+                _seamless.ShellBrush.Color = Color.FromArgb((byte)Math.Clamp(shellAlphaFactor * 255, 0, 255), shellColor.R, shellColor.G, shellColor.B);
+                _seamless.ShellBorderBrush.Color = Color.FromArgb((byte)Math.Clamp(shellAlphaFactor * borderColor.A, 0, 255), borderColor.R, borderColor.G, borderColor.B);
                 SeamlessPlayerShell.Visibility = Visibility.Visible;
-                SeamlessPlayerShell.Opacity = 1.0;
             }
             else
             {
@@ -861,6 +899,48 @@ public partial class PlayerWindow
         var dt = Stopwatch.GetElapsedTime(_seamless.LastFrameTicks, now).TotalSeconds;
         _seamless.LastFrameTicks = now;
         StepSeamlessMorph(Math.Clamp(dt, 0.001, 0.05));
+    }
+
+    internal Rect ResolvePlayerWindowTargetRect()
+    {
+        try
+        {
+            if (_seamless.EntryWindow != null &&
+                PresentationSource.FromVisual(SeamlessStage) is { CompositionTarget: not null })
+            {
+                var dpi = VisualTreeHelper.GetDpi(SeamlessStage);
+                var wa = SystemParameters.WorkArea;
+                if (_seamless.EntryWindow.Owner is { } owner && PresentationSource.FromVisual(owner) != null)
+                {
+                    var handle = new WindowInteropHelper(owner).Handle;
+                    if (handle != IntPtr.Zero)
+                    {
+                        var bounds = System.Windows.Forms.Screen.FromHandle(handle).WorkingArea;
+                        wa = new Rect(bounds.Left / dpi.DpiScaleX, bounds.Top / dpi.DpiScaleY,
+                            bounds.Width / dpi.DpiScaleX, bounds.Height / dpi.DpiScaleY);
+                    }
+                }
+                var targetRect = WindowState == WindowState.Maximized
+                    ? wa
+                    : new Rect(
+                        double.IsNaN(Left) ? wa.Left : Left,
+                        double.IsNaN(Top) ? wa.Top : Top,
+                        ActualWidth > 0 ? ActualWidth : (Width > 0 ? Width : wa.Width),
+                        ActualHeight > 0 ? ActualHeight : (Height > 0 ? Height : wa.Height));
+                var tl = SeamlessStage.PointFromScreen(new Point(targetRect.Left * dpi.DpiScaleX, targetRect.Top * dpi.DpiScaleY));
+                var br = SeamlessStage.PointFromScreen(new Point(targetRect.Right * dpi.DpiScaleX, targetRect.Bottom * dpi.DpiScaleY));
+                return new Rect(
+                    Math.Min(tl.X, br.X),
+                    Math.Min(tl.Y, br.Y),
+                    Math.Max(16, Math.Abs(br.X - tl.X)),
+                    Math.Max(16, Math.Abs(br.Y - tl.Y)));
+            }
+        }
+        catch { }
+
+        var stageW = SeamlessStage.ActualWidth > 1 ? SeamlessStage.ActualWidth : (_seamless.EntryWindow?.Width ?? (ActualWidth > 1 ? ActualWidth : 1280));
+        var stageH = SeamlessStage.ActualHeight > 1 ? SeamlessStage.ActualHeight : (_seamless.EntryWindow?.Height ?? (ActualHeight > 1 ? ActualHeight : 760));
+        return new Rect(0, 0, Math.Max(1, stageW), Math.Max(1, stageH));
     }
 
     internal Rect ResolveVideoStageTargetRect()

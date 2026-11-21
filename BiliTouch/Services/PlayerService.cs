@@ -229,6 +229,60 @@ public class PlayerService
         return r.IntersectsWith(virtualScreen) && r.Width > 0 && r.Height > 0;
     }
 
+    private static void ApplyPreferredWindowStateAndBounds(PlayerWindow win, bool isAlreadyVisible)
+    {
+        if (Svc.Settings.PlayerDefaultMaximized)
+        {
+            win.WindowState = WindowState.Maximized;
+            return;
+        }
+        if (isAlreadyVisible)
+        {
+            if (win.WindowState == WindowState.Minimized)
+                win.WindowState = WindowState.Normal;
+            return;
+        }
+        win.WindowState = WindowState.Normal;
+        var wa = SystemParameters.WorkArea;
+        double targetW = Math.Min(1280, Math.Max(840, wa.Width - 48));
+        double targetH = Math.Min(760, Math.Max(600, wa.Height - 48));
+        if (win.Width <= 0 || double.IsNaN(win.Width)) win.Width = targetW;
+        if (win.Height <= 0 || double.IsNaN(win.Height)) win.Height = targetH;
+        var w = win.Width;
+        var h = win.Height;
+        if (Application.Current?.MainWindow is { IsVisible: true, WindowState: not WindowState.Minimized } main && !ReferenceEquals(main, win))
+        {
+            try
+            {
+                var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(main);
+                var handle = new System.Windows.Interop.WindowInteropHelper(main).Handle;
+                if (handle != IntPtr.Zero)
+                {
+                    var screen = System.Windows.Forms.Screen.FromHandle(handle).WorkingArea;
+                    wa = new Rect(screen.Left / dpi.DpiScaleX, screen.Top / dpi.DpiScaleY,
+                        screen.Width / dpi.DpiScaleX, screen.Height / dpi.DpiScaleY);
+                }
+                if (main.WindowState == WindowState.Maximized)
+                {
+                    win.WindowStartupLocation = WindowStartupLocation.Manual;
+                    win.Left = wa.Left + Math.Max(0, (wa.Width - w) / 2);
+                    win.Top = wa.Top + Math.Max(0, (wa.Height - h) / 2);
+                    return;
+                }
+                var mainW = main.ActualWidth > 0 ? main.ActualWidth : main.Width;
+                var mainH = main.ActualHeight > 0 ? main.ActualHeight : main.Height;
+                win.WindowStartupLocation = WindowStartupLocation.Manual;
+                win.Left = Math.Clamp(main.Left + (mainW - w) / 2, wa.Left, Math.Max(wa.Left, wa.Right - w));
+                win.Top = Math.Clamp(main.Top + (mainH - h) / 2, wa.Top, Math.Max(wa.Top, wa.Bottom - h));
+                return;
+            }
+            catch { }
+        }
+        win.WindowStartupLocation = WindowStartupLocation.Manual;
+        win.Left = wa.Left + Math.Max(0, (wa.Width - w) / 2);
+        win.Top = wa.Top + Math.Max(0, (wa.Height - h) / 2);
+    }
+
     private PlayerWindow? GetOrCreateWindow(string? seamlessBvid, bool forEmbeddedHost = false)
     {
         // 关键: 正在关闭的窗口不能复用。
@@ -239,29 +293,15 @@ public class PlayerService
         {
             if (forEmbeddedHost) return reuse;
             if (reuse.IsEmbeddedInMain) reuse.DetachFromMainWindow(pausePlayback: false);
-            // ★★★ 2026-11-04 修"一直以来根本没有默认最大化"的**根因**:
-            //
-            //   原来 `WindowState = Maximized` 只写在**新建窗口**那条路径里(见下面)。
-            //   但预热之后, 用户点视频走的是**这条复用路径** —— 这里从头到尾没有设过
-            //   WindowState, 所以窗口以 Normal(1280×760) 打开。
-            //   用户看到的就是"从来没有默认最大化", 而我以为写了就等于生效了。
-            //
-            //   现在: 复用路径也**显式最大化**, 并且放在 Show() 之前(理由同下面那段:
-            //   Show 之后再改会先按 Normal 布局一帧再跳, 那一下闪动正好落在起播画面上)。
             if (!reuse.IsVisible)
             {
                 reuse.ShowActivated = true;
-                reuse.WindowState = WindowState.Maximized;
+                ApplyPreferredWindowStateAndBounds(reuse, isAlreadyVisible: false);
                 if (seamlessBvid != null) reuse.PrepareSeamlessPreShow();
             }
-            else if (reuse.WindowState == WindowState.Minimized)
+            else
             {
-                reuse.WindowState = WindowState.Maximized;
-            }
-            else if (reuse.WindowState != WindowState.Maximized)
-            {
-                // 窗口已经可见但被用户还原过: 仍然按"进详情页默认最大化"的要求拉满
-                reuse.WindowState = WindowState.Maximized;
+                ApplyPreferredWindowStateAndBounds(reuse, isAlreadyVisible: true);
             }
 
             // 位置兜底: 预热若把它摆到了屏幕外(不该发生, 但便宜), 拉回主屏中央
@@ -292,12 +332,8 @@ public class PlayerService
         AttachLifecycle(win);
         _window = win;
         if (forEmbeddedHost) return win;
-        // ★ 进详情页默认最大化(用户要求): 平板/大屏上视频页本来就该占满可用空间。
-        //   这是**窗口最大化**, 不是视频全屏 —— 右栏、控制栏都还在, 用户随时可以还原。
-        //   ★ 必须放在 Show() 之前: Show 之后再改 WindowState 会先按 1280×760 布局一帧再跳,
-        //     那一下闪动正好落在视频起播的画面上。
         win.ShowActivated = true;
-        win.WindowState = WindowState.Maximized;
+        ApplyPreferredWindowStateAndBounds(win, isAlreadyVisible: false);
         if (seamlessBvid != null) win.PrepareSeamlessPreShow();
         return win;
     }

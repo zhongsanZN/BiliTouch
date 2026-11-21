@@ -1516,6 +1516,7 @@ public enum TabletMode
 /// <summary>应用设置</summary>
 public class AppSettings
 {
+    public string? UiAdapterId { get; set; }
     public string? DecoderAdapterId { get; set; }
     public bool ExperimentalVideoEnhancement {get;set;}
     public bool VideoEnhancementActive {get;set;}=true;
@@ -1525,6 +1526,7 @@ public class AppSettings
     public string FontId {get;set;}="System";
     public bool UseWebPlayerLayout { get; set; }
     public bool PortraitVideoOptimization { get; set; }
+    public bool PlayerDefaultMaximized { get; set; }
     public TabletMode TabletMode { get; set; } = TabletMode.Off;
     public bool SurfaceTabletHintDismissed { get; set; }
     public int TouchpadFeedSensitivity { get; set; } = 100;

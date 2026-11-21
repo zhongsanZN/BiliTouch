@@ -49,23 +49,16 @@ public partial class PlayerWindow
         _seamlessOwnerChanged = !ReferenceEquals(Owner, source);
         if (_seamlessOwnerChanged) Owner = source;
 
-        // 捕获源窗口单帧静态快照（限宽 960px，~2~3ms 一次完成）作为非分层 D3D9 硬件加速舞台背景。
-        // ★ 绝不再给 SeamlessWindowSnapshot 外套第二层 BitmapCache(1.0)：ImageBrush(RenderTargetBitmap)
-        //   本身就是静态 GPU 纹理，重复缓存 3040×2108 全屏表面会白白吞掉 25MB 显存与大量填充率。
-        var snapshotBrush = anchor.SourceWindowBackdrop
-            ?? SeamlessTransitionDirector.CaptureWindowSnapshotBrush(source);
-        anchor.SourceWindowBackdrop = snapshotBrush;
+        // 彻底摒弃主窗口截图（CaptureWindowSnapshotBrush）：
+        // 直接使用透明顶层舞台（AllowsTransparency = true, Background = Transparent）透出底下真实的 3K 实时主窗口，
+        // 根治截图造成的"点击顿一下、背景变糊、背景错位"，同时保留详情页容器壳体（SeamlessPlayerShell）与封面同步展开。
+        anchor.SourceWindowBackdrop = null;
         if (SeamlessWindowSnapshot != null)
         {
             SeamlessWindowSnapshot.CacheMode = null;
-            SeamlessWindowSnapshot.Background = snapshotBrush;
-            SeamlessWindowSnapshot.Opacity = snapshotBrush != null ? 1.0 : 0.0;
-            SeamlessWindowSnapshot.Visibility = snapshotBrush != null ? Visibility.Visible : Visibility.Collapsed;
-            SeamlessWindowSnapshot.HorizontalAlignment = HorizontalAlignment.Stretch;
-            SeamlessWindowSnapshot.VerticalAlignment = VerticalAlignment.Stretch;
-            SeamlessWindowSnapshot.Width = SeamlessWindowSnapshot.Height = double.NaN;
-            SeamlessWindowSnapshot.Margin = new Thickness(0);
-            RenderOptions.SetBitmapScalingMode(SeamlessWindowSnapshot, BitmapScalingMode.Linear);
+            SeamlessWindowSnapshot.Background = null;
+            SeamlessWindowSnapshot.Opacity = 0.0;
+            SeamlessWindowSnapshot.Visibility = Visibility.Collapsed;
         }
         if (SeamlessBackdrop != null)
         {
@@ -76,15 +69,13 @@ public partial class PlayerWindow
             SeamlessPlayerShell.Visibility = Visibility.Visible;
         }
 
-        // 若快照可用则使用纯 D3D9 硬件加速非透明无边框窗；仅在极端快照失败时回退透明层
-        var useOpaqueHardware = snapshotBrush != null;
         var stageW = (extent.X - origin.X) / dpi.DpiScaleX;
         var stageH = (extent.Y - origin.Y) / dpi.DpiScaleY;
         var stage = new Window
         {
             WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize,
-            AllowsTransparency = !useOpaqueHardware,
-            Background = useOpaqueHardware ? new SolidColorBrush(Color.FromRgb(0x0A, 0x0C, 0x10)) : Brushes.Transparent,
+            AllowsTransparency = true,
+            Background = Brushes.Transparent,
             ShowInTaskbar = false, ShowActivated = false, Topmost = true,
             Owner = source,
             WindowStartupLocation = WindowStartupLocation.Manual,

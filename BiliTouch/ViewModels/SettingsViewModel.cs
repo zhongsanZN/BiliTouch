@@ -531,6 +531,24 @@ public partial class SettingsViewModel : ObservableObject
     // ★ 0 = 自动(按窗口宽度算, 沿用原有行为); 2~8 = 固定列数。
     // ★ 作用于**所有**卡片页: 首页/历史/收藏/搜索/分区/稍后再看/关注/个人空间 共用同一套卡片墙。
 
+    public IReadOnlyList<GraphicsAdapter> UiAdapters => GraphicsAdapters.UiChoices;
+    public string UiAdapterId
+    {
+        get => Svc.Settings.UiAdapterId;
+        set
+        {
+            var normalized = GraphicsAdapters.NormalizeUiAdapter(value);
+            if (normalized == Svc.Settings.UiAdapterId) return;
+            Svc.Settings.SetUiAdapter(normalized);
+            UiAdapterHint = GraphicsAdapters.ApplyApplicationPreference(normalized);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(UiAdapterStatus));
+        }
+    }
+    public string UiAdapterStatus => GraphicsAdapters.ActiveUiStatusText;
+    private string _uiAdapterHint = "大多数设备跑在核显 / 显示输出显卡上更快更流畅，可避免跨显卡回传掉帧；更改后重启应用生效。";
+    public string UiAdapterHint { get => _uiAdapterHint; private set { _uiAdapterHint = value; OnPropertyChanged(); } }
+
     public IReadOnlyList<GraphicsAdapter> DecoderAdapters => VideoDecode.Choices;
     public string DecoderAdapterId
     {
@@ -544,7 +562,7 @@ public partial class SettingsViewModel : ObservableObject
     public string VideoEnhancementMode{get=>Svc.Settings.VideoEnhancementMode;set{Svc.Settings.UpdateVideoEnhancement(mode:value);OnPropertyChanged();}}
     public bool VideoEnhancementHdr{get=>Svc.Settings.VideoEnhancementHdr;set{Svc.Settings.UpdateVideoEnhancement(hdr:value);OnPropertyChanged();}}
     public IReadOnlyList<GraphicsAdapter> EnhancementAdapters=>GraphicsAdapters.Choices;
-    public string EnhancementAdapterId{get=>Svc.Settings.EnhancementAdapterId;set{if(value==EnhancementAdapterId)return;Svc.Settings.UpdateVideoEnhancement(adapter:value);EnhancementAdapterHint=GraphicsAdapters.ApplyApplicationPreference(value);OnPropertyChanged();}}
+    public string EnhancementAdapterId{get=>Svc.Settings.EnhancementAdapterId;set{if(value==EnhancementAdapterId)return;Svc.Settings.UpdateVideoEnhancement(adapter:value);OnPropertyChanged();}}
     private string _enhancementAdapterHint="自动识别显卡并选择厂商方案；手动显卡偏好重启应用后生效。多块同类显卡由 Windows 最终分配，以播放日志确认。";
     public string EnhancementAdapterHint{get=>_enhancementAdapterHint;private set{_enhancementAdapterHint=value;OnPropertyChanged();}}
     public IReadOnlyList<FontChoice> FontChoices=>AppTypography.Choices;
@@ -587,6 +605,17 @@ public partial class SettingsViewModel : ObservableObject
         {
             if (value == Svc.Settings.PortraitVideoOptimization) return;
             Svc.Settings.SetPortraitVideoOptimization(value);
+            OnPropertyChanged();
+        }
+    }
+
+    public bool PlayerDefaultMaximized
+    {
+        get => Svc.Settings.PlayerDefaultMaximized;
+        set
+        {
+            if (value == Svc.Settings.PlayerDefaultMaximized) return;
+            Svc.Settings.SetPlayerDefaultMaximized(value);
             OnPropertyChanged();
         }
     }

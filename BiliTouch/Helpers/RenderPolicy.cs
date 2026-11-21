@@ -8,6 +8,8 @@ public static class RenderPolicy
 {
     public static void ApplyProcessRenderMode()
     {
+        // 启动时同步界面渲染显卡偏好到 UserGpuPreferences（默认 auto 会自动清理旧版本遗留的强制独显项）
+        Services.GraphicsAdapters.ApplyApplicationPreference(Svc.Settings.UiAdapterId);
         // Default 允许 WPF 在可用时使用硬件，不能保证每台设备都使用 GPU。
         // 采样质量与渲染设备是独立设置，保留各控件自己的画质策略。
         RenderOptions.ProcessRenderMode = Svc.Settings.HardwareAccelerationEnabled
