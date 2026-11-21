@@ -16,7 +16,7 @@
     <AssemblyTitle>BiliTouch</AssemblyTitle>
     <Product>BiliTouch</Product>
     <Authors>中三</Authors>
-    <Version>0.3.13</Version>
+    <Version>0.3.14</Version>
     <TieredCompilation>true</TieredCompilation>
     <TieredPGO>true</TieredPGO>
     <!-- 按目标 RID/Platform 选择架构：默认 x64；指定 -r win-arm64 或 Platform=ARM64 时切换原生 ARM64（面向 ARM 版 Surface） -->
@@ -51,6 +51,11 @@
     <VlcWindowsArm64Enabled Condition="'$(IsArm64Target)' == 'true'">true</VlcWindowsArm64Enabled>
     <VlcWindowsArm64Enabled Condition="'$(IsArm64Target)' != 'true'">false</VlcWindowsArm64Enabled>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 在 WPF 初始化前选择 WM_POINTER，避免触屏在旧输入栈中只剩鼠标兼容事件。 -->
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Input.Stylus.EnablePointerSupport" Value="true" />
+  </ItemGroup>
 
   <!--
     UseWindowsForms 会向每个文件注入 System.Windows.Forms / System.Drawing 全局 using，

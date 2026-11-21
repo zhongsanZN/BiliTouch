@@ -90,6 +90,8 @@ BiliTouch 的改进重点，是触摸屏、触控板和日常浏览的操作体�
 
 前往 [GitHub 最新发行](https://github.com/zhongsanZN/BiliTouch/releases/latest) 下载，旧版本见 [版本归档](https://github.com/zhongsanZN/BiliTouch/releases)。
 
+0.3.14 修复部分 Windows 设备上触屏手势退化成鼠标输入的问题。详见 [0.3.14 更新说明](docs/release-notes/v0.3.14.md)。
+
 | 发行包 | 适合的设备与使用方式 |
 | :--- | :--- |
 | **`BiliTouch-版本号-setup.exe`（Windows x64）** | Intel / AMD 64 位电脑与平板；检测 .NET 10+ 桌面运行时，缺少时自动引导下载 |

@@ -4,11 +4,13 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Interop;
 using BiliTouch;
 using BiliTouch.Helpers;
 using BiliTouch.Models;
@@ -42,6 +44,7 @@ internal static class AuditFixesTests
         TestLiveRoomMutePreservation(check);
         TestHorizontalSwipeHostContract(check);
         TestPrecisionTouchpadContactMotion(check);
+        TestNativeTouchFeedbackFollowsWindowSource(check);
         TestDashRemuxerCttsLeadingZeros(check);
         TestDynamicLikeIconStability(check);
         TestVideoTailEndingAndElstPatch(check);
@@ -51,6 +54,74 @@ internal static class AuditFixesTests
         TestSeamlessPortraitAndEnhancementInQualityPopup(check);
         TestMacroArchitectureAndRuntimeHealth(check);
     }
+
+    private static void TestNativeTouchFeedbackFollowsWindowSource(Action<bool, string> check)
+    {
+        const uint contactVisualization = 0x2018;
+        const uint touchContactFeedback = 1;
+        const int settingChanged = 0x001A;
+        check(SystemParametersInfo(contactVisualization, 0, out var setting, 0),
+            "Windows contact visualization preference is readable");
+        int expected = setting != 0 ? 1 : 0;
+
+        var surface = new Border();
+        NativeTouchFeedback.FollowSource(surface);
+        var window = new FluentWindow
+        {
+            Content = surface, Width = 100, Height = 100, ShowInTaskbar = false, ShowActivated = false
+        };
+        var overlay = new Window
+        {
+            WindowStyle = WindowStyle.None, AllowsTransparency = true, Width = 100, Height = 100,
+            ShowInTaskbar = false, ShowActivated = false
+        };
+        try
+        {
+            var hwnd = new WindowInteropHelper(window).EnsureHandle();
+            CheckFeedback(hwnd, "main window uses the Windows contact preference");
+
+            window.Show();
+            window.Content = null;
+            overlay.Content = surface;
+            overlay.Show();
+            overlay.UpdateLayout();
+            var overlayHwnd = new WindowInteropHelper(overlay).Handle;
+            CheckFeedback(overlayHwnd, "moving the touch surface applies the preference to the overlay HWND");
+
+            int opposite = 1 - expected;
+            check(SetWindowFeedbackSetting(overlayHwnd, touchContactFeedback, 0, sizeof(int), in opposite),
+                "fixture can change the overlay's per-window contact flag");
+            SendMessage(overlayHwnd, settingChanged, IntPtr.Zero, IntPtr.Zero);
+            CheckFeedback(overlayHwnd, "an open overlay resyncs its contact preference on WM_SETTINGCHANGE");
+        }
+        finally
+        {
+            overlay.Close();
+            window.Close();
+        }
+
+        void CheckFeedback(IntPtr hwnd, string message)
+        {
+            uint size = sizeof(int);
+            bool configured = GetWindowFeedbackSetting(hwnd, touchContactFeedback, 0, ref size, out var actual);
+            check(configured && actual == expected, message);
+        }
+    }
+
+    [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SystemParametersInfo(uint action, uint parameter, out uint value, uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowFeedbackSetting(IntPtr hwnd, uint feedback, uint flags, ref uint size, out int enabled);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowFeedbackSetting(IntPtr hwnd, uint feedback, uint flags, uint size, in int enabled);
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
 
     private static void TestRateLimiterCooldownNoStampede(Action<bool, string> check)
     {

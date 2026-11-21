@@ -9,6 +9,7 @@
     <ApplicationManifest>../../BiliTouch/app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Input.Stylus.EnablePointerSupport" Value="true" />
     <ProjectReference Include="../../BiliTouch/BiliTouch.csproj" />
   </ItemGroup>
 </Project>

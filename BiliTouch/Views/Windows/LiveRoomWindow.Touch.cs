@@ -12,6 +12,7 @@ public partial class LiveRoomWindow
     private long _liveLastTap;
     private void InitializeLiveTouch()
     {
+        NativeTouchFeedback.FollowSource(VideoOverlay);
         Stylus.SetIsPressAndHoldEnabled(VideoOverlay, false);
         Stylus.SetIsFlicksEnabled(VideoOverlay, false);
         VideoOverlay.PreviewTouchDown += (_, e) => {

@@ -161,6 +161,7 @@ public class FluentWindow : Window
             {
                 _wndProcSource = HwndSource.FromHwnd(handle);
                 _wndProcSource?.AddHook(WndProc);
+                if (_wndProcSource is { } source) NativeTouchFeedback.Attach(source);
             }
         }
         catch

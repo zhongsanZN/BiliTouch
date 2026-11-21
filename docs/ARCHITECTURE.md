@@ -37,6 +37,7 @@ BiliTouch/
 - **双呈现路径与单窗口双宿主内嵌**：支持传统原生 `HwndHost` 与低开销 `vmem`（`GpuVideoPresenter` D3D11→D3D9 共享纹理零拷贝合成）；支持按显卡偏好选择硬件解码与厂商超分；桌面竖屏视频提供可选并排优化（左视频 + 右评论 + 最右信息栏）；平板竖屏态（`Responsive.Posture == TabletPortrait`）通过单树双宿主将 `PlayerWindow.RootGrid` 与 `LiveRoomWindow.Root` 直接挂载到 `MainWindow.EmbeddedPlayerHost` 实现单窗口安卓式三段播放与全屏半屏评论抽屉。
 
 ### 2.4 输入、横滑、响应式姿态与渲染统一基元
+- **触屏与触控笔**：在 WPF 初始化前启用 `WM_POINTER` 输入栈。手势处理使用 WPF 的触摸和触笔事件，标准控件仍可接收框架生成的兼容点击。
 - **响应式宽度与平板姿态**：`Helpers/Responsive.cs` 维护窗口级 `WidthClass` 与正交 `LayoutPosture`（`Desktop` / `TabletPortrait`，默认关闭，带宽高比与宽度迟滞防抖，`DeviceProfile` 识别 Surface 一次性引导），驱动 `MainWindow` 底部导航壳、两列卡片墙及各页面竖屏重排；`FluentWindow` 监听 `DisplaySettingsChanged` 响应平板物理旋转。
 - **横滑统一内核**：`Helpers/IHorizontalSwipeHost.cs` 统一主窗口触控板/横向滚轮路由；`Helpers/HorizontalSwipePhysics.cs` 提供全站唯一的非线性橡胶阻尼、3/8 切页阈值与冻结 `CubicEase` 曲线。
 - **安全与可靠性基元**：

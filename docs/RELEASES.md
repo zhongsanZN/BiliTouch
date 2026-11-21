@@ -1,11 +1,14 @@
 # 版本归档索引
 
-当前推荐版本：[0.3.11 安装包 (x64 · Intel/AMD)](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.11/BiliTouch-0.3.11-setup.exe) · [0.3.11 安装包 (ARM64 · Surface 等 ARM 设备)](https://github.com/zhongsanZN/BiliTouch/releases/download/v0.3.11/BiliTouch-0.3.11-setup-arm64.exe)。[全部 Release](https://github.com/zhongsanZN/BiliTouch/releases)。
+[下载最新发行版](https://github.com/zhongsanZN/BiliTouch/releases/latest) · [查看全部发行版](https://github.com/zhongsanZN/BiliTouch/releases)。
 
 下载附件保留 x64 与 ARM64 两份 setup.exe；源码见各版本 Git 标签和 GitHub 自动提供的源码下载。便携包与构建验证文件留在本机归档。
 
 | 版本 | 归档状态 |
 | --- | --- |
+| 0.3.14 | 修复部分 Windows 设备上触屏手势退化成鼠标输入的问题，主窗口及点播、直播触控浮层同步 Windows 的触摸指示器设置。[更新说明](release-notes/v0.3.14.md) |
+| 0.3.13 | 视频详情过渡直接呈现主窗口背景，新增界面渲染显卡选择和详情页默认最大化设置。[更新说明](release-notes/v0.3.13.md) |
+| 0.3.12 | 优化详情页展开与收回、标签切换及封面加载。[更新说明](release-notes/v0.3.12.md) |
 | 0.3.11 | 当前版本：根治跳转进度后概率触发的音频连续断音/异响（移除 `VlcCore` 中强制 `--audio-resampler=speex_resampler --speex-resampler-quality=10`，消除 DASH 双流在 seek/变速漂移补偿下因 speex 滤波表重建阻塞引发的无限 `flushing buffers` + `[wasapi] reset` 死循环，实测同组 10 次跳转连续 flush 从 64 次/698 丢包降至 0 次/0 丢包）；修复跳转进度与倍速/退出倍速后的小段音频丢失（取消常规 seek 时的 `MuteForSeek()` 人为 200~500ms 静音窗口、新增到位音量对齐与变速音轨自愈检查，并将 `BufferPolicy` DASH 估算码率回调至 `2.5 Mbps` 缩短退倍速静音空洞）；补全完整原生字幕功能（接入 B 站 `/x/player/wbi/v2` CC/AI 字幕轨道、原生底部避让渲染层、控制栏「字幕」轨道切换与字号调节弹层、本地外挂 `.srt/.vtt` 自动挂载与内嵌 SPU 支持、快捷键 `C`）；键盘右方向键 `→` 升级为短按 +5s（`Shift+→` +30s）、长按临时倍速快进、松手/失焦自动恢复原倍速；继续同步提供原生 x64 与 ARM64 双架构安装器 |
 | 0.3.10 | 历史版本：彻底根治直播间高密度弹幕严重卡顿（直播间全面接入 `VmemVideoView` 硬件合成消除 `VideoView` 分层覆盖窗整窗 GPU→CPU 回读与 VSync 掉至 ~5 FPS 问题；侧栏实时弹幕重构为单节点 DirectWrite 直绘控件 `LiveChatRow` 并使用尾部可见槽位原地 `Replace` 与 120ms 合并刷新，实现稳态 0 容器重建、单批布局从 `35–48ms` 降至 `3.86ms`、UI 线程占比降 24 倍；直播画面弹幕改为稳态常驻池与每帧最多 3 条平滑入场；WebSocket 接收层新增 `ArrayPool` 解压与 UTF-8 噪音包零分配预筛，跳过 80–90% 礼物/进场/下播大包 JSON 解析）；继续同步提供原生 x64 与 ARM64 双架构安装器 |
 | 0.3.9 | 历史版本：高密弹幕渲染与调度性能大幅优化（`OutlinedDanmakuText` 改为 DirectWrite 硬件字形缓存四向描边并消除高分屏双倍构建与矢量路径三角化、点播与直播弹幕引入控件与槽位对象池实现稳态零分配、为在飞弹幕挂载共享冻结 `BitmapCache` 实现单次栅格化 GPU 纹理平移、移除同步 `Measure` 与直播弹幕 `DropShadowEffect`、新增零分配字宽估算与防追尾泳道校验并在渲染帧内平滑补发消除 4Hz 攒批卡顿）；继续同步提供原生 x64 与 ARM64 双架构安装器 |

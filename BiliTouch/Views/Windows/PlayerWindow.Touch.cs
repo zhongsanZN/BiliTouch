@@ -38,6 +38,7 @@ public partial class PlayerWindow
 
     private void InitializeTouch()
     {
+        NativeTouchFeedback.FollowSource(VideoAreaRoot);
         Stylus.SetIsPressAndHoldEnabled(VideoAreaRoot, false);
         Stylus.SetIsFlicksEnabled(VideoAreaRoot, false);
         VideoAreaRoot.PreviewTouchDown += OnVideoTouchDown;
