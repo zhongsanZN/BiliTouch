@@ -39,6 +39,11 @@ public partial class BangumiCard : UserControl
     {
         InitializeComponent();
         Loaded += OnLoaded;
+        Unloaded += (_, _) => { if (_coverScale != null) HyperMotion.Cancel(_coverScale); };
+        PreviewMouseLeftButtonDown += (_, _) => AnimateCoverScale(0.958, isPress: true);
+        PreviewMouseLeftButtonUp += (_, _) => AnimateCoverScale(IsMouseOver ? 1.04 : 1.0, isRelease: true);
+        PreviewTouchDown += (_, _) => AnimateCoverScale(0.958, isPress: true);
+        PreviewTouchUp += (_, _) => AnimateCoverScale(1.0, isRelease: true);
     }
 
     private BangumiItem? Current => DataContext as BangumiItem;
@@ -73,15 +78,18 @@ public partial class BangumiCard : UserControl
 
     private void OnMouseLeave(object sender, MouseEventArgs e) => AnimateCoverScale(1);
 
-    private void AnimateCoverScale(double zoom)
+    private void AnimateCoverScale(double zoom, bool isPress = false, bool isRelease = false)
     {
         if (_coverScale == null) return;
-        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
-        var ms = TimeSpan.FromMilliseconds(180);
-        _coverScale.BeginAnimation(ScaleTransform.ScaleXProperty,
-            new DoubleAnimation(_coverScale.ScaleX, zoom, ms) { EasingFunction = ease });
-        _coverScale.BeginAnimation(ScaleTransform.ScaleYProperty,
-            new DoubleAnimation(_coverScale.ScaleY, zoom, ms) { EasingFunction = ease });
+        var spec = isPress
+            ? HyperMotion.TactilePress
+            : (isRelease ? HyperMotion.TactileRelease : HyperMotion.HoverLift);
+        HyperMotion.SpringTo(_coverScale, "Scale", _coverScale.ScaleX, zoom, spec, v =>
+        {
+            var s = Math.Max(0.5, v);
+            _coverScale.ScaleX = s;
+            _coverScale.ScaleY = s;
+        });
     }
 
     private void OnClick(object sender, MouseButtonEventArgs e)

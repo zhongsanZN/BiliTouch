@@ -14,14 +14,25 @@ public partial class MessagesPage : UserControl
  private bool _scrollScheduled;
  private bool _tabletShowingThread;
  private Window? _messageHost;
+ private int _lastChannelIndex = -1;
+ private readonly Dictionary<int, double> _channelScrollOffsets = new();
+ private static int ChannelIndexOf(MessagesViewModel? vm)
+  => vm == null ? -1 : Array.IndexOf(vm.Channels, vm.Channel);
+
  public MessagesPage()
  {
   InitializeComponent();
-        ModuleGestures = new TabNavigationGestures(this,ModuleContent,ModuleTabs,CreatePeerPreview);
+        ModuleGestures = new TabNavigationGestures(this,ModuleContent,ModuleTabs,CreatePeerPreview,SyncPeerScrollOffset);
+        NotificationScroll.ScrollChanged += (_, _) =>
+        {
+         var idx = ChannelIndexOf(Vm);
+         if (idx > 0 && _lastChannelIndex == idx && !ModuleGestures.IsInteracting)
+          _channelScrollOffsets[_lastChannelIndex] = NotificationScroll.VerticalOffset;
+        };
         Helpers.ModuleGestures.Install(this,()=>Vm?.LoadAsync()??Task.CompletedTask,hintHost:ModuleContent,canPull:sv=>sv!=null && !ReferenceEquals(sv,MsgScroll));
   ContactSelection.Install(SessionScroll,item=>{if(item is MsgSession session)_=OpenSessionAsync(session);});
   DraftBox.GotFocus+=(_,_)=>DraftBox.BringIntoView();
-  DataContextChanged+=(_,e)=>{if(e.OldValue is MessagesViewModel old){old.Messages.CollectionChanged-=OnMessagesChanged;old.ChannelCacheUpdated-=OnChannelCacheUpdated;}if(e.NewValue is MessagesViewModel vm){vm.Messages.CollectionChanged+=OnMessagesChanged;vm.ChannelCacheUpdated+=OnChannelCacheUpdated;}ModuleGestures.InvalidatePeers();};
+  DataContextChanged+=(_,e)=>{if(e.OldValue is MessagesViewModel old){old.Messages.CollectionChanged-=OnMessagesChanged;old.ChannelCacheUpdated-=OnChannelCacheUpdated;old.PropertyChanged-=OnVmPropertyChanged;}if(e.NewValue is MessagesViewModel vm){vm.Messages.CollectionChanged+=OnMessagesChanged;vm.ChannelCacheUpdated+=OnChannelCacheUpdated;vm.PropertyChanged+=OnVmPropertyChanged;_lastChannelIndex=ChannelIndexOf(vm);}ModuleGestures.InvalidatePeers();};
   Loaded+=async(_,_)=>{Responsive.PostureChanged-=OnMessagesPostureChanged;Responsive.PostureChanged+=OnMessagesPostureChanged;ApplyTabletLayout(Responsive.GetPosture(this));Svc.MessageUnread.PropertyChanged+=OnUnreadChanged;_messageHost=Window.GetWindow(this);if(_messageHost!=null)_messageHost.Activated+=OnMessageHostActivated;if(Vm!=null)await Vm.EnsureLoadedAsync();if(Svc.MessageUnread.IsStarted)await Svc.MessageUnread.RefreshAsync(true);};
   Unloaded+=(_,_)=>{Responsive.PostureChanged-=OnMessagesPostureChanged;Svc.MessageUnread.PropertyChanged-=OnUnreadChanged;if(_messageHost!=null)_messageHost.Activated-=OnMessageHostActivated;_messageHost=null;};
  }
@@ -80,6 +91,31 @@ public partial class MessagesPage : UserControl
  }
 
  private void OnChannelCacheUpdated() => Dispatcher.BeginInvoke(new Action(() => ModuleGestures.InvalidatePeers()));
+
+ private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+ {
+  if (Vm == null || e.PropertyName != nameof(MessagesViewModel.Channel)) return;
+  var nextIndex = ChannelIndexOf(Vm);
+  if (_lastChannelIndex > 0 && _lastChannelIndex != nextIndex)
+   _channelScrollOffsets[_lastChannelIndex] = NotificationScroll.VerticalOffset;
+  _lastChannelIndex = nextIndex;
+  if (_lastChannelIndex > 0)
+  {
+   var targetOffset = _channelScrollOffsets.GetValueOrDefault(_lastChannelIndex, 0.0);
+   NotificationScroll.ScrollToVerticalOffset(targetOffset);
+   Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, new Action(() =>
+   {
+    if (ChannelIndexOf(Vm) == _lastChannelIndex)
+     NotificationScroll.ScrollToVerticalOffset(_channelScrollOffsets.GetValueOrDefault(_lastChannelIndex, 0.0));
+   }));
+  }
+ }
+
+ private void SyncPeerScrollOffset(int targetIndex, UIElement peer)
+ {
+  if (targetIndex > 0 && VisualTreeUtil.FindDescendant<ScrollViewer>(peer) is { } sv)
+   sv.ScrollToVerticalOffset(_channelScrollOffsets.GetValueOrDefault(targetIndex, 0.0));
+ }
 
  private UIElement CreatePeerPreview(int targetIndex)
  {
@@ -207,12 +243,14 @@ public partial class MessagesPage : UserControl
     });
     return root;
    }
-   var stack = new StackPanel { Margin = new Thickness(24, 8, 24, 20) };
-   foreach (var item in cached.Take(8))
+   var tablet = Responsive.GetPosture(this) == LayoutPosture.TabletPortrait;
+   var stack = new StackPanel();
+   foreach (var item in cached.Take(24))
    {
     var row = new Grid();
     row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) });
     row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+    row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
     var avatar = new Border
     {
      Width = 40,
@@ -262,6 +300,21 @@ public partial class MessagesPage : UserControl
     Grid.SetColumn(textStack, 1);
     row.Children.Add(textStack);
 
+    // 与真实 NotificationChannelGrid 严格一致的第 3 列「查看」按钮，避免切换落位后按钮弹出导致正文宽度重排换行
+    if (item.CanOpen)
+    {
+     var btn = new Button
+     {
+      Content = "查看",
+      VerticalAlignment = VerticalAlignment.Center,
+      IsHitTestVisible = false,
+      Focusable = false
+     };
+     if (TryFindResource("SubtleButtonStyle") is Style btnStyle) btn.Style = btnStyle;
+     Grid.SetColumn(btn, 2);
+     row.Children.Add(btn);
+    }
+
     stack.Children.Add(new Border
     {
      Background = TryFindResource("CardBackgroundBrush") as System.Windows.Media.Brush,
@@ -273,7 +326,17 @@ public partial class MessagesPage : UserControl
      Child = row
     });
    }
-   root.Children.Add(stack);
+   // 与真实 NotificationChannelGrid 严格一致的 ScrollViewer 与 Margin，杜绝落位后滚动条突然弹出挤窄重排
+   var previewScroll = new ScrollViewer
+   {
+    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+    Margin = tablet ? new Thickness(12, 8, 12, 12) : new Thickness(24, 8, 24, 20),
+    IsHitTestVisible = false,
+    Focusable = false,
+    Content = stack
+   };
+   previewScroll.ScrollToVerticalOffset(_channelScrollOffsets.GetValueOrDefault(targetIndex, 0.0));
+   root.Children.Add(previewScroll);
    return root;
   }
 

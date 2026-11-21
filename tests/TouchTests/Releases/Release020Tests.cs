@@ -35,7 +35,7 @@ internal static class Release020Tests
   try{
    SkinService.Instance.Configure(SkinService.StarParty,true,true);Svc.Theme.SetMode(AppTheme.Dark);
    var vm=new SettingsViewModel();var page=new SettingsPage{DataContext=vm};window.Content=page;window.Show();Pump(200);
-   var fonts=Desc<ComboBox>(page).Single(c=>c.DisplayMemberPath=="Name" && ReferenceEquals(c.ItemsSource,AppTypography.Choices));
+   var fonts=Desc<ComboBox>(page).First(c=>c.IsVisible && c.DisplayMemberPath=="Name" && ReferenceEquals(c.ItemsSource,AppTypography.Choices));
    foreach(var font in AppTypography.Choices){fonts.SelectedValue=font.Id;Pump(70);check(Desc<TextBlock>(fonts).Any(t=>t.Text==font.Name),"font picker displays the font name after selecting "+font.Id);}
    var tabs=Desc<RadioButton>(page).Where(b=>b.GroupName=="SettingsTab").ToArray();check(tabs.Length==4 && tabs.All(t=>t.ActualHeight>=36 && t.ActualHeight<=44),"four settings underline tabs fit inside the header without vertical clipping");
    Save(page,Path.Combine(output,"release020-settings.png"));
@@ -47,6 +47,7 @@ internal static class Release020Tests
    check(new[]{"action_like","action_coin","action_coins","action_favorite","action_puzzle"}.All(n=>SkinService.Instance.Image(n).PixelWidth>0),"all five requested original theme assets are packaged and readable");
    check(GraphicsAdapters.All.Count>0 && GraphicsAdapters.All.All(a=>a.Id.Length>0 && a.Name.Length>0),"DXGI enumerates named physical display adapters with stable IDs");
    Console.WriteLine("GPU inventory: "+string.Join(" | ",GraphicsAdapters.All.Select(a=>a.Name+" / "+a.Vendor)));
+   settings.SetVmemRenderer(false);
    settings.UpdateVideoEnhancement(experimental:false,active:true,adapter:"auto",mode:"自动厂商增强",hdr:false);
    player=new PlayerWindow{Width=1240,Height=820};player.Show();Pump(120);
    check(((Button)player.FindName("BtnEnhancement")).Visibility==Visibility.Collapsed,"enhancement controls stay hidden until the experimental setting is enabled");
@@ -56,7 +57,13 @@ internal static class Release020Tests
    settings.UpdateVideoEnhancement(experimental:true,active:true);
    Until(()=>!Field<bool>(player,"_enhancementSwitching") && Field<LibVLCSharp.Shared.MediaPlayer>(player,"_mp").IsPlaying,25000);
    var enhanced=Field<LibVLCSharp.Shared.MediaPlayer>(player,"_mp");enhanced.Volume=0;
-   check(!ReferenceEquals(enhanced,normal) && ((Button)player.FindName("BtnEnhancement")).IsVisible,"turning enhancement on replaces the native player and reveals its real control");
+   var qualityPopup=(Popup)player.FindName("QualityPopup");
+   var enhanceBtn=(Button)player.FindName("BtnEnhancement");
+   qualityPopup.IsOpen=true;
+   Until(()=>enhanceBtn.IsVisible,1500);
+   var enhanceVisible=enhanceBtn.IsVisible;
+   qualityPopup.IsOpen=false;Pump(30);
+   check(!ReferenceEquals(enhanced,normal) && enhanceVisible,"turning enhancement on replaces the native player and reveals its real control in the quality popup");
    check(EnhancementProfile.Current.Options.Contains("--d3d11-upscale-mode=super") || EnhancementProfile.Current.Scaler=="processor","enhancement is configured with actual instance-level scaler options");
    Until(()=>enhanced.IsPlaying && enhanced.Time>0,25000);
    var core=Field<LibVLCSharp.Shared.LibVLC>(player,"_libVLC");Until(()=>!VideoEnhancement.Status(core).StartsWith("已请求"),15000);Console.WriteLine("Enhancement runtime: "+VideoEnhancement.Status(core));
@@ -86,9 +93,9 @@ internal static class Release020Tests
    check(body.TranslatePoint(new Point(),page).Y==112,"all search result kinds start below the same 112 DIP header at "+width);
    var cb=card.TransformToAncestor(page).TransformBounds(new Rect(card.RenderSize));var tb=tabs.TransformToAncestor(page).TransformBounds(new Rect(tabs.RenderSize));
    check(!cb.IntersectsWith(tb),"collapsed search input does not overlap the four category tabs at "+width);
-   Call(page,"OpenCard");Pump(420);check(!tabs.IsHitTestVisible && tabs.Opacity==0,"expanded search history cannot overlap active category buttons");
+   Call(page,"OpenCard");Until(()=>!tabs.IsHitTestVisible && tabs.Opacity==0,2000);check(!tabs.IsHitTestVisible && tabs.Opacity==0,"expanded search history cannot overlap active category buttons");
    Save(page,Path.Combine(output,"release020-search-open-"+width+".png"));
-   Call(page,"CloseCard");Pump(500);check(((Border)page.FindName("SearchContentBox")).Visibility==Visibility.Collapsed && tabs.Opacity==1,"collapse removes the history border and restores category buttons");
+   Call(page,"CloseCard");Until(()=>((Border)page.FindName("SearchContentBox")).Visibility==Visibility.Collapsed && tabs.Opacity==1,2000);check(((Border)page.FindName("SearchContentBox")).Visibility==Visibility.Collapsed && tabs.Opacity==1,"collapse removes the history border and restores category buttons");
    Save(page,Path.Combine(output,"release020-search-closed-"+width+".png"));
   }
   window.Width=1180;

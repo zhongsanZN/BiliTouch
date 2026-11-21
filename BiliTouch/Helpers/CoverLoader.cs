@@ -223,6 +223,56 @@ public static class CoverLoader
     static CoverLoader()
     {
         Http.DefaultRequestHeaders.UserAgent.ParseAdd(HttpDefaults.UserAgent);
+        Http.DefaultRequestHeaders.Referrer = new Uri("https://www.bilibili.com/");
+    }
+
+    private static bool HasValidCacheFile(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists) return false;
+            if (info.Length >= 64) return true;
+            try { info.Delete(); } catch { }
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static async Task<byte[]?> DownloadCoverBytesAsync(string url, string cacheFile)
+    {
+        await DownloadSlots.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (HasValidCacheFile(cacheFile)) return null;
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                try
+                {
+                    var bytes = await Http.GetByteArrayAsync(url).ConfigureAwait(false);
+                    if (bytes is { Length: >= 64 })
+                    {
+                        try { await AtomicFile.WriteAllBytesAsync(cacheFile, bytes).ConfigureAwait(false); } catch { }
+                        return bytes;
+                    }
+                }
+                catch
+                {
+                    if (attempt == 0)
+                    {
+                        try { await Task.Delay(140).ConfigureAwait(false); } catch { }
+                    }
+                }
+            }
+            return null;
+        }
+        finally
+        {
+            DownloadSlots.Release();
+        }
     }
 
     /// <summary>加载图片。decodeWidth>0 时按目标像素宽解码(大幅降低内存),
@@ -350,28 +400,12 @@ public static class CoverLoader
                 ? url
                 : Path.Combine(AppPaths.CacheDir, Hashing.Md5Hex(url) + ".jpg");
             byte[]? downloaded = null;
-            if (!isLocalFile && !File.Exists(cacheFile))
+            if (!isLocalFile && !HasValidCacheFile(cacheFile))
             {
-                await DownloadSlots.WaitAsync().ConfigureAwait(false);
-                try
-                {
-                    if (!File.Exists(cacheFile))
-                    {
-                        downloaded = await Http.GetByteArrayAsync(url).ConfigureAwait(false);
-                        await AtomicFile.WriteAllBytesAsync(cacheFile, downloaded).ConfigureAwait(false);
-                    }
-                }
-                catch
-                {
-                    // 写盘失败不等于取图失败，下面仍可走内存字节解码
-                }
-                finally
-                {
-                    DownloadSlots.Release();
-                }
+                downloaded = await DownloadCoverBytesAsync(url, cacheFile).ConfigureAwait(false);
             }
 
-            var haveFile = File.Exists(cacheFile);
+            var haveFile = isLocalFile ? File.Exists(cacheFile) : HasValidCacheFile(cacheFile);
             if (!haveFile && downloaded == null) return default;
 
             AnimatedBitmap? anim = null;
@@ -404,6 +438,31 @@ public static class CoverLoader
             finally
             {
                 DecodeSlots.Release();
+            }
+
+            // 磁盘旧缓存若已损坏并被 FromFile 自动清理，立即回退到网络重拉一次并走内存字节解码，避免该封面永久空白
+            if (anim == null && img == null && downloaded == null && !isLocalFile && !HasValidCacheFile(cacheFile))
+            {
+                downloaded = await DownloadCoverBytesAsync(url, cacheFile).ConfigureAwait(false);
+                if (downloaded != null)
+                {
+                    await DecodeSlots.WaitAsync().ConfigureAwait(false);
+                    try
+                    {
+                        bool abandoned;
+                        lock (Lock) abandoned = inFlight.IsAllAbandoned();
+                        if (!abandoned)
+                        {
+                            if (AnimatedImageDecoder.IsPotentiallyAnimated(downloaded))
+                                anim = AnimatedImageDecoder.TryDecodeBytes(downloaded, decodeWidth);
+                            img = anim == null ? FromBytes(downloaded, decodeWidth) : null;
+                        }
+                    }
+                    finally
+                    {
+                        DecodeSlots.Release();
+                    }
+                }
             }
 
             if (anim != null)
@@ -521,29 +580,13 @@ public static class CoverLoader
                 ? url
                 : Path.Combine(AppPaths.CacheDir, Hashing.Md5Hex(url) + ".jpg");
             byte[]? downloaded = null;
-            if (!isLocalFile && !File.Exists(cacheFile))
+            if (!isLocalFile && !HasValidCacheFile(cacheFile))
             {
-                await DownloadSlots.WaitAsync().ConfigureAwait(false);
-                try
-                {
-                    if (!File.Exists(cacheFile))
-                    {
-                        downloaded = await Http.GetByteArrayAsync(url).ConfigureAwait(false);
-                        await AtomicFile.WriteAllBytesAsync(cacheFile, downloaded).ConfigureAwait(false);
-                    }
-                }
-                catch
-                {
-                    // 写盘失败**不等于**取图失败 —— 下面的内存兜底会处理; 真没字节才返回 null
-                }
-                finally
-                {
-                    DownloadSlots.Release();
-                }
+                downloaded = await DownloadCoverBytesAsync(url, cacheFile).ConfigureAwait(false);
             }
 
             BitmapImage? img = null;
-            var haveFile = File.Exists(cacheFile);
+            var haveFile = isLocalFile ? File.Exists(cacheFile) : HasValidCacheFile(cacheFile);
             if (haveFile || downloaded != null)
             {
                 await DecodeSlots.WaitAsync().ConfigureAwait(false);
@@ -564,9 +607,23 @@ public static class CoverLoader
                     DecodeSlots.Release();
                 }
             }
-            else
+            if (img == null && downloaded == null && !isLocalFile && !HasValidCacheFile(cacheFile))
             {
-                img = null;
+                downloaded = await DownloadCoverBytesAsync(url, cacheFile).ConfigureAwait(false);
+                if (downloaded != null)
+                {
+                    await DecodeSlots.WaitAsync().ConfigureAwait(false);
+                    try
+                    {
+                        bool abandoned;
+                        lock (Lock) abandoned = inFlight.IsAllAbandoned();
+                        if (!abandoned) img = FromBytes(downloaded, decodeWidth);
+                    }
+                    finally
+                    {
+                        DecodeSlots.Release();
+                    }
+                }
             }
             if (img == null) return null;
 
@@ -854,6 +911,37 @@ public static class Cover
         DependencyProperty.RegisterAttached("DecodedPixelWidth", typeof(int), typeof(Cover),
             new PropertyMetadata(0));
 
+    private static readonly DependencyProperty LoadGenerationProperty =
+        DependencyProperty.RegisterAttached("LoadGeneration", typeof(int), typeof(Cover),
+            new PropertyMetadata(0));
+
+    private static readonly DependencyProperty IsLoadingProperty =
+        DependencyProperty.RegisterAttached("IsLoading", typeof(bool), typeof(Cover),
+            new PropertyMetadata(false));
+
+    private static readonly DependencyProperty LastAttemptTickProperty =
+        DependencyProperty.RegisterAttached("LastAttemptTick", typeof(long), typeof(Cover),
+            new PropertyMetadata(0L));
+
+    /// <summary>
+    /// 视口重排/滚动时的封面自愈入口：若某张已实现卡片曾因瞬时网络抖动或中途回收打断导致封面仍为空，
+    /// 且当前没有在途加载任务，自动补起一次加载（带 1.2s 冷却防失败自旋）。
+    /// </summary>
+    internal static void EnsureLoaded(Border? border)
+    {
+        if (border == null || border.Background != null) return;
+        if ((bool)border.GetValue(IsLoadingProperty)) return;
+        var url = GetSource(border);
+        if (string.IsNullOrWhiteSpace(url)) return;
+        if (TryApplyCached(border)) return;
+        var now = Environment.TickCount64;
+        var lastAt = (long)border.GetValue(LastAttemptTickProperty);
+        if (now - lastAt < 1200) return;
+        var gen = (int)border.GetValue(LoadGenerationProperty) + 1;
+        border.SetValue(LoadGenerationProperty, gen);
+        _ = LoadAsync(border, url, gen);
+    }
+
     /// <summary>显示需求(物理像素)超过已解码宽度这么多倍才重解码 —— 量化档位本身有 0~40% 富余,
     /// 阈值太小会在档位内反复重解码。</summary>
     public const double RedecodeFactor = 1.12;
@@ -875,7 +963,11 @@ public static class Cover
         //   解码可能还排在 DecodeSlots 里 —— 打上标记, 轮到它时直接跳过, 名额让给视口内的图。
         //   (换源后 LoadAsync 会 new 一个新的标记, 两次请求各算各的。)
         AnimatedImagePlayer.Detach(border);
+        ViewportImageQueue.Cancel(border);
         CoverLoader.AbandonInterest(border);
+        var gen = (int)border.GetValue(LoadGenerationProperty) + 1;
+        border.SetValue(LoadGenerationProperty, gen);
+        border.SetValue(IsLoadingProperty, false);
         border.SetValue(DecodedPixelWidthProperty, 0);
         var url = e.NewValue as string;
         // Recycled containers must not display the previous video's cover while waiting.
@@ -894,7 +986,7 @@ public static class Cover
         }
         border.SizeChanged += OnCoverSizeChanged;
 
-        _ = LoadAsync(border, url);
+        _ = LoadAsync(border, url, gen);
     }
 
     private static async void OnCoverSizeChanged(object sender, SizeChangedEventArgs e)
@@ -954,69 +1046,74 @@ public static class Cover
         DependencyProperty.RegisterAttached("LastRedecodeAt", typeof(long), typeof(Cover),
             new PropertyMetadata(0L));
 
-    private static async Task LoadAsync(Border border, string url)
+    private static async Task LoadAsync(Border border, string url, int generation = -1)
     {
-        // 按"元素显示宽度 × 屏幕缩放"解码, 再留 25% 余量给缩放时的清晰度; 上限 1280。
-        // (2026-10-01 曾试过去掉 ×1.25 走"≈1:1", 探针 A/B 后放弃: 解码像素多一点 + Fant
-        //  高质量重采样, 细节比 1:1 更足 —— 模糊的主犯是 Linear 缩放模式, 不是解码宽度。)
-        //
-        // ★ 宽度还量不出来时**等一等**, 而不是退化成固定 480(2026-09-28 改):
-        //   DataTemplate 一实例化绑定就生效, 那一刻 ActualWidth 必然还是 0 —— 于是
-        //   "一屏几百张卡片全部按 480 解码", 而按真实宽度(VideoCard 236px → 320 档)其实
-        //   只要 1/2.25 的内存。更要命的是 CoverLoader 的缓存上限**管不到它**:
-        //   卡片自己攥着 ImageBrush/BitmapImage 的引用, 缓存把条目挤掉位图也释放不掉。
-        //   这正是「稍后再看」两三百条一打开内存爆掉、加载也卡的直接原因。
-        //   等到 SizeChanged 报出真实宽度再解码; 元素中途被卸载就放弃, 不留挂起的等待。
-        var dpi = VisualTreeHelper.GetDpi(border).DpiScaleX;
-        if (dpi <= 0) dpi = 1.0;
-        if (border.ActualWidth <= 0)
+        if (generation < 0) generation = (int)border.GetValue(LoadGenerationProperty);
+        border.SetValue(IsLoadingProperty, true);
+        border.SetValue(LastAttemptTickProperty, Environment.TickCount64);
+        try
         {
-            var wait = WaitForRealWidth(border);
-            if (wait != null) await wait;
-            if (GetSource(border) != url) return; // 等待期间源变了/元素被丢弃, 放弃
-        }
-        var w = border.ActualWidth > 0
-            ? CoverLoader.DecodeWidthFor(border.ActualWidth, dpi)
-            : 480;
-
-        // ★★ 快路径(2026-10-02, 用户报"切 tab 每次都重新加载封面"): 位图已经在内存缓存里,
-        //   直接同步贴上、**不闪不淡入**。原来这里无条件走完整异步路径 + 240ms 淡入 ——
-        //   即便 CoverLoader.LoadAsync 命中缓存是零等待, ApplyDecoded 里那句
-        //   `ShouldPlayFadeIn(prev<=0)` 还是会因为"这是新容器、prev 被重置成 0"而重新播一遍
-        //   0→1 淡入, 于是每次切 tab 几百张封面一起闪一遍, 观感就是"封面重新加载了"。
-        //   命中缓存说明这格之前见过、不是真正的首次加载, 不该再淡入。
-        if (CoverLoader.TryGetCachedMedia(url, w, out var cached) && cached.HasImage)
-        {
-            if (cached.Animated != null) ApplyAnimated(border, url, cached.Animated, w, fade: false);
-            else ApplyDecoded(border, url, cached.Static!, w, fade: false);
-            return;
-        }
-
-        // Only cold images need the viewport's bounded scheduling. Warm images must
-        // be restored before returning to layout, including while scrolling backwards.
-        if (!await ViewportImageQueue.WaitAsync(border) || GetSource(border) != url) return;
-        if (CoverLoader.TryGetCachedMedia(url, w, out cached) && cached.HasImage)
-        {
-            if (cached.Animated != null) ApplyAnimated(border, url, cached.Animated, w, fade: false);
-            else ApplyDecoded(border, url, cached.Static!, w, fade: false);
-            return;
-        }
-
-        // 缓存 miss: 真正要下载/解码。这里**也不清透明度** —— 封面 Border 默认 Opacity=1 但还没
-        // 贴背景(透明), 于是外层 CoverCard 的 PlaceholderBrush 会透出来当占位符; 等图解好
-        // ApplyDecoded(fade:true) 再播 0→1 淡入盖上去。全程没有"先整块变黑再变回来"的闪。
-        //
-        // ★ 带上"还要不要"标记(2026-11-08): 解码在后台排队, 轮到它时这一格很可能已经被
-        //   VirtualizingCardWallPanel 回收给别的条目了。标记让那次解码连同 CPU 一起让出去。
-        var media = await CoverLoader.LoadMediaAsync(url, w, CoverLoader.InterestOf(border)).ConfigureAwait(false);
-        if (!media.HasImage) return;
-
-        await Application.Current.Dispatcher.InvokeAsync(
-            () =>
+            // 按"元素显示宽度 × 屏幕缩放"解码, 再留 25% 余量给缩放时的清晰度; 上限 1280。
+            var dpi = VisualTreeHelper.GetDpi(border).DpiScaleX;
+            if (dpi <= 0) dpi = 1.0;
+            if (border.ActualWidth <= 0)
             {
-                if (media.Animated != null) ApplyAnimated(border, url, media.Animated, w, fade: true);
-                else ApplyDecoded(border, url, media.Static!, w, fade: true);
-            }, System.Windows.Threading.DispatcherPriority.Background);
+                var wait = WaitForRealWidth(border);
+                if (wait != null) await wait;
+                if (GetSource(border) != url || (int)border.GetValue(LoadGenerationProperty) != generation) return;
+            }
+            var w = border.ActualWidth > 0
+                ? CoverLoader.DecodeWidthFor(border.ActualWidth, dpi)
+                : 480;
+
+            if (CoverLoader.TryGetCachedMedia(url, w, out var cached) && cached.HasImage)
+            {
+                if (cached.Animated != null) ApplyAnimated(border, url, cached.Animated, w, fade: false);
+                else ApplyDecoded(border, url, cached.Static!, w, fade: false);
+                return;
+            }
+
+            // Only cold images need the viewport's bounded scheduling. Warm images must
+            // be restored before returning to layout, including while scrolling backwards.
+            if (!await ViewportImageQueue.WaitAsync(border) || GetSource(border) != url || (int)border.GetValue(LoadGenerationProperty) != generation) return;
+            if (CoverLoader.TryGetCachedMedia(url, w, out cached) && cached.HasImage)
+            {
+                if (cached.Animated != null) ApplyAnimated(border, url, cached.Animated, w, fade: false);
+                else ApplyDecoded(border, url, cached.Static!, w, fade: false);
+                return;
+            }
+
+            // 缓存 miss: 真正要下载/解码。带上当前元素的有效 InterestOf(border)。
+            var interest = CoverLoader.InterestOf(border);
+            var media = await CoverLoader.LoadMediaAsync(url, w, interest).ConfigureAwait(false);
+            if (!media.HasImage) return;
+
+            var dispatcher = Application.Current?.Dispatcher ?? border.Dispatcher;
+            await dispatcher.InvokeAsync(
+                () =>
+                {
+                    if (GetSource(border) != url || (int)border.GetValue(LoadGenerationProperty) != generation) return;
+                    if (media.Animated != null) ApplyAnimated(border, url, media.Animated, w, fade: true);
+                    else ApplyDecoded(border, url, media.Static!, w, fade: true);
+                }, System.Windows.Threading.DispatcherPriority.Background);
+        }
+        finally
+        {
+            var dispatcher = Application.Current?.Dispatcher ?? border.Dispatcher;
+            if (dispatcher.CheckAccess())
+            {
+                if ((int)border.GetValue(LoadGenerationProperty) == generation)
+                    border.SetValue(IsLoadingProperty, false);
+            }
+            else
+            {
+                _ = dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(() =>
+                {
+                    if ((int)border.GetValue(LoadGenerationProperty) == generation)
+                        border.SetValue(IsLoadingProperty, false);
+                }));
+            }
+        }
     }
 
     /// <summary>

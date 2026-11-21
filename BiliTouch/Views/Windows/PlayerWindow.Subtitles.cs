@@ -38,18 +38,16 @@ public partial class PlayerWindow
         {
             SubtitlePopup.PlacementTarget = BtnSubtitle;
             RightAlignPopup(SubtitlePopup, BtnSubtitle);
-            HookPopupToggle(SubtitlePopup, BtnSubtitle);
             SubtitlePopup.Opened += (_, _) =>
             {
                 _controlsHideTimer?.Stop();
-                if (_isLocalPlayback) RefreshLocalEmbeddedSubtitles();
-                FillSubtitleMenu();
                 Dispatcher.BeginInvoke(
                     System.Windows.Threading.DispatcherPriority.Loaded,
                     new Action(() => RightAlignPopup(SubtitlePopup, BtnSubtitle)));
             };
             SubtitlePopup.Closed += (_, _) =>
             {
+                if (SubtitlePopup.Child != null) HyperMotion.Cancel(SubtitlePopup.Child);
                 if (!_closing) StartControlsHideCountdown();
             };
         }
@@ -210,15 +208,40 @@ public partial class PlayerWindow
 
     private void OnSubtitleClick(object sender, RoutedEventArgs e)
     {
-        if (_isLive) return;
-        TogglePlayerPopup(SubtitlePopup);
+        if (_closing || _isLive || SubtitlePopup == null) return;
+        if (SubtitlePopup.IsOpen)
+        {
+            CloseSubtitlePopup();
+            return;
+        }
+        CloseVolumePopup();
+        CloseDanmakuAreaPopup();
+        if (QualityPopup != null) QualityPopup.IsOpen = false;
+        if (SpeedPopup != null) SpeedPopup.IsOpen = false;
+        if (_isLocalPlayback) RefreshLocalEmbeddedSubtitles();
+        FillSubtitleMenu();
+        SubtitlePopup.PlacementTarget = BtnSubtitle;
+        RightAlignPopup(SubtitlePopup, BtnSubtitle);
+        SubtitlePopup.IsOpen = true;
+        HyperMotion.AnimatePopupEntrance(SubtitlePopup.Child, startScale: 0.91, offsetY: 10, origin: new Point(0.5, 1.0));
+    }
+
+    private void CloseSubtitlePopup()
+    {
+        if (SubtitlePopup != null && SubtitlePopup.IsOpen)
+        {
+            if (System.Windows.Input.Mouse.Captured is DependencyObject captured && IsInPopup(captured, SubtitlePopup))
+                System.Windows.Input.Mouse.Capture(null);
+            if (SubtitlePopup.Child != null) HyperMotion.Cancel(SubtitlePopup.Child);
+            SubtitlePopup.IsOpen = false;
+        }
     }
 
     private void OnSubtitleSelected(object sender, SelectionChangedEventArgs e)
     {
         if (_fillingSubtitleMenu || SubtitleList == null) return;
         if (SubtitleList.SelectedItem is not ListBoxItem li) return;
-        if (SubtitlePopup != null) SubtitlePopup.IsOpen = false;
+        CloseSubtitlePopup();
 
         if (li.Tag is string tag && tag == "off")
         {

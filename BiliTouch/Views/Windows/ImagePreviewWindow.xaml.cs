@@ -1,10 +1,13 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using BiliTouch.Helpers;
 using BiliTouch.Models;
 using BiliTouch.Services;
@@ -34,15 +37,32 @@ public partial class ImagePreviewWindow : FluentWindow
     private int _imageGeneration;
     private IReadOnlyList<string> _gallery = Array.Empty<string>();
     private int _galleryIndex;
+    internal int GalleryIndexValue => _galleryIndex;
+    private PrecisionTouchpadInput? _precisionTouchpad;
+    private const double TouchpadSwipeFullDelta = 380.0;
+    private const int HandWheelIdleMs = 170;
+    private int _hWheelAccum;
+    private DispatcherTimer? _hWheelIdleTimer;
+    private double _swipePreviewDx;
+
+    // 触屏双指 / 未缩放单指横滑切图状态
+    private readonly Dictionary<int, Point> _activeTouches = new();
+    private Point _touchCentroidStart;
+    private bool _touchSwipeTracking;
+    private bool _touchSwipeHorizontal;
+    private double _touchSwipeDx;
     public Task LoadGalleryAsync(IReadOnlyList<string> urls,int index=0)
     {
         _gallery=urls;
         return ChangeGalleryAsync(Math.Clamp(index,0,Math.Max(0,urls.Count-1)),true);
     }
+    private int _gallerySlideDir;
     private Task ChangeGalleryAsync(int step,bool absolute=false)
     {
         if(_gallery.Count==0)return Task.CompletedTask;
-        _galleryIndex=Math.Clamp(absolute?step:_galleryIndex+step,0,_gallery.Count-1);
+        var next=Math.Clamp(absolute?step:_galleryIndex+step,0,_gallery.Count-1);
+        _gallerySlideDir=absolute?0:Math.Sign(next-_galleryIndex);
+        _galleryIndex=next;
         GalleryControls.Visibility=_gallery.Count>1?Visibility.Visible:Visibility.Collapsed;
         GalleryIndex.Text=$"{_galleryIndex+1} / {_gallery.Count}";
         PreviousImage.IsEnabled=_galleryIndex>0;
@@ -81,8 +101,23 @@ public partial class ImagePreviewWindow : FluentWindow
         PreviewImage.MouseLeftButtonUp += OnImageMouseUp;
         PreviewImage.MouseMove += OnImageMouseMove;
         PreviewImage.MouseRightButtonUp += (_, _) => Close();
+        ImageHost.PreviewTouchDown += OnImageTouchDown;
+        ImageHost.PreviewTouchMove += OnImageTouchMove;
+        ImageHost.PreviewTouchUp += OnImageTouchUp;
+        ImageHost.LostTouchCapture += OnImageTouchUp;
+        SourceInitialized += (_, _) =>
+        {
+            if (PresentationSource.FromVisual(this) is HwndSource source)
+                _precisionTouchpad = new PrecisionTouchpadInput(source, ResolvePrecisionTouchpadTarget);
+        };
         KeyDown += OnKey;
-        Closed += (_, _) => AnimatedImagePlayer.Detach(PreviewImage);
+        Closed += (_, _) =>
+        {
+            _hWheelIdleTimer?.Stop();
+            _precisionTouchpad?.Dispose();
+            HyperMotion.Cancel(PreviewImage);
+            AnimatedImagePlayer.Detach(PreviewImage);
+        };
     }
 
     /// <summary>
@@ -142,6 +177,32 @@ public partial class ImagePreviewWindow : FluentWindow
         HintText.Visibility = Visibility.Collapsed;
 
         ResetView();
+        // 澎湃 OS 灯光盒入场：首次打开弹性轻缩放放大，图集左右切换带方向性空间滑动
+        var slideDir = _gallerySlideDir;
+        _gallerySlideDir = 0;
+        HyperMotion.Cancel(PreviewImage);
+        if (slideDir != 0)
+        {
+            HyperMotion.SpringTo(PreviewImage, "SlideX", slideDir * 36.0, 0.0, HyperMotion.SheetSlide,
+                x => _trans.X = x, inheritIfRunning: false);
+            HyperMotion.SpringTo(PreviewImage, "ZoomScale", 0.96, 1.0, HyperMotion.PopupScale, s =>
+            {
+                var c = Math.Max(0.1, s);
+                _scale.ScaleX = c;
+                _scale.ScaleY = c;
+            }, inheritIfRunning: false);
+        }
+        else
+        {
+            HyperMotion.SpringTo(PreviewImage, "ZoomScale", 0.90, 1.0, HyperMotion.PopupScale, s =>
+            {
+                var c = Math.Max(0.1, s);
+                _scale.ScaleX = c;
+                _scale.ScaleY = c;
+            }, inheritIfRunning: false);
+        }
+        HyperMotion.SpringTo(PreviewImage, "Opacity", 0.0, 1.0, HyperMotion.SmoothFade,
+            op => PreviewImage.Opacity = Math.Clamp(op, 0, 1), inheritIfRunning: false);
     }
 
     /// <summary>
@@ -150,6 +211,7 @@ public partial class ImagePreviewWindow : FluentWindow
     /// </summary>
     private void ResetView()
     {
+        HyperMotion.Cancel(PreviewImage);
         _scale.ScaleX = 1;
         _scale.ScaleY = 1;
         _trans.X = 0;
@@ -166,6 +228,7 @@ public partial class ImagePreviewWindow : FluentWindow
 
     private void ApplyScale(double s)
     {
+        HyperMotion.Cancel(PreviewImage, "ZoomScale");
         // 下限动态化: 当前 scale 已低于 0.1(Fit 出来的)时以当前值为下限,
         // 否则滚轮"缩小"会被 clamp 弹回, 表现为越滚越大。
         var min = Math.Min(0.1, _scale.ScaleX);
@@ -215,6 +278,7 @@ public partial class ImagePreviewWindow : FluentWindow
 
     private void OnImageMouseDown(object sender, MouseButtonEventArgs e)
     {
+        if (TouchSupport.IsTouchMouse(e)) return;
         if (e.ClickCount >= 2)
         {
             // 双击在"布局基线(必然完整)"与真 1:1 之间切换:
@@ -233,6 +297,185 @@ public partial class ImagePreviewWindow : FluentWindow
         _dragStart = e.GetPosition(this);
         PreviewImage.CaptureMouse();
         PreviewImage.Cursor = Cursors.SizeAll;
+    }
+
+    // ------------------------------------------------------------ 多图双指左右横滑（精确式触控板 + 触屏）
+
+    private bool CanSwipeGallery => _gallery.Count > 1 && _scale.ScaleX <= 1.06;
+
+    internal PrecisionTouchpadInput.Target? ResolvePrecisionTouchpadTarget(Point screenPoint)
+    {
+        if (!CanSwipeGallery) return null;
+        if (!PrecisionTouchpadInput.ContainsViewportPoint(ImageHost, screenPoint)) return null;
+        return new(
+            CancelGallerySwipe,
+            PreviewGallerySwipe,
+            SettleGallerySwipe,
+            "ImagePreviewGallery");
+    }
+
+    protected override void OnHorizontalWheelAt(int delta, Point screenPoint)
+    {
+        if (ResolvePrecisionTouchpadTarget(screenPoint) == null) return;
+        OnHorizontalWheel(delta);
+    }
+
+    protected override void OnHorizontalWheel(int delta)
+    {
+        if (!CanSwipeGallery || _precisionTouchpad?.SuppressHorizontalWheel == true || delta == 0) return;
+        _hWheelAccum += delta;
+        PreviewGallerySwipe(Math.Clamp(_hWheelAccum / TouchpadSwipeFullDelta, -1.0, 1.0));
+        if (_hWheelIdleTimer == null)
+        {
+            _hWheelIdleTimer = new DispatcherTimer(DispatcherPriority.Input)
+            {
+                Interval = TimeSpan.FromMilliseconds(HandWheelIdleMs)
+            };
+            _hWheelIdleTimer.Tick += (_, _) =>
+            {
+                _hWheelIdleTimer?.Stop();
+                _hWheelAccum = 0;
+                SettleGallerySwipe(commit: true);
+            };
+        }
+        _hWheelIdleTimer.Stop();
+        _hWheelIdleTimer.Start();
+    }
+
+    internal void PreviewGallerySwipe(double progress)
+    {
+        if (!CanSwipeGallery) return;
+        HyperMotion.Cancel(PreviewImage, "SlideX");
+        var hostW = ImageHost.ActualWidth > 1 ? ImageHost.ActualWidth : 640;
+        // 与页面横滑保持相同手势语义：双指右滑(progress < 0)看上一张，左滑(progress > 0)看下一张
+        var rawDx = -Math.Clamp(progress, -1.0, 1.0) * hostW * 0.72;
+        bool atEdge = (rawDx > 0 && _galleryIndex <= 0) || (rawDx < 0 && _galleryIndex >= _gallery.Count - 1);
+        _swipePreviewDx = atEdge ? HorizontalSwipePhysics.RubberBand(rawDx, hostW) : rawDx;
+        _trans.X = _swipePreviewDx;
+    }
+
+    internal void SettleGallerySwipe(bool commit)
+    {
+        var dx = _swipePreviewDx;
+        _swipePreviewDx = 0;
+        _hWheelAccum = 0;
+        _hWheelIdleTimer?.Stop();
+        if (!CanSwipeGallery)
+        {
+            SnapImageHorizontalBack();
+            return;
+        }
+        var hostW = ImageHost.ActualWidth > 1 ? ImageHost.ActualWidth : 640;
+        var threshold = Math.Min(110.0, hostW * 0.18);
+        if (commit && Math.Abs(dx) >= threshold)
+        {
+            int step = dx < 0 ? 1 : -1;
+            int next = Math.Clamp(_galleryIndex + step, 0, _gallery.Count - 1);
+            if (next != _galleryIndex)
+            {
+                _ = ChangeGalleryAsync(step);
+                return;
+            }
+        }
+        SnapImageHorizontalBack();
+    }
+
+    private void CancelGallerySwipe()
+    {
+        _hWheelIdleTimer?.Stop();
+        _hWheelAccum = 0;
+        _swipePreviewDx = 0;
+        SnapImageHorizontalBack();
+    }
+
+    private void SnapImageHorizontalBack()
+    {
+        if (Math.Abs(_trans.X) < 0.5)
+        {
+            _trans.X = 0;
+            return;
+        }
+        HyperMotion.SpringTo(PreviewImage, "SlideX", _trans.X, 0.0, HyperMotion.SheetSlide,
+            x => _trans.X = x, inheritIfRunning: true);
+    }
+
+    private Point CurrentTouchCentroid()
+    {
+        if (_activeTouches.Count == 0) return new Point();
+        double sx = 0, sy = 0;
+        foreach (var pt in _activeTouches.Values) { sx += pt.X; sy += pt.Y; }
+        return new Point(sx / _activeTouches.Count, sy / _activeTouches.Count);
+    }
+
+    private void OnImageTouchDown(object? sender, TouchEventArgs e)
+    {
+        var pt = e.GetTouchPoint(ImageHost).Position;
+        _activeTouches[e.TouchDevice.Id] = pt;
+        if (_gallery.Count > 1 && (_activeTouches.Count == 2 || (_activeTouches.Count == 1 && _scale.ScaleX <= 1.06)))
+        {
+            _touchCentroidStart = CurrentTouchCentroid();
+            _touchSwipeTracking = true;
+            _touchSwipeHorizontal = false;
+            _touchSwipeDx = 0;
+            HyperMotion.Cancel(PreviewImage, "SlideX");
+        }
+    }
+
+    private void OnImageTouchMove(object? sender, TouchEventArgs e)
+    {
+        if (!_activeTouches.ContainsKey(e.TouchDevice.Id)) return;
+        _activeTouches[e.TouchDevice.Id] = e.GetTouchPoint(ImageHost).Position;
+        if (!_touchSwipeTracking || !CanSwipeGallery) return;
+
+        var centroid = CurrentTouchCentroid();
+        var dx = centroid.X - _touchCentroidStart.X;
+        var dy = centroid.Y - _touchCentroidStart.Y;
+        if (!_touchSwipeHorizontal)
+        {
+            if (Math.Max(Math.Abs(dx), Math.Abs(dy)) < 14) return;
+            if (Math.Abs(dx) > Math.Abs(dy) * 1.2)
+                _touchSwipeHorizontal = true;
+            else
+            {
+                _touchSwipeTracking = false;
+                return;
+            }
+        }
+        var hostW = ImageHost.ActualWidth > 1 ? ImageHost.ActualWidth : 640;
+        bool atEdge = (dx > 0 && _galleryIndex <= 0) || (dx < 0 && _galleryIndex >= _gallery.Count - 1);
+        _touchSwipeDx = atEdge ? HorizontalSwipePhysics.RubberBand(dx, hostW) : dx;
+        _trans.X = _touchSwipeDx;
+        e.Handled = true;
+    }
+
+    private void OnImageTouchUp(object? sender, TouchEventArgs e)
+    {
+        _activeTouches.Remove(e.TouchDevice.Id);
+        if (_activeTouches.Count > 0) return;
+        if (!_touchSwipeTracking) return;
+
+        var wasHorizontal = _touchSwipeHorizontal;
+        var dx = _touchSwipeDx;
+        _touchSwipeTracking = false;
+        _touchSwipeHorizontal = false;
+        _touchSwipeDx = 0;
+
+        if (!wasHorizontal) return;
+        var hostW = ImageHost.ActualWidth > 1 ? ImageHost.ActualWidth : 640;
+        var threshold = Math.Min(96.0, hostW * 0.16);
+        if (Math.Abs(dx) >= threshold)
+        {
+            int step = dx < 0 ? 1 : -1;
+            int next = Math.Clamp(_galleryIndex + step, 0, _gallery.Count - 1);
+            if (next != _galleryIndex)
+            {
+                _ = ChangeGalleryAsync(step);
+                e.Handled = true;
+                return;
+            }
+        }
+        SnapImageHorizontalBack();
+        e.Handled = true;
     }
 
     private void OnImageMouseUp(object sender, MouseButtonEventArgs e)

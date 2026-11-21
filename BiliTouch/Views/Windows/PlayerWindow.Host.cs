@@ -136,7 +136,43 @@ public partial class PlayerWindow
             CloseCommentDetail();
             return true;
         }
+        var returnHost = _embeddedHost;
+        var returnAnchor = SeamlessTransitionDirector.CurrentAnchor;
+        Rect returnRect = Rect.Empty;
+        Brush? returnBrush = null;
+        if (returnHost != null && returnAnchor != null && VideoSurface != null && VideoSurface.IsVisible
+            && VideoSurface.ActualWidth > 4 && VideoSurface.ActualHeight > 4
+            && PresentationSource.FromVisual(VideoSurface) is { CompositionTarget: not null })
+        {
+            try
+            {
+                var tl = VideoSurface.PointToScreen(new Point(0, 0));
+                var br = VideoSurface.PointToScreen(new Point(VideoSurface.ActualWidth, VideoSurface.ActualHeight));
+                returnRect = new Rect(tl, br);
+                if (_vmemMode && VmemView?.CaptureFrame() is System.Windows.Media.Imaging.BitmapSource liveFrame)
+                {
+                    var frameBrush = new ImageBrush(liveFrame)
+                    {
+                        Stretch = Stretch.UniformToFill,
+                        AlignmentX = AlignmentX.Center,
+                        AlignmentY = AlignmentY.Center
+                    };
+                    if (liveFrame.IsFrozen && frameBrush.CanFreeze) frameBrush.Freeze();
+                    returnBrush = frameBrush;
+                }
+                else
+                {
+                    returnBrush = LoadingPoster?.Background ?? returnAnchor.FallbackBrush;
+                }
+            }
+            catch { }
+        }
+        var bvid = _currentBvid;
         DetachFromMainWindow(pausePlayback: true);
+        if (returnHost != null && !returnRect.IsEmpty && returnAnchor != null)
+        {
+            SeamlessTransitionDirector.PlayReturnMorph(returnHost, returnRect, 0.0, returnBrush, returnAnchor, bvid);
+        }
         return true;
     }
 
@@ -222,16 +258,23 @@ public partial class PlayerWindow
                 PortraitDrawerChrome.Children.Add(control);
             }
             var h = PlayerStage.ActualHeight > 0 ? PlayerStage.ActualHeight : ActualHeight;
-            PortraitCommentDrawerSheet.Height = Math.Max(260, Math.Round(h * 0.65));
+            var sheetHeight = Math.Max(260, Math.Round(h * 0.65));
+            PortraitCommentDrawerSheet.Height = sheetHeight;
             if (ControlBar != null) ControlBar.Visibility = Visibility.Collapsed;
             if (BtnPortraitImmersiveComments != null) BtnPortraitImmersiveComments.Visibility = Visibility.Collapsed;
             PortraitCommentDrawerOverlay.Visibility = Visibility.Visible;
+            HyperMotion.SpringTo(PortraitCommentDrawerOverlay, "DrawerOpacity", 0.0, 1.0,
+                HyperMotion.SmoothFade, op => PortraitCommentDrawerOverlay.Opacity = Math.Clamp(op, 0, 1), inheritIfRunning: false);
+            HyperMotion.AnimateSheetIn(PortraitCommentDrawerSheet, fromX: 0, fromY: Math.Min(sheetHeight, 260), fromScale: 0.985, animateOpacity: false, origin: new Point(0.5, 1.0));
             UpdateCommentComposer();
             if (_aid > 0) _ = LoadCommentsAsync();
         }
         else
         {
             _portraitDrawerOpen = false;
+            HyperMotion.Cancel(PortraitCommentDrawerOverlay);
+            HyperMotion.Cancel(PortraitCommentDrawerSheet);
+            PortraitCommentDrawerOverlay.Opacity = 1;
             PortraitCommentDrawerOverlay.Visibility = Visibility.Collapsed;
             if (ControlBar != null) ControlBar.Visibility = Visibility.Visible;
             UpdatePortraitImmersiveOverlay();

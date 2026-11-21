@@ -17,12 +17,13 @@ public partial class PlayerWindow
         _seamless.PendingPresentation = present;
     }
 
-    private FrameworkElement SeamlessStage => _seamless.EntryWindow != null ? SeamlessMorphOverlay : RootGrid;
+    private FrameworkElement SeamlessStage => (_seamless.EntryWindow != null && !_seamless.HandedOffToPlayer) ? SeamlessMorphOverlay : RootGrid;
 
     private void MountSeamlessEntryWindow(SeamlessTransitionDirector.SeamlessAnchor anchor)
     {
         if (anchor.SourceWindow == null || !anchor.SourceWindow.TryGetTarget(out var source) ||
             source.Content is not FrameworkElement content || !source.IsVisible) return;
+        _seamless.SourceMainWindow = source as MainWindow;
         var dpi = VisualTreeHelper.GetDpi(content);
         var origin = content.PointToScreen(new Point());
         var extent = content.PointToScreen(new Point(content.ActualWidth, content.ActualHeight));
@@ -34,8 +35,9 @@ public partial class PlayerWindow
                 anchor.ScreenPixelRect.Width / dpi.DpiScaleX, anchor.ScreenPixelRect.Height / dpi.DpiScaleY);
             _seamless.StartRect = _seamless.EndRect = updatedRect;
             _seamless.StartRadius = _seamless.EndRadius = anchor.CornerRadius;
-            SeamlessHeroCard.Width = updatedRect.Width;
-            SeamlessHeroCard.Height = updatedRect.Height;
+            var host = SeamlessHeroHost ?? (FrameworkElement)SeamlessHeroCard;
+            host.Width = updatedRect.Width;
+            host.Height = updatedRect.Height;
             ApplySeamlessMorphFrame(0);
             return;
         }
@@ -46,23 +48,55 @@ public partial class PlayerWindow
         _seamlessPreviousOwner = Owner;
         _seamlessOwnerChanged = !ReferenceEquals(Owner, source);
         if (_seamlessOwnerChanged) Owner = source;
-        // A captionless transparent tool surface is visible before the native player
-        // is shown. Its first frame is the source card over the live source window.
+
+        // 捕获源窗口单帧静态快照（限宽 960px，~2~3ms 一次完成）作为非分层 D3D9 硬件加速舞台背景。
+        // ★ 绝不再给 SeamlessWindowSnapshot 外套第二层 BitmapCache(1.0)：ImageBrush(RenderTargetBitmap)
+        //   本身就是静态 GPU 纹理，重复缓存 3040×2108 全屏表面会白白吞掉 25MB 显存与大量填充率。
+        var snapshotBrush = anchor.SourceWindowBackdrop
+            ?? SeamlessTransitionDirector.CaptureWindowSnapshotBrush(source);
+        anchor.SourceWindowBackdrop = snapshotBrush;
+        if (SeamlessWindowSnapshot != null)
+        {
+            SeamlessWindowSnapshot.CacheMode = null;
+            SeamlessWindowSnapshot.Background = snapshotBrush;
+            SeamlessWindowSnapshot.Opacity = snapshotBrush != null ? 1.0 : 0.0;
+            SeamlessWindowSnapshot.Visibility = snapshotBrush != null ? Visibility.Visible : Visibility.Collapsed;
+            SeamlessWindowSnapshot.HorizontalAlignment = HorizontalAlignment.Stretch;
+            SeamlessWindowSnapshot.VerticalAlignment = VerticalAlignment.Stretch;
+            SeamlessWindowSnapshot.Width = SeamlessWindowSnapshot.Height = double.NaN;
+            SeamlessWindowSnapshot.Margin = new Thickness(0);
+            RenderOptions.SetBitmapScalingMode(SeamlessWindowSnapshot, BitmapScalingMode.Linear);
+        }
+        if (SeamlessBackdrop != null)
+        {
+            SeamlessBackdrop.Visibility = Visibility.Visible;
+        }
+        if (SeamlessPlayerShell != null)
+        {
+            SeamlessPlayerShell.Visibility = Visibility.Visible;
+        }
+
+        // 若快照可用则使用纯 D3D9 硬件加速非透明无边框窗；仅在极端快照失败时回退透明层
+        var useOpaqueHardware = snapshotBrush != null;
+        var stageW = (extent.X - origin.X) / dpi.DpiScaleX;
+        var stageH = (extent.Y - origin.Y) / dpi.DpiScaleY;
         var stage = new Window
         {
             WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize,
-            AllowsTransparency = true, Background = Brushes.Transparent,
+            AllowsTransparency = !useOpaqueHardware,
+            Background = useOpaqueHardware ? new SolidColorBrush(Color.FromRgb(0x0A, 0x0C, 0x10)) : Brushes.Transparent,
             ShowInTaskbar = false, ShowActivated = false, Topmost = true,
             Owner = source,
             WindowStartupLocation = WindowStartupLocation.Manual,
             Left = origin.X / dpi.DpiScaleX, Top = origin.Y / dpi.DpiScaleY,
-            Width = (extent.X - origin.X) / dpi.DpiScaleX, Height = (extent.Y - origin.Y) / dpi.DpiScaleY,
+            Width = stageW, Height = stageH,
             IsHitTestVisible = false
         };
         RootGrid.Children.Remove(SeamlessMorphOverlay);
         stage.Content = SeamlessMorphOverlay;
         _seamless.EntryWindow = stage;
         _seamless.EntryPresented = false;
+        BiliTouch.Views.Controls.LoadingRing.SetGlobalPaused(true);
         stage.ContentRendered += (_, _) =>
         {
             _seamless.EntryPresented = true;
@@ -82,8 +116,15 @@ public partial class PlayerWindow
             anchor.ScreenPixelRect.Width / dpi.DpiScaleX, anchor.ScreenPixelRect.Height / dpi.DpiScaleY);
         _seamless.StartRect = _seamless.EndRect = initialRect;
         _seamless.StartRadius = _seamless.EndRadius = anchor.CornerRadius;
-        SeamlessHeroCard.Width = initialRect.Width;
-        SeamlessHeroCard.Height = initialRect.Height;
+        _seamless.ShellEndRect = new Rect(0, 0, Math.Max(1, stageW), Math.Max(1, stageH));
+        var heroHost = SeamlessHeroHost ?? (FrameworkElement)SeamlessHeroCard;
+        heroHost.Width = initialRect.Width;
+        heroHost.Height = initialRect.Height;
+        if (SeamlessPlayerShell != null)
+        {
+            SeamlessPlayerShell.Width = Math.Max(1, stageW);
+            SeamlessPlayerShell.Height = Math.Max(1, stageH);
+        }
         ApplySeamlessMorphFrame(0);
         stage.SourceInitialized += (_, _) =>
         {
@@ -96,17 +137,24 @@ public partial class PlayerWindow
         stage.UpdateLayout();
     }
 
-    private void UnmountSeamlessEntryWindow()
+    private void UnmountSeamlessEntryWindow(bool restoreOwnership = true)
     {
-        if (_seamless.EntryWindow is not { } stage) return;
-        _seamless.EntryWindow = null;
-        _seamless.PendingPresentation = null;
-        _seamless.EntryPresented = false;
-        stage.Content = null;
-        RootGrid.Children.Add(SeamlessMorphOverlay);
-        stage.Close();
-        if (_seamlessOwnerChanged) Owner = _seamlessPreviousOwner;
-        _seamlessPreviousOwner = null;
-        _seamlessOwnerChanged = false;
+        BiliTouch.Views.Controls.LoadingRing.SetGlobalPaused(false);
+        if (_seamless.EntryWindow is { } stage)
+        {
+            _seamless.EntryWindow = null;
+            _seamless.PendingPresentation = null;
+            _seamless.EntryPresented = false;
+            stage.Content = null;
+            if (!RootGrid.Children.Contains(SeamlessMorphOverlay))
+                RootGrid.Children.Add(SeamlessMorphOverlay);
+            stage.Close();
+        }
+        if (restoreOwnership && _seamlessOwnerChanged)
+        {
+            Owner = _seamlessPreviousOwner;
+            _seamlessPreviousOwner = null;
+            _seamlessOwnerChanged = false;
+        }
     }
 }

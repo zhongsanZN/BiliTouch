@@ -7,6 +7,7 @@ public partial class PlayerWindow
 {
  private static readonly SolidColorBrush EnhancementOnBrush = CreateFrozenBrush(Color.FromRgb(255, 212, 85));
  private static readonly SolidColorBrush EnhancementOffBrush = CreateFrozenBrush(Colors.White);
+ private static readonly SolidColorBrush EnhancementMutedBrush = CreateFrozenBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF));
  private static SolidColorBrush CreateFrozenBrush(Color color) { var b = new SolidColorBrush(color); b.Freeze(); return b; }
  private bool _closeAfterEnhancementSwitch;
  private bool _enhancementSwitching,_enhancementQueued,_pauseAfterEnhancementSwitch;
@@ -17,12 +18,22 @@ public partial class PlayerWindow
   UpdateEnhancementButton();
  }
  private void OnEnhancementNativeStatus(){if(!_closing)Dispatcher.BeginInvoke(new Action(UpdateEnhancementButton));}
- private void OnEnhancementClick(object sender,RoutedEventArgs e)=>Svc.Settings.UpdateVideoEnhancement(active:!Svc.Settings.VideoEnhancementActive);
+ private void OnEnhancementClick(object sender,RoutedEventArgs e)
+ {
+  if(QualityPopup!=null)QualityPopup.IsOpen=false;
+  Svc.Settings.UpdateVideoEnhancement(active:!Svc.Settings.VideoEnhancementActive);
+ }
  private void UpdateEnhancementButton()
  {
   if(BtnEnhancement==null)return;var available=Svc.Settings.ExperimentalVideoEnhancement;
   var supported = !_vmemMode;
   var on=available && supported && Svc.Settings.VideoEnhancementActive;
+  if(QualityEnhancementSection!=null)QualityEnhancementSection.Visibility=available?Visibility.Visible:Visibility.Collapsed;
+  if(EnhancementLabelText!=null)EnhancementLabelText.Foreground=on?EnhancementOnBrush:EnhancementOffBrush;
+  if(EnhancementStateText!=null){
+   EnhancementStateText.Text=!supported?"暂不可用":on?"已开启":"已关闭";
+   EnhancementStateText.Foreground=on?EnhancementOnBrush:EnhancementMutedBrush;
+  }
   foreach(var button in new[]{BtnEnhancement,BtnMiniEnhancement}){
    button.Visibility=available?Visibility.Visible:Visibility.Collapsed;
    button.IsEnabled=supported;

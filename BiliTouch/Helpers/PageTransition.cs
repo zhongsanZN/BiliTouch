@@ -1,5 +1,6 @@
 using System;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 
@@ -66,11 +67,27 @@ public sealed class PageTransition
             if (epoch != _epoch) return;   // 已被更晚的过渡取代, 这一拍作废
             swap();
 
-            // ★★★ 淡入不做动画(原因见类注释): 直接清动画 + 落定 1。
-            //   ★ "清动画"这步不能省 —— 淡出的 DoubleAnimation 还挂在 Opacity 上
-            //     (HoldEnd 托管在 0), 不清掉的话直接设 Opacity 会被动画值盖住。
+            // ★★★ 淡入不做 Opacity 动画(原因见类注释): 直接清动画 + 落定 1，
+            //   再用纯 GPU 位移弹簧(+10px → 0，绝不附带小数缩放避免整树光栅重采样)
+            //   并在 Loaded(新页首次 Measure/Arrange 完成)后起跑，规避切页布局尖峰卡顿。
             _content.BeginAnimation(UIElement.OpacityProperty, null);
             _content.Opacity = 1;
+            if (_content is FrameworkElement fe)
+            {
+                HyperMotion.Cancel(fe);
+                if (fe.RenderTransform is not TranslateTransform slide || slide.IsFrozen)
+                {
+                    slide = new TranslateTransform(0, 0);
+                    fe.RenderTransform = slide;
+                }
+                slide.Y = 10;
+                fe.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+                {
+                    if (epoch != _epoch) return;
+                    HyperMotion.SpringTo(fe, "PageSlideY", 10.0, 0.0, HyperMotion.SheetSlide,
+                        y => slide.Y = y, inheritIfRunning: false);
+                }));
+            }
             InFlight = false;
         };
         InFlight = true;
@@ -85,6 +102,9 @@ public sealed class PageTransition
     {
         _epoch++;
         InFlight = false;
+        HyperMotion.Cancel(_content);
+        if (_content is FrameworkElement fe && fe.RenderTransform is TranslateTransform t && !t.IsFrozen)
+            t.Y = 0;
         _content.BeginAnimation(UIElement.OpacityProperty, null);
         _content.Opacity = 1;
         swap();

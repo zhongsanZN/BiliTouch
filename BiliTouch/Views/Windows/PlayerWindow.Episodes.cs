@@ -99,6 +99,8 @@ public partial class PlayerWindow
         _seasonOpen = true;
         SeasonPanel.Visibility = Visibility.Visible;
         UpdateSeasonButtonState();
+        if (SeasonList != null)
+            HyperMotion.AnimateSheetIn(SeasonList, fromX: 0, fromY: -12, fromScale: 0.99, animateOpacity: true, fromOpacity: 0.0, origin: new Point(0.5, 0.0));
         ScrollSeasonToCurrent();
     }
 

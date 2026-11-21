@@ -44,6 +44,7 @@ internal sealed class TabNavigationGestures : IHorizontalSwipeHost
     private readonly FrameworkElement _content;
     private readonly FrameworkElement _tabs;
     private readonly Func<int, UIElement?>? _peerFactory;
+    private readonly Action<int, UIElement>? _onPeerBeforeShow;
     private readonly TranslateTransform _slide = new();
     private readonly TranslateTransform _peerSlide = new();
     private Grid? _peerHost;
@@ -110,11 +111,13 @@ internal sealed class TabNavigationGestures : IHorizontalSwipeHost
         UserControl page,
         FrameworkElement content,
         FrameworkElement tabs,
-        Func<int, UIElement?>? peerFactory = null)
+        Func<int, UIElement?>? peerFactory = null,
+        Action<int, UIElement>? onPeerBeforeShow = null)
     {
         _content = content;
         _tabs = tabs;
         _peerFactory = peerFactory;
+        _onPeerBeforeShow = onPeerBeforeShow;
         content.RenderTransform = _slide;
 
         page.AddHandler(UIElement.PreviewTouchDownEvent, new EventHandler<TouchEventArgs>((_, e) => Begin(e.GetTouchPoint(null).Position, e.OriginalSource as DependencyObject)), true);
@@ -302,6 +305,7 @@ internal sealed class TabNavigationGestures : IHorizontalSwipeHost
             }
             foreach (UIElement child in _peerHost.Children)
                 child.Visibility = ReferenceEquals(child, peerContent) ? Visibility.Visible : Visibility.Hidden;
+            _onPeerBeforeShow?.Invoke(targetIndex, peerContent);
         }
 
         _peerHost.Visibility = Visibility.Visible;

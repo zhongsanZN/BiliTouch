@@ -194,6 +194,7 @@ public partial class PlayerWindow
         if (_videoTouches.Count > 0 || TouchHelp.Visibility == Visibility.Visible) return false;
         if (_closing || _mp == null || !_mp.IsPlaying) return false;
         if (QualityPopup != null && QualityPopup.IsOpen) return false;
+        if (SubtitlePopup != null && SubtitlePopup.IsOpen) return false;
         if (DanmakuAreaPopup != null && DanmakuAreaPopup.IsOpen) return false;
         if (VolumePopup != null && VolumePopup.IsOpen) return false;
         if (SpeedPopup != null && SpeedPopup.IsOpen) return false;
@@ -253,14 +254,15 @@ public partial class PlayerWindow
         _controlsHideTimer?.Stop();
         CloseVolumePopup();                     // 控制栏一藏, 挂在它上面的音量弹层必须跟着收
         CloseDanmakuAreaPopup();
-        if (SubtitlePopup != null) SubtitlePopup.IsOpen = false;
+        CloseSubtitlePopup();
         ControlBar.IsHitTestVisible = false;   // 隐形时不能再吃视频区的点击/滚轮
         VideoAreaRoot.Cursor = System.Windows.Input.Cursors.None;
-        var fade = new System.Windows.Media.Animation.DoubleAnimation(1, 0,
-            TimeSpan.FromMilliseconds(180))
-        { FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop };
-        ControlBar.BeginAnimation(OpacityProperty, fade);
-        ControlBar.Opacity = 0;
+        ControlBar.BeginAnimation(OpacityProperty, null);
+        var (_, trans) = HyperMotion.EnsureScaleTranslate(ControlBar, new Point(0.5, 1.0));
+        HyperMotion.SpringTo(ControlBar, "Opacity", ControlBar.Opacity, 0.0,
+            HyperMotion.SmoothFade, v => ControlBar.Opacity = Math.Clamp(v, 0, 1));
+        HyperMotion.SpringTo(ControlBar, "Y", trans.Y, 10.0,
+            HyperMotion.SheetDismiss, v => trans.Y = v);
         UpdateSubtitleLayoutPosition();
         UpdateAlternateVideoControls();
     }
@@ -271,7 +273,14 @@ public partial class PlayerWindow
         if (!_controlsHidden)
         {
             // 没藏着也要确保可见(动画/其它路径可能把透明度留成中间值)
-            if (ControlBar.Opacity < 1) { ControlBar.BeginAnimation(OpacityProperty, null); ControlBar.Opacity = 1; }
+            if (ControlBar.Opacity < 1)
+            {
+                HyperMotion.Cancel(ControlBar);
+                ControlBar.BeginAnimation(OpacityProperty, null);
+                ControlBar.Opacity = 1;
+                var (_, existingTrans) = HyperMotion.EnsureScaleTranslate(ControlBar, new Point(0.5, 1.0));
+                existingTrans.Y = 0;
+            }
             ControlBar.IsHitTestVisible = true;
             VideoAreaRoot.Cursor = System.Windows.Input.Cursors.Arrow;
             UpdateSubtitleLayoutPosition();
@@ -281,8 +290,12 @@ public partial class PlayerWindow
         _controlsHidden = false;
         VideoAreaRoot.Cursor = System.Windows.Input.Cursors.Arrow;
         ControlBar.BeginAnimation(OpacityProperty, null);
-        ControlBar.Opacity = 1;
         ControlBar.IsHitTestVisible = true;
+        var (_, trans) = HyperMotion.EnsureScaleTranslate(ControlBar, new Point(0.5, 1.0));
+        HyperMotion.SpringTo(ControlBar, "Opacity", ControlBar.Opacity, 1.0,
+            HyperMotion.SmoothFade, v => ControlBar.Opacity = Math.Clamp(v, 0, 1));
+        HyperMotion.SpringTo(ControlBar, "Y", Math.Abs(trans.Y) > 0.5 ? trans.Y : 10.0, 0.0,
+            HyperMotion.SheetSlide, v => trans.Y = v);
         UpdateSubtitleLayoutPosition();
         UpdateAlternateVideoControls();
     }

@@ -112,6 +112,13 @@ public partial class PlayerWindow
             e.Handled = true;
             return;
         }
+        if (SubtitlePopup?.IsOpen == true && !IsDescendantOf(touchSource, BtnSubtitle) &&
+            !IsDescendantOf(touchSource, ControlBar))
+        {
+            CloseSubtitlePopup();
+            e.Handled = true;
+            return;
+        }
         if (IsTouchControl(touchSource) || AnyPlayerPopupOpen || _mp == null) return;
         // ★ 首次用手指点视频: 自动弹一次手势说明(控制栏那个「触控」按钮已经删了)。
         //   只弹一次; 这一次触摸**只用于展示**, 不继续走单击/长按 —— 否则同一帧里

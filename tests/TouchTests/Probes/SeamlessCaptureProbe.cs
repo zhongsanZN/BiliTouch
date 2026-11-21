@@ -99,6 +99,8 @@ internal static class SeamlessCaptureProbe
             Pump(600);
         }
         var records = new List<object>();
+        var openFrameDts = new List<double>();
+        double lastOpenFrameMs = -1;
         var screenshots = new List<(string path, BitmapSource bitmap)>();
         var capturedPhases = new HashSet<string>();
         var sw = Stopwatch.StartNew();
@@ -107,6 +109,11 @@ internal static class SeamlessCaptureProbe
         EventHandler onFrame = (_, _) =>
         {
             var t = sw.Elapsed.TotalMilliseconds;
+            if (phase == "open" && player is { IsSeamlessMorphRunning: true })
+            {
+                if (lastOpenFrameMs >= 0) openFrameDts.Add(t - lastOpenFrameMs);
+                lastOpenFrameMs = t;
+            }
             if (t - last < 90 || records.Count >= (phase == "open" ? 12 : 24)) return;
             last = t;
             var path = Path.Combine(dir, $"{phase}-{records.Count:00}.png");
@@ -193,6 +200,14 @@ internal static class SeamlessCaptureProbe
             encoder.Save(stream);
         }
         File.WriteAllText(Path.Combine(dir, "index.json"), JsonSerializer.Serialize(records, new JsonSerializerOptions { WriteIndented = true }));
+        if (openFrameDts.Count > 0)
+        {
+            var sorted = openFrameDts.OrderBy(x => x).ToArray();
+            var p50 = sorted[sorted.Length / 2];
+            var p95 = sorted[(int)Math.Min(sorted.Length - 1, sorted.Length * 0.95)];
+            var fps = p50 > 0.1 ? 1000.0 / p50 : 0;
+            Console.WriteLine($"SEAMLESS PERF openFrames={openFrameDts.Count} p50={p50:0.0}ms p95={p95:0.0}ms max={sorted[^1]:0.0}ms estFps={fps:0.0}");
+        }
         check(closeBtn, "seamless close started");
         check(player is { IsVisible: false }, "seamless close completes on the actual fixture player");
         check(!File.Exists(errorFile) || new FileInfo(errorFile).Length == errorsBefore, "open and close add no reported application exception");

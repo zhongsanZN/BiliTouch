@@ -329,10 +329,11 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                        <!-- 底部提示行: 明确"这里能点", 顺便给出真实回复总数 -->
+                        <!-- 底部提示行: 仅当楼中楼还有未展示完的回复时才显示，已完整展示 1~3 条时不重复提示 -->
                         <TextBlock Text="{Binding ReplyBoxText}" FontSize="11" Margin="0,1,0,0"
                                    FontWeight="SemiBold"
-                                   Foreground="{DynamicResource AccentTextBrush}" />
+                                   Foreground="{DynamicResource AccentTextBrush}"
+                                   Visibility="{Binding HasUnshownPreviewReplies, Converter={StaticResource BoolToVis}}" />
                     </StackPanel>
                 </Border>
         </StackPanel>
@@ -1165,26 +1166,37 @@
                                              "查看手势说明"的入口, 却长得像开关, 还占着控制栏一格。
                                              现在改成: 首次用手指点时自动弹一次说明(见 Touch.cs)。 -->
 
-                                        <!-- 音量(2026-11-05 与直播间对齐): 常驻只有一颗喇叭,
-                                             悬停(鼠标)或点一下(触屏)才**向上**展开音量条。
-                                             ★ 为什么改: 78px 的滑杆常驻在控制栏里, 窄窗口时会把
-                                               倍速/清晰度/弹幕按钮一路往右挤。翻上去只借用画面空白,
-                                               控制栏宽度不变 —— 与直播间同一个思路同一套交互。
-                                             ★ 收起状态那颗按钮仍然是静音开关(用户最常用的动作),
-                                               展开后才用滑杆微调。 -->
-                                        <Button Grid.Column="3" x:Name="BtnVolume" Style="{StaticResource PlayerRoundBtn}"
-                                                Width="36" Height="36" Margin="6,0,0,0" Click="OnMuteClick"
-                                                MouseEnter="OnVolumeHoverEnter" MouseLeave="OnVolumeHoverLeave"
-                                                ToolTip="静音 / 展开音量条">
-                                            <helpers:SkinGlyph Kind="Volume" IconSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White" State="{Binding Text,ElementName=VolumeIcon}"><TextBlock x:Name="VolumeIcon" Text="&#xE767;"
-                                                       FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                                       FontSize="14" Foreground="White"/></helpers:SkinGlyph>
-                                        </Button>
+                                        <!-- 音量 + 下方音质角标：悬停或点按展开音量滑杆与音质详情/可选音轨方案 -->
+                                        <StackPanel Grid.Column="3" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="6,0,0,0">
+                                            <Button x:Name="BtnVolume" Style="{StaticResource PlayerRoundBtn}"
+                                                    Width="36" Height="30" Click="OnMuteClick"
+                                                    MouseEnter="OnVolumeHoverEnter" MouseLeave="OnVolumeHoverLeave"
+                                                    ToolTip="静音 / 展开音量与音质面板">
+                                                <helpers:SkinGlyph Kind="Volume" IconSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" Tint="White" State="{Binding Text,ElementName=VolumeIcon}"><TextBlock x:Name="VolumeIcon" Text="&#xE767;"
+                                                           FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                                           FontSize="14" Foreground="White"/></helpers:SkinGlyph>
+                                            </Button>
+                                            <Border x:Name="BtnAudioBadge" Margin="0,-1,0,0"
+                                                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                    IsHitTestVisible="True" Cursor="Hand"
+                                                    MouseEnter="OnVolumeHoverEnter" MouseLeave="OnVolumeHoverLeave"
+                                                    MouseLeftButtonUp="OnAudioBadgeClick"
+                                                    Background="#33FF6B9D" CornerRadius="3" Padding="4,0.5"
+                                                    Visibility="Collapsed">
+                                                <Border.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="音频兼容重试（仅本次）" Click="OnAudioCompatibilityRetry" />
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
+                                                <TextBlock x:Name="AudioBadgeText" Text="Hi-Res"
+                                                           FontSize="9.5" FontWeight="SemiBold" Foreground="#FFFFD9E6" />
+                                            </Border>
+                                        </StackPanel>
                                         <Popup x:Name="VolumePopup" Placement="Top" StaysOpen="True"
-                                               AllowsTransparency="True" PopupAnimation="Fade">
+                                               AllowsTransparency="True" PopupAnimation="None">
                                             <Border Background="Transparent" Padding="0,0,0,10">
                                             <Border Background="#F0202226" CornerRadius="10" Padding="12,10"
-                                                    BorderBrush="#33FFFFFF" BorderThickness="1" Width="196">
+                                                    BorderBrush="#33FFFFFF" BorderThickness="1" Width="236">
                                                 <StackPanel>
                                                     <DockPanel Margin="0,0,0,6">
                                                         <TextBlock x:Name="VolumePopupText" DockPanel.Dock="Right" Text="80%"
@@ -1194,6 +1206,56 @@
                                                     <Slider Grid.Column="4" x:Name="VolumeSlider" Style="{StaticResource PlayerSlider}"
                                                             Minimum="0" Maximum="100" Value="80"
                                                             ValueChanged="OnVolumeChanged" />
+
+                                                    <!-- 音质详情与可选方案（由清晰度面板迁入音量面板） -->
+                                                    <StackPanel x:Name="VolumeAudioSection" Visibility="Collapsed">
+                                                        <Border Height="1" Background="#26FFFFFF" Margin="0,10,0,8" />
+                                                        <DockPanel Margin="0,0,0,6">
+                                                            <TextBlock x:Name="VolumeAudioSummaryText" DockPanel.Dock="Right" Text=""
+                                                                       Foreground="#99FFFFFF" FontSize="11" VerticalAlignment="Center" />
+                                                            <TextBlock Text="音质" Foreground="#E6FFFFFF" FontSize="12" VerticalAlignment="Center" />
+                                                        </DockPanel>
+                                                        <TextBlock x:Name="AudioQualityInfoText" Text=""
+                                                                   Foreground="#CCFFFFFF" FontSize="11.5" TextWrapping="Wrap"
+                                                                   Margin="2,0,2,2" Visibility="Collapsed" />
+                                                        <ListBox x:Name="AudioQualityList" Background="Transparent"
+                                                                 BorderThickness="0" Foreground="White"
+                                                                 SelectionChanged="OnAudioQualitySelected"
+                                                                 Visibility="Collapsed">
+                                                            <ListBox.ItemContainerStyle>
+                                                                <Style TargetType="ListBoxItem">
+                                                                    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                                                    <Setter Property="Padding" Value="8,6" />
+                                                                    <Setter Property="Cursor" Value="Hand" />
+                                                                    <Setter Property="ContentTemplate">
+                                                                        <Setter.Value>
+                                                                            <DataTemplate>
+                                                                                <TextBlock Text="{Binding}" Foreground="#F2FFFFFF" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                                                            </DataTemplate>
+                                                                        </Setter.Value>
+                                                                    </Setter>
+                                                                    <Setter Property="Template">
+                                                                        <Setter.Value>
+                                                                            <ControlTemplate TargetType="ListBoxItem">
+                                                                                <Border x:Name="Bd" Background="Transparent"
+                                                                                        CornerRadius="5" Padding="{TemplateBinding Padding}">
+                                                                                    <ContentPresenter VerticalAlignment="Center" />
+                                                                                </Border>
+                                                                                <ControlTemplate.Triggers>
+                                                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                                                        <Setter TargetName="Bd" Property="Background" Value="#26FFFFFF" />
+                                                                                    </Trigger>
+                                                                                    <Trigger Property="IsSelected" Value="True">
+                                                                                        <Setter TargetName="Bd" Property="Background" Value="#33FFFFFF" />
+                                                                                    </Trigger>
+                                                                                </ControlTemplate.Triggers>
+                                                                            </ControlTemplate>
+                                                                        </Setter.Value>
+                                                                    </Setter>
+                                                                </Style>
+                                                            </ListBox.ItemContainerStyle>
+                                                        </ListBox>
+                                                    </StackPanel>
                                                 </StackPanel>
                                             </Border>
                                             </Border>
@@ -1292,81 +1354,75 @@
                                                 Margin="4,0,0,0" Click="OnQualityClick" ToolTip="切换清晰度">
                                             <StackPanel Orientation="Horizontal"><helpers:SkinGlyph Kind="Quality" IconSize="24" Tint="White"/><TextBlock x:Name="QualityText" Text="1080P" Foreground="#F2FFFFFF" /></StackPanel>
                                         </Button>
-                                        <!-- 音质标识(2026-11-04): 用户问"到底开没开 Hi-Res", 这里直接写出来。
-                                             ★ 用户要求「只作为显示, 不应切回 aac」——
-                                               所以它**不是按钮**(TextBlock + Border), 点不了,
-                                               也就不会被误以为能降回 AAC。
-                                             只有真的在用无损/杜比时才显示, 普通 AAC 不占位置。
-                                             ★★★ 2026-11-05 修"hires 标志跑到左下角和播放按钮重叠":
-                                               这个 Border **原来漏了 Grid.Column**, 于是默认落在第 0 列 ——
-                                               而第 0 列就是播放/暂停按钮, 两者直接叠在一起(用户截图里
-                                               "Hi-Res" 正好压在三角图标上)。现在显式给 7 列(清晰度右边),
-                                               弹幕开关/弹幕设置/全屏各自顺延一位。
-                                               ★ 教训: 这个操作行是 Auto 列 + 显式 Grid.Column 的混合布局,
-                                                 任何新增子元素都必须写列号, 漏写就等于"叠到播放键上"。 -->
-                                        <Border Grid.Column="7" x:Name="BtnAudioBadge" Margin="4,0,0,0"
-                                                VerticalAlignment="Center"
-                                                IsHitTestVisible="True"
-                                                Background="#33FF6B9D" CornerRadius="3" Padding="5,1"
-                                                Visibility="Collapsed">
-                                            <Border.ContextMenu>
-                                                <ContextMenu>
-                                                    <MenuItem Header="音频兼容重试（仅本次）" Click="OnAudioCompatibilityRetry" />
-                                                </ContextMenu>
-                                            </Border.ContextMenu>
-                                            <TextBlock x:Name="AudioBadgeText" Text="Hi-Res"
-                                                       FontSize="10.5" FontWeight="SemiBold" Foreground="#FFFFD9E6" />
-                                        </Border>
-                                        <!-- 直播弹幕连接状态(只在直播时显示): 用户看不到弹幕时靠它定位问题。
-                                             ★ 同样漏过 Grid.Column(会在左上角压住播放键) —— 现在挂在第 8 列。 -->
+                                        <!-- 直播弹幕连接状态(只在直播时显示): 用户看不到弹幕时靠它定位问题。 -->
                                         <TextBlock Grid.Column="8" x:Name="LiveDanmakuStatus" FontSize="11" Margin="8,0,0,0"
                                                    VerticalAlignment="Center" Foreground="#99FFFFFF"
                                                    Visibility="Collapsed" Text="" />
                                         <Popup x:Name="QualityPopup"
-                                               Placement="Top" StaysOpen="False" AllowsTransparency="True"
-                                               PopupAnimation="Fade">
+                                               Placement="Top" StaysOpen="True" AllowsTransparency="True"
+                                               PopupAnimation="None">
                                             <Border Background="#F0202226" CornerRadius="8" Padding="6"
-                                                    BorderBrush="#33FFFFFF" BorderThickness="1" MinWidth="110">
-                                                <ListBox x:Name="QualityList" Background="Transparent"
-                                                         BorderThickness="0" Foreground="White"
-                                                         SelectionChanged="OnQualitySelected">
-                                                    <ListBox.ItemContainerStyle>
-                                                        <Style TargetType="ListBoxItem">
-                                                            <!-- 绝不能设 Focusable=False: ListBoxItem 鼠标按下时
-                                                                 Focus() 失败会短路选中逻辑, SelectionChanged 永不触发
-                                                                 (之前"切换清晰度没反应"就是它)。去焦点框用 FocusVisualStyle -->
-                                                            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
-                                                            <Setter Property="Padding" Value="10,6" />
-                                                            <Setter Property="Cursor" Value="Hand" />
-                                                            <Setter Property="ContentTemplate">
-                                                                <Setter.Value>
-                                                                    <DataTemplate>
-                                                                        <!-- 显式白字: 全局隐式 TextBlock 样式(主题色)会覆盖继承的前景色 -->
-                                                                        <TextBlock Text="{Binding}" Foreground="#F2FFFFFF" />
-                                                                    </DataTemplate>
-                                                                </Setter.Value>
-                                                            </Setter>
-                                                            <Setter Property="Template">
-                                                                <Setter.Value>
-                                                                    <ControlTemplate TargetType="ListBoxItem">
-                                                                        <Border x:Name="Bd" Background="Transparent"
-                                                                                CornerRadius="5" Padding="{TemplateBinding Padding}">
-                                                                            <ContentPresenter VerticalAlignment="Center" />
-                                                                        </Border>
-                                                                        <ControlTemplate.Triggers>
-                                                                            <Trigger Property="IsMouseOver" Value="True">
-                                                                                <Setter TargetName="Bd" Property="Background" Value="#26FFFFFF" />
-                                                                            </Trigger>
-                                                                            <Trigger Property="IsSelected" Value="True">
-                                                                                <Setter TargetName="Bd" Property="Background" Value="#33FFFFFF" />
-                                                                            </Trigger>
-                                                                        </ControlTemplate.Triggers>
-                                                                    </ControlTemplate>
-                                                                </Setter.Value>
-                                                            </Setter>
-                                                        </Style>
-                                                    </ListBox.ItemContainerStyle>
-                                                </ListBox>
+                                                    BorderBrush="#33FFFFFF" BorderThickness="1" MinWidth="128">
+                                                <StackPanel>
+                                                    <ListBox x:Name="QualityList" Background="Transparent"
+                                                             BorderThickness="0" Foreground="White"
+                                                             SelectionChanged="OnQualitySelected">
+                                                        <ListBox.ItemContainerStyle>
+                                                            <Style TargetType="ListBoxItem">
+                                                                <!-- 绝不能设 Focusable=False: ListBoxItem 鼠标按下时
+                                                                     Focus() 失败会短路选中逻辑, SelectionChanged 永不触发
+                                                                     (之前"切换清晰度没反应"就是它)。去焦点框用 FocusVisualStyle -->
+                                                                <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                                                <Setter Property="Padding" Value="10,6" />
+                                                                <Setter Property="Cursor" Value="Hand" />
+                                                                <Setter Property="ContentTemplate">
+                                                                    <Setter.Value>
+                                                                        <DataTemplate>
+                                                                            <!-- 显式白字: 全局隐式 TextBlock 样式(主题色)会覆盖继承的前景色 -->
+                                                                            <TextBlock Text="{Binding}" Foreground="#F2FFFFFF" />
+                                                                        </DataTemplate>
+                                                                    </Setter.Value>
+                                                                </Setter>
+                                                                <Setter Property="Template">
+                                                                    <Setter.Value>
+                                                                        <ControlTemplate TargetType="ListBoxItem">
+                                                                            <Border x:Name="Bd" Background="Transparent"
+                                                                                    CornerRadius="5" Padding="{TemplateBinding Padding}">
+                                                                                <ContentPresenter VerticalAlignment="Center" />
+                                                                            </Border>
+                                                                            <ControlTemplate.Triggers>
+                                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                                    <Setter TargetName="Bd" Property="Background" Value="#26FFFFFF" />
+                                                                                </Trigger>
+                                                                                <Trigger Property="IsSelected" Value="True">
+                                                                                    <Setter TargetName="Bd" Property="Background" Value="#33FFFFFF" />
+                                                                                </Trigger>
+                                                                            </ControlTemplate.Triggers>
+                                                                        </ControlTemplate>
+                                                                    </Setter.Value>
+                                                                </Setter>
+                                                            </Style>
+                                                        </ListBox.ItemContainerStyle>
+                                                    </ListBox>
+                                                    <!-- 实验性画质增强（超分 / HDR）开关：仅在设置启用实验性增强时于分辨率面板底部显示 -->
+                                                    <StackPanel x:Name="QualityEnhancementSection" Visibility="Collapsed">
+                                                        <Border Height="1" Background="#26FFFFFF" Margin="4,6" />
+                                                        <Button x:Name="BtnEnhancement" Visibility="Collapsed"
+                                                                Style="{StaticResource PlayerTextBtn}"
+                                                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                                                Padding="10,6" Click="OnEnhancementClick"
+                                                                AutomationProperties.Name="画质增强">
+                                                            <DockPanel LastChildFill="True">
+                                                                <TextBlock x:Name="EnhancementStateText" DockPanel.Dock="Right"
+                                                                           Text="已关闭" FontSize="11" Foreground="#99FFFFFF"
+                                                                           VerticalAlignment="Center" Margin="10,0,0,0" />
+                                                                <TextBlock x:Name="EnhancementLabelText" Text="画质增强"
+                                                                           FontSize="12" Foreground="#F2FFFFFF"
+                                                                           VerticalAlignment="Center" />
+                                                            </DockPanel>
+                                                        </Button>
+                                                    </StackPanel>
+                                                </StackPanel>
                                             </Border>
                                         </Popup>
 
@@ -1376,8 +1432,8 @@
                                             <TextBlock x:Name="SubtitleBtnText" Text="字幕" Foreground="#B3FFFFFF" />
                                         </Button>
                                         <Popup x:Name="SubtitlePopup"
-                                               Placement="Top" StaysOpen="False" AllowsTransparency="True"
-                                               PopupAnimation="Fade">
+                                               Placement="Top" StaysOpen="True" AllowsTransparency="True"
+                                               PopupAnimation="None">
                                             <Border Background="#F0202226" CornerRadius="8" Padding="8"
                                                     BorderBrush="#33FFFFFF" BorderThickness="1" Width="226">
                                                 <StackPanel>
@@ -1576,8 +1632,7 @@
                                             </Border>
                                         </Popup>
 
-                                        <!-- 全屏(离线缓存已挪到右侧信息面板的操作栏, 2026-09-26) -->
-                                        <Button Grid.Column="12" x:Name="BtnEnhancement" Visibility="Collapsed" Content="增强" Width="44" Style="{StaticResource PlayerTextBtn}" Click="OnEnhancementClick" AutomationProperties.Name="画质增强" />
+                                        <!-- 全屏(离线缓存已挪到右侧信息面板的操作栏; 画质增强开关已移入清晰度选择面板底部) -->
                                         <Button Grid.Column="13" x:Name="BtnFullscreen2" Style="{StaticResource PlayerRoundBtn}"
                                                 Width="36" Height="36" Click="OnFullscreenClick" ToolTip="全屏 (F)">
                                             <TextBlock Text="&#xE92D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
@@ -2826,17 +2881,25 @@
             </Grid>
         </Grid>
 
-        <!-- 金标联盟「一镜到底」(Seamless Shared-Element Morph) 连续几何过渡舞台。
+        <!-- 澎湃 OS 风格「一镜到底」(Seamless Shared-Element Morph) 连续几何过渡舞台。
              平时 Collapsed + IsHitTestVisible=False，不占布局、不拦截任何鼠标/触摸输入。
-             展开时由单一 CompositionTarget.Rendering 临界阻尼弹簧驱动几何、圆角与背景阻尼渐显。 -->
+             全程运行在非分层 D3D9 硬件合成管线上：静态底层快照无二次缓存、非缓存外层宿主承载圆角裁剪与矩阵变换、
+             内层小尺寸静态 BitmapCache 零重建 + 等比补偿，确保满帧 60~120Hz、零闪烁、竖屏优化零拉伸。 -->
         <Grid x:Name="SeamlessMorphOverlay" Grid.RowSpan="2" Panel.ZIndex="120"
               Visibility="Collapsed" IsHitTestVisible="False" ClipToBounds="True">
-            <Border x:Name="SeamlessWindowSnapshot" Opacity="0" />
-            <Border x:Name="SeamlessBackdrop" Background="#CC0A0C10" Opacity="0" />
-            <Border x:Name="SeamlessHeroCard" HorizontalAlignment="Left" VerticalAlignment="Top"
-                    RenderTransformOrigin="0,0" Background="{DynamicResource PlaceholderBrush}">
-                <Border x:Name="SeamlessHeroShade" Background="#26000000" Opacity="0" />
-            </Border>
+            <Border x:Name="SeamlessWindowSnapshot" RenderTransformOrigin="0.5,0.5" Opacity="0" />
+            <Border x:Name="SeamlessBackdrop" Background="#FF06080C" Opacity="0" />
+            <!-- 轻量级详情页容器壳体（无 BitmapCache）：随卡片平滑展开到整窗，使展开/收回轨迹清晰明确 -->
+            <Border x:Name="SeamlessPlayerShell" HorizontalAlignment="Left" VerticalAlignment="Top"
+                    RenderTransformOrigin="0,0" Background="{DynamicResource AppBackgroundBrush}"
+                    BorderBrush="{DynamicResource DividerBrush}" BorderThickness="1"
+                    Opacity="0" IsHitTestVisible="False" />
+            <!-- 外层非缓存宿主承担缩放/位移/圆角裁剪，避免裁剪变化每帧击穿内层 BitmapCache -->
+            <Grid x:Name="SeamlessHeroHost" HorizontalAlignment="Left" VerticalAlignment="Top"
+                  RenderTransformOrigin="0,0" ClipToBounds="True" IsHitTestVisible="False">
+                <Border x:Name="SeamlessHeroCard" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                        RenderTransformOrigin="0.5,0.5" Background="{DynamicResource PlaceholderBrush}" />
+            </Grid>
         </Grid>
     </Grid>
 </views:FluentWindow>

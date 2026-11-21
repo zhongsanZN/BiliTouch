@@ -8,6 +8,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using BiliTouch.Helpers;
 using BiliTouch.Models;
 using BiliTouch.Services;
 
@@ -189,11 +190,7 @@ public partial class PlayerWindow
     {
         if (SkipNoticeBorder == null || SkipNoticeText == null) return;
         SkipNoticeText.Text = text;
-        SkipNoticeBorder.BeginAnimation(OpacityProperty, null);
-        SkipNoticeBorder.Opacity = 0;
-        SkipNoticeBorder.Visibility = Visibility.Visible;
-        SkipNoticeBorder.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
+        HyperMotion.AnimateCapsuleIn(SkipNoticeBorder, fromY: 12, fromScale: 0.90, origin: new Point(0.0, 1.0));
 
         if (_skipNoticeTimer == null)
         {
@@ -216,14 +213,12 @@ public partial class PlayerWindow
         _skipNoticeTimer?.Stop();
         if (SkipNoticeBorder == null || SkipNoticeBorder.Visibility != Visibility.Visible) return;
 
-        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(200));
-        fade.Completed += (_, _) =>
+        HyperMotion.AnimateCapsuleOut(SkipNoticeBorder, toY: 10, toScale: 0.94, onComplete: () =>
         {
-            SkipNoticeBorder.BeginAnimation(OpacityProperty, null);
+            if (_skipNoticeTimer?.IsEnabled == true) return;
             SkipNoticeBorder.Opacity = 0;
             SkipNoticeBorder.Visibility = Visibility.Collapsed;
-        };
-        SkipNoticeBorder.BeginAnimation(OpacityProperty, fade);
+        });
     }
 
     private void OnSkipUndoClick(object sender, RoutedEventArgs e)

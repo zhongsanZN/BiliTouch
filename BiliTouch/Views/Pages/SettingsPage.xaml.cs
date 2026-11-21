@@ -12,12 +12,19 @@ public partial class SettingsPage : UserControl
     internal TabNavigationGestures ModuleGestures { get; }
     private SettingsViewModel? _vm;
     private bool _subscribed;
+    private int _lastTabIndex = -1;
+    private readonly Dictionary<int, double> _tabScrollOffsets = new();
     private System.Windows.Threading.DispatcherTimer? _retainedPreparation;
 
     public SettingsPage()
     {
         InitializeComponent();
-        ModuleGestures = new TabNavigationGestures(this, ModuleContent, ModuleTabs, CreatePeerPreview);
+        ModuleGestures = new TabNavigationGestures(this, ModuleContent, ModuleTabs, CreatePeerPreview, SyncPeerScrollOffset);
+        ModuleContent.ScrollChanged += (_, _) =>
+        {
+            if (_vm != null && _lastTabIndex == _vm.TabIndex && !ModuleGestures.IsInteracting)
+                _tabScrollOffsets[_lastTabIndex] = ModuleContent.VerticalOffset;
+        };
         Loaded += OnLoaded;
         IsVisibleChanged += (_, _) => { if (IsVisible && IsLoaded) PrepareRetainedTabs(); else _retainedPreparation?.Stop(); };
         SizeChanged += (_, _) => ApplyTabletLayout(Responsive.GetPosture(this));
@@ -61,6 +68,7 @@ public partial class SettingsPage : UserControl
         if (_vm == null) return;
 
         _vm.OnNavigated();
+        _lastTabIndex = _vm.TabIndex;
         PrepareRetainedTabs();
 
         if (!_subscribed)
@@ -110,9 +118,18 @@ public partial class SettingsPage : UserControl
         }
         else if (e.PropertyName == nameof(SettingsViewModel.TabIndex))
         {
+            // 保存离开页签的滚动偏移，并立即切到目标页签各自的记忆位置（未滚过则回到顶部），
+            // 彻底消除"在 A 页签滚到中间切 B 页签时先预览顶部、松手瞬间跳到中间"的错位。
+            if (_lastTabIndex >= 0 && _lastTabIndex != _vm.TabIndex)
+                _tabScrollOffsets[_lastTabIndex] = ModuleContent.VerticalOffset;
+            _lastTabIndex = _vm.TabIndex;
+            var targetOffset = _tabScrollOffsets.GetValueOrDefault(_lastTabIndex, 0.0);
+            ModuleContent.ScrollToVerticalOffset(targetOffset);
             Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded,
                 new Action(() =>
                 {
+                    if (_vm != null && _vm.TabIndex == _lastTabIndex)
+                        ModuleContent.ScrollToVerticalOffset(_tabScrollOffsets.GetValueOrDefault(_lastTabIndex, 0.0));
                     HookPalette();
                     if (_vm != null) _ = LoadAvatarAsync(_vm.UserFace);
                 }));
@@ -155,6 +172,15 @@ public partial class SettingsPage : UserControl
         }
     }
 
+    private void SyncPeerScrollOffset(int targetIndex, UIElement peer)
+    {
+        if (peer is ScrollViewer sv)
+        {
+            var offset = _tabScrollOffsets.GetValueOrDefault(targetIndex, 0.0);
+            sv.ScrollToVerticalOffset(offset);
+        }
+    }
+
     private UIElement? CreatePeerPreview(int targetIndex)
     {
         var key = targetIndex switch
@@ -168,14 +194,16 @@ public partial class SettingsPage : UserControl
         if (template.LoadContent() is not FrameworkElement body) return null;
         body.DataContext = DataContext;
         IsolatePeerRadioGroups(body, targetIndex);
-        return new ScrollViewer
+        var tablet = Responsive.GetPosture(this) == LayoutPosture.TabletPortrait;
+        var sv = new ScrollViewer
         {
-            VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
+            // 与真实 ModuleContent 保持完全一致的 Auto 滚动条与页边距，杜绝落位后滚动条突然弹出挤窄重排
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             IsHitTestVisible = false,
             Focusable = false,
             Content = new StackPanel
             {
-                Margin = new Thickness(36, 12, 36, 32),
+                Margin = tablet ? new Thickness(14, 10, 14, 24) : new Thickness(36, 12, 36, 32),
                 Children =
                 {
                     new ContentPresenter
@@ -188,6 +216,8 @@ public partial class SettingsPage : UserControl
                 }
             }
         };
+        sv.ScrollToVerticalOffset(_tabScrollOffsets.GetValueOrDefault(targetIndex, 0.0));
+        return sv;
     }
 
     private (Border? box, TextBlock? fallback) FindAvatarElements()

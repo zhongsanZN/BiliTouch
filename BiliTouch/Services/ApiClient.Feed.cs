@@ -235,6 +235,7 @@ public partial class ApiClient
                 if (st.TryGetProperty("like", out var lk) && lk.ValueKind == JsonValueKind.Number)
                     item.LikeCount = lk.GetInt64();
             }
+            (item.VideoWidth, item.VideoHeight) = ParseDimension(e);
             return item;
         }
         catch
@@ -332,6 +333,7 @@ public partial class ApiClient
             // 发布时间: 热门/收藏用 pubdate, 空间投稿用 created
             item.Pubdate = GetLong(e, "pubdate");
             if (item.Pubdate <= 0) item.Pubdate = GetLong(e, "created");
+            (item.VideoWidth, item.VideoHeight) = ParseDimension(e);
             return item;
         }
         catch

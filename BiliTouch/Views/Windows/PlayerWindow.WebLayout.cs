@@ -200,13 +200,14 @@ public partial class PlayerWindow
         _detectedVideoHeight = height;
         if (fromMetadata) _videoSizeFromMetadata = true;
         if (!changed) return;
-        if (_webInitialized && (IsLoaded || _isEmbeddedInMain))
+        if (_webInitialized && (IsLoaded || _isEmbeddedInMain || _seamless.EntryWindow != null))
         {
-            ApplyAlternateLayoutPreference(allowPreLoad: _isEmbeddedInMain);
+            ApplyAlternateLayoutPreference(allowPreLoad: _isEmbeddedInMain || _seamless.EntryWindow != null);
             if (_webLayoutMounted) UpdateWebMeasurements();
             else if (_portraitLayoutMounted) UpdatePortraitMeasurements();
             else if (_tabletPortraitLayoutMounted) UpdateTabletPortraitMeasurements();
             UpdatePortraitImmersiveOverlay();
+            RetargetSeamlessTargetIfNeeded();
         }
         else
         {

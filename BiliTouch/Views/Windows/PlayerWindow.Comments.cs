@@ -540,6 +540,7 @@ public partial class PlayerWindow
         SetReplyTarget(threadRoot, focus: false);
         CommentList.Visibility = Visibility.Collapsed;
         CommentDetailPanel.Visibility = Visibility.Visible;
+        HyperMotion.AnimateSheetIn(CommentDetailPanel, fromX: 34, fromY: 0, fromScale: 0.988, animateOpacity: true, fromOpacity: 0.15);
         UpdateCommentPageButton();
         UpdateCommentFabVisibility();
         // "楼中楼自动展开所有评论": 进来就把这条线程剩下的回复补全, 不再要用户点"展开更多"
@@ -1104,17 +1105,7 @@ public partial class PlayerWindow
 
         var panel = CommentComposerPanel;
         panel.Visibility = Visibility.Visible;
-        // 初始态: 压在底下 24px + 全透明, 再动画回来。
-        // ★ Opacity 必须先显式归 0: 收起路径(FinishCloseComposer)会把基准值复位成 1,
-        //   不归 0 的话"收起 → 立刻再打开"这次淡入是 1→1, 看不到过渡。
-        panel.Opacity = 0;
-        var translate = new TranslateTransform(0, 24);
-        panel.RenderTransform = translate;
-        panel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180))
-        { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
-        translate.BeginAnimation(TranslateTransform.YProperty,
-            new DoubleAnimation(24, 0, TimeSpan.FromMilliseconds(200))
-            { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+        HyperMotion.AnimateSheetIn(panel, fromX: 0, fromY: 28, fromScale: 0.96, animateOpacity: true, fromOpacity: 0.0, origin: new Point(0.5, 1.0));
 
         // 焦点进输入框(等可见性生效之后; 走 Dispatcher 排一轮)
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input,
@@ -1124,7 +1115,7 @@ public partial class PlayerWindow
         ApplyComposerSize();
     }
 
-    /// <summary>收起输入面板: 淡出后 Visibility=Collapsed。草稿**不清**(只是收起, 不是放弃)</summary>
+    /// <summary>收起输入面板: 澎湃 OS 轻柔下滑淡出后 Visibility=Collapsed。草稿**不清**(只是收起, 不是放弃)</summary>
     private void CloseComposer()
     {
         if (CommentEmotePopup != null) CommentEmotePopup.IsOpen = false;
@@ -1134,14 +1125,19 @@ public partial class PlayerWindow
         CommentFab.ToolTip = "写评论";
 
         var panel = CommentComposerPanel;
-        var anim = new DoubleAnimation(panel.Opacity, 0, TimeSpan.FromMilliseconds(140))
-        { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } };
-        anim.Completed += (_, _) => FinishCloseComposer(panel);
-        panel.BeginAnimation(OpacityProperty, anim);
-        // ★ 兜底(2026-11-01): Completed 回调依赖渲染节拍, 个别环境(布局刚抖过/窗口后台)会不回调,
-        //   面板就"看不见但还占着命中测试"。300ms 后(动画早已该结束)再落一次 ——
-        //   FinishCloseComposer 幂等, 重复调无副作用; 若期间面板又被打开(_composerOpen=true)则跳过。
-        _ = Task.Delay(300).ContinueWith(_ => Dispatcher.BeginInvoke(new Action(() =>
+        var (scale, trans) = HyperMotion.EnsureScaleTranslate(panel, new Point(0.5, 1.0));
+        HyperMotion.SpringTo(panel, "SheetY", trans.Y, 20.0, HyperMotion.SheetDismiss, y => trans.Y = y);
+        HyperMotion.SpringTo(panel, "SheetScale", scale.ScaleX, 0.97, HyperMotion.SheetDismiss, s =>
+        {
+            var c = Math.Max(0.2, s);
+            scale.ScaleX = c;
+            scale.ScaleY = c;
+        });
+        HyperMotion.SpringTo(panel, "SheetOpacity", panel.Opacity, 0.0, HyperMotion.SmoothFade,
+            op => panel.Opacity = Math.Clamp(op, 0, 1),
+            onComplete: () => FinishCloseComposer(panel));
+        // 兜底：若窗口进入后台导致渲染帧暂停，380ms 后幂等收尾
+        _ = Task.Delay(380).ContinueWith(_ => Dispatcher.BeginInvoke(new Action(() =>
             FinishCloseComposer(panel))));
     }
 
@@ -1149,6 +1145,7 @@ public partial class PlayerWindow
     private void FinishCloseComposer(Border panel)
     {
         if (_closing || _composerOpen) return;   // 期间又被打开就不收
+        HyperMotion.Cancel(panel);
         panel.BeginAnimation(OpacityProperty, null);
         panel.Opacity = 1;                        // 复位基准值, 下次 OpenComposer 从 0 淡入
         panel.Visibility = Visibility.Collapsed;

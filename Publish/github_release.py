@@ -35,7 +35,9 @@ def main():
         (expected_x64, args.setup),
         (expected_arm64, setup_arm64),
     ]
-    notes = args.notes.read_text(encoding="utf-8-sig")
+    notes = args.notes.read_text(encoding="utf-8-sig").strip()
+    is_recommended = "推荐更新" in notes
+    release_title = f"BiliTouch {args.version} · 推荐更新" if is_recommended else f"BiliTouch {args.version}"
     root = Path(__file__).resolve().parents[1]
     remote = subprocess.check_output(["git", "remote", "get-url", "--push", "origin"], cwd=root, text=True).strip()
     if remote != f"https://github.com/{REPOSITORY}.git":
@@ -65,7 +67,7 @@ def main():
     except urllib.error.HTTPError as error:
         if error.code != 404:
             raise
-        release = request(BASE + "/releases", {"tag_name": tag, "name": "BiliTouch " + args.version, "draft": True})
+        release = request(BASE + "/releases", {"tag_name": tag, "name": release_title, "draft": True})
 
     expected_digests = {}
     expected_sizes = {}
@@ -95,19 +97,21 @@ def main():
         if asset["id"] not in keep_ids:
             request(BASE + "/releases/assets/" + str(asset["id"]), method="DELETE")
 
-    download_x64 = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{expected_x64}"
-    download_arm64 = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{expected_arm64}"
-    source_label = "本版源码" if has_source else "历史构建归档"
-    body = (
-        f"[下载安装包（x64 · Intel/AMD）]({download_x64}) · "
-        f"[下载安装包（ARM64 · Surface 等 ARM 设备）]({download_arm64}) · "
-        f"[{source_label}](https://github.com/{REPOSITORY}/tree/{tag})\n\n"
-    )
-    if not has_source:
-        body += "此版本保留原始安装器；该标签仅包含归档记录，没有可确认匹配的应用源码快照。当前完整源码见 main 分支及最新正式版标签。\n\n"
-    body += notes
-    body += "\n\n![BiliTouch 首页](https://raw.githubusercontent.com/zhongsanZN/BiliTouch/main/docs/screenshot-home-current.png)"
-    release = request(release["url"], {"body": body, "draft": False, "prerelease": False,
+    # 客户端内置更新弹窗会直接展示 Release 的 body 文本；
+    # 正式版本直接使用干净排版的发布说明正文，不拼接裸 Markdown 下载链接或截图语法，确保推送到客户端美观易读。
+    if has_source:
+        body = notes
+    else:
+        download_x64 = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{expected_x64}"
+        download_arm64 = f"https://github.com/{REPOSITORY}/releases/download/{tag}/{expected_arm64}"
+        body = (
+            f"[下载安装包（x64 · Intel/AMD）]({download_x64}) · "
+            f"[下载安装包（ARM64 · Surface 等 ARM 设备）]({download_arm64}) · "
+            f"[历史构建归档](https://github.com/{REPOSITORY}/tree/{tag})\n\n"
+            "此版本保留原始安装器；该标签仅包含归档记录，没有可确认匹配的应用源码快照。当前完整源码见 main 分支及最新正式版标签。\n\n"
+            + notes
+        )
+    release = request(release["url"], {"name": release_title, "body": body, "draft": False, "prerelease": False,
                                       "make_latest": "true" if has_source else "false"}, "PATCH")
     remaining = request(release["assets_url"])
     if sorted(asset["name"] for asset in remaining) != sorted([expected_x64, expected_arm64]):

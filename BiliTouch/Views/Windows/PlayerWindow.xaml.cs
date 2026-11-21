@@ -1288,6 +1288,7 @@ public partial class PlayerWindow : FluentWindow
         nameof(_portraitDrawerOpen),
         // 字幕代次/偏好（跨片保持）
         nameof(_subtitleGen), nameof(_syncingSubtitleSlider), nameof(_subtitleEnabled),
+        nameof(_fillingAudioMenu),
     };
 
     /// <summary>
@@ -1845,6 +1846,19 @@ public partial class PlayerWindow : FluentWindow
             // 防御: 构造函数可能在某个定时器初始化之前就抛了(LibVLC 加载失败时), 所以取不到就跳过
             if (f.GetValue(this) is DispatcherTimer t) t.Stop();
         }
+        HyperMotion.Cancel(ControlBar);
+        HyperMotion.Cancel(VolumeOsd);
+        HyperMotion.Cancel(SpeedOsd);
+        HyperMotion.Cancel(LocalToastBorder);
+        HyperMotion.Cancel(SkipNoticeBorder);
+        HyperMotion.Cancel(CommentComposerPanel);
+        HyperMotion.Cancel(CommentDetailPanel);
+        HyperMotion.Cancel(PortraitCommentDrawerOverlay);
+        HyperMotion.Cancel(PortraitCommentDrawerSheet);
+        HyperMotion.Cancel(SeasonList);
+        HyperMotion.Cancel(IntroPanel);
+        HyperMotion.Cancel(CommentsPanel);
+        HyperMotion.Cancel(WebRecommendationsPanel);
     }
 
     /// <summary>

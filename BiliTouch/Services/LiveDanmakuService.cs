@@ -299,28 +299,37 @@ public sealed class LiveDanmakuService : IDisposable
 
     internal void HandlePacket(int op, ReadOnlySpan<byte> body)
     {
-        if (op == OpAuthReply)
-        {
-            try
-            {
-                using var auth = JsonDocument.Parse(body.ToArray());
-                var ok = auth.RootElement.TryGetProperty("code", out var code) && code.GetInt32() == 0;
-                LastError = ok ? "" : "弹幕认证失败（" + code + "）";
-                RaiseConnection(ok);
-                if (!ok && (_parseGeneration.Value ?? _generation) == _generation) _socket?.Abort();
-            }
-            catch { RaiseConnection(false); }
-            return;
-        }
         if (op == OpHeartbeatReply)
         {
             // 人气值(版本 1 时 body 是 4 字节整数) —— 我们不显示, 忽略
             return;
         }
+        if (op == OpAuthReply)
+        {
+            HandleAuthReplyPacket(body);
+            return;
+        }
         if (op != OpMessage || body.Length == 0) return;
         bool hasLegacyReceiver = Received != null;
         if (!IsActionablePacket(body, hasLegacyReceiver)) return;
+        HandleActionableMessage(body, hasLegacyReceiver);
+    }
 
+    private void HandleAuthReplyPacket(ReadOnlySpan<byte> body)
+    {
+        try
+        {
+            using var auth = JsonDocument.Parse(body.ToArray());
+            var ok = auth.RootElement.TryGetProperty("code", out var code) && code.GetInt32() == 0;
+            LastError = ok ? "" : "弹幕认证失败（" + code + "）";
+            RaiseConnection(ok);
+            if (!ok && (_parseGeneration.Value ?? _generation) == _generation) _socket?.Abort();
+        }
+        catch { RaiseConnection(false); }
+    }
+
+    private void HandleActionableMessage(ReadOnlySpan<byte> body, bool hasLegacyReceiver)
+    {
         byte[]? jsonBuf = null;
         try
         {

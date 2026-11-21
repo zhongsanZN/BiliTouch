@@ -186,7 +186,11 @@ public partial class DynamicFeedCard : UserControl
             case DynamicKind.Live: DynamicActions.OpenLive(d); break;
             case DynamicKind.Forward:
                 // 点引用框: 原动态是视频就播, 其它进详情页
-                if (d.Original?.Video != null) DynamicActions.OpenVideo(d.Original);
+                if (d.Original?.Video != null)
+                {
+                    BiliTouch.Helpers.SeamlessTransitionDirector.Capture(sender as FrameworkElement ?? this, d.Original.Video.Bvid, 8.0);
+                    DynamicActions.OpenVideo(d.Original);
+                }
                 else if (d.Original?.Kind == DynamicKind.Article) DynamicActions.OpenArticle(d.Original);
                 else if(d.Original!=null)DynamicActions.OpenDetail(d.Original);
                 break;

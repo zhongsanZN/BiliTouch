@@ -63,6 +63,8 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
         if (e.ViewportHeightChange != 0 || e.ViewportWidthChange != 0 || e.ExtentHeightChange != 0 ||
             (e.VerticalChange != 0 && VisibleRows(e.VerticalOffset - OriginY(), e.ViewportHeight) != (_firstRow, _lastRow)))
             InvalidateMeasure();
+        else if (e.VerticalChange != 0)
+            HealRealizedCovers();
     }
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {
@@ -251,7 +253,32 @@ public sealed class VirtualizingCardWallPanel : VirtualizingPanel
             if(index<0)continue;
             InternalChildren[i].Arrange(new Rect(index%_columns*_slotWidth,index/_columns*_rowHeight,_slotWidth,_rowHeight));
         }
+        ViewportImageQueue.NotifyLayout(_scroll);
+        HealRealizedCovers();
         return finalSize;
+    }
+
+    private void HealRealizedCovers()
+    {
+        if (!IsVisible) return;
+        for (int i = 0; i < InternalChildren.Count; i++)
+        {
+            HealElementCover(InternalChildren[i]);
+        }
+    }
+
+    private static void HealElementCover(DependencyObject root)
+    {
+        if (root is Border border && border.Background == null && !string.IsNullOrWhiteSpace(Cover.GetSource(border)))
+        {
+            Cover.EnsureLoaded(border);
+            return;
+        }
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            HealElementCover(VisualTreeHelper.GetChild(root, i));
+        }
     }
     protected override void OnItemsChanged(object sender,ItemsChangedEventArgs args)
     {

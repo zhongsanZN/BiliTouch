@@ -1,7 +1,10 @@
 using System;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Documents;
+using System.Windows.Media;
 using BiliTouch.Services;
 using BiliTouch.Views;
 
@@ -54,10 +57,15 @@ public partial class UpdatePromptWindow : FluentWindow
         _info = info;
 
         Headline.Text = $"发现新版本 v{UpdateChecker.FormatVersion(info.Version)}";
-        Subline.Text = $"当前版本 v{App.AppVersion} · {info.Title}";
-        NotesText.Text = string.IsNullOrWhiteSpace(info.Notes)
-            ? "(这个版本没有填写发布说明)"
-            : info.Notes;
+        var isRecommended = (info.Title?.Contains("推荐更新", StringComparison.OrdinalIgnoreCase) ?? false)
+            || (info.Notes?.Contains("推荐更新", StringComparison.OrdinalIgnoreCase) ?? false);
+        if (RecommendedBadge != null)
+            RecommendedBadge.Visibility = isRecommended ? Visibility.Visible : Visibility.Collapsed;
+        var cleanTitle = string.IsNullOrWhiteSpace(info.Title)
+            ? $"BiliTouch {UpdateChecker.FormatVersion(info.Version)}"
+            : info.Title.Trim();
+        Subline.Text = $"当前版本 v{App.AppVersion} · {cleanTitle}";
+        PopulateFormattedNotes(info.Notes);
 
         // 有附件字段就直接可用; 没有就先**置灰**等 OnWindowLoaded 去补(见 ApplyPendingInstallerState)。
         // ★ 两条路都保留主按钮: 「这个 Release 没挂安装器」与「这一次没取到附件信息」在构造期
@@ -512,6 +520,163 @@ public partial class UpdatePromptWindow : FluentWindow
         if (bytes >= 1024L * 1024 * 1024) return $"{bytes / 1024.0 / 1024 / 1024:0.0} GB";
         if (bytes >= 1024 * 1024) return $"{bytes / 1024.0 / 1024:0.0} MB";
         return $"{bytes / 1024.0:0} KB";
+    }
+
+    private static readonly Regex MarkdownImageLineRegex = new(@"^\s*!\[[^\]]*\]\([^)]+\)\s*$", RegexOptions.Compiled);
+    private static readonly Regex MarkdownDownloadBarRegex = new(@"^\s*\[下载安装包[^\]]*\]\([^)]+\).*$", RegexOptions.Compiled);
+    private static readonly Regex MarkdownLinkRegex = new(@"\[([^\]]+)\]\([^)]+\)", RegexOptions.Compiled);
+    private static readonly Regex MarkdownHeadingRegex = new(@"^\s*#{1,4}\s+(.*)$", RegexOptions.Compiled);
+    private static readonly Regex MarkdownBulletRegex = new(@"^\s*(?:[-*•·])\s+(.*)$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// 将发布说明（无论纯文本排版还是含 Markdown 标记的历史说明）清洗并渲染为层次分明的富文本段落，
+    /// 彻底消除裸露的 URL、`###`、`**`、反引号与截图链接。
+    /// </summary>
+    private void PopulateFormattedNotes(string? rawNotes)
+    {
+        NotesText.Inlines.Clear();
+        if (string.IsNullOrWhiteSpace(rawNotes))
+        {
+            NotesText.Text = "(这个版本没有填写发布说明)";
+            return;
+        }
+
+        var primaryBrush = TryFindResource("TextPrimaryBrush") as Brush ?? Brushes.White;
+        var secondaryBrush = TryFindResource("TextSecondaryBrush") as Brush ?? Brushes.LightGray;
+        var accentBrush = TryFindResource("AccentTextBrush") as Brush ?? Brushes.HotPink;
+
+        var lines = rawNotes.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        bool hasContent = false;
+        bool lastWasBreak = true;
+
+        static string CleanInline(string text)
+        {
+            var s = MarkdownLinkRegex.Replace(text, "$1");
+            s = s.Replace("**", "").Replace("`", "");
+            return s.Trim();
+        }
+
+        void AppendLineBreak(bool extraSpacing = false)
+        {
+            NotesText.Inlines.Add(new LineBreak());
+            if (extraSpacing)
+                NotesText.Inlines.Add(new Run("\u200B") { FontSize = 6 });
+            if (extraSpacing)
+                NotesText.Inlines.Add(new LineBreak());
+        }
+
+        foreach (var rawLine in lines)
+        {
+            var trimmed = rawLine.Trim();
+            if (trimmed.Length == 0)
+            {
+                if (hasContent && !lastWasBreak)
+                {
+                    AppendLineBreak();
+                    lastWasBreak = true;
+                }
+                continue;
+            }
+
+            if (MarkdownImageLineRegex.IsMatch(trimmed) || MarkdownDownloadBarRegex.IsMatch(trimmed))
+                continue;
+
+            var headingMatch = MarkdownHeadingRegex.Match(trimmed);
+            if (headingMatch.Success)
+            {
+                var hText = CleanInline(headingMatch.Groups[1].Value);
+                if (hText.StartsWith("BiliTouch ", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (hasContent && !lastWasBreak) AppendLineBreak(extraSpacing: true);
+                NotesText.Inlines.Add(new Run("✦ " + hText)
+                {
+                    FontSize = 14,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = primaryBrush
+                });
+                AppendLineBreak();
+                hasContent = true;
+                lastWasBreak = false;
+                continue;
+            }
+
+            if (trimmed.StartsWith("✦"))
+            {
+                var hText = CleanInline(trimmed);
+                if (hasContent && !lastWasBreak) AppendLineBreak(extraSpacing: true);
+                NotesText.Inlines.Add(new Run(hText)
+                {
+                    FontSize = 14,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = primaryBrush
+                });
+                AppendLineBreak();
+                hasContent = true;
+                lastWasBreak = false;
+                continue;
+            }
+
+            var bulletMatch = MarkdownBulletRegex.Match(trimmed);
+            if (bulletMatch.Success)
+            {
+                var bText = CleanInline(bulletMatch.Groups[1].Value);
+                NotesText.Inlines.Add(new Run("  • ")
+                {
+                    FontWeight = FontWeights.Bold,
+                    Foreground = accentBrush
+                });
+                var colonIdx = bText.IndexOf('：');
+                if (colonIdx <= 0) colonIdx = bText.IndexOf(':');
+                if (colonIdx > 0 && colonIdx <= 28)
+                {
+                    NotesText.Inlines.Add(new Run(bText[..(colonIdx + 1)])
+                    {
+                        FontWeight = FontWeights.SemiBold,
+                        Foreground = primaryBrush
+                    });
+                    NotesText.Inlines.Add(new Run(bText[(colonIdx + 1)..])
+                    {
+                        Foreground = secondaryBrush
+                    });
+                }
+                else
+                {
+                    NotesText.Inlines.Add(new Run(bText)
+                    {
+                        Foreground = secondaryBrush
+                    });
+                }
+                AppendLineBreak();
+                hasContent = true;
+                lastWasBreak = false;
+                continue;
+            }
+
+            var cleanLine = CleanInline(trimmed);
+            if (cleanLine.StartsWith("【推荐更新】"))
+            {
+                NotesText.Inlines.Add(new Run("【推荐更新】")
+                {
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = accentBrush
+                });
+                NotesText.Inlines.Add(new Run(cleanLine["【推荐更新】".Length..])
+                {
+                    FontWeight = FontWeights.Medium,
+                    Foreground = primaryBrush
+                });
+            }
+            else
+            {
+                NotesText.Inlines.Add(new Run(cleanLine)
+                {
+                    Foreground = primaryBrush
+                });
+            }
+            AppendLineBreak();
+            hasContent = true;
+            lastWasBreak = false;
+        }
     }
 
     /// <summary>

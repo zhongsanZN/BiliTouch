@@ -65,18 +65,29 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0">
-            <TextBlock x:Name="Headline" FontSize="16" FontWeight="SemiBold"
-                       Foreground="{DynamicResource TextPrimaryBrush}" />
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock x:Name="Headline" FontSize="17" FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextPrimaryBrush}" />
+                <Border x:Name="RecommendedBadge" Visibility="Collapsed"
+                        Margin="10,0,0,0" Padding="9,3" CornerRadius="10"
+                        VerticalAlignment="Center"
+                        Background="{DynamicResource AccentSoftFillBrush}"
+                        BorderBrush="{DynamicResource AccentBorderFillBrush}" BorderThickness="1">
+                    <TextBlock Text="推荐更新" FontSize="11.5" FontWeight="SemiBold"
+                               Foreground="{DynamicResource AccentTextBrush}" />
+                </Border>
+            </StackPanel>
             <TextBlock x:Name="Subline" Margin="0,6,0,0" FontSize="12"
                        Foreground="{DynamicResource TextTertiaryBrush}" />
         </StackPanel>
 
-        <!-- 发布说明正文: 按纯文本展示(它本来就是发布脚本写给用户看的那段, 不需要 markdown 渲染) -->
-        <Border Grid.Row="1" Margin="0,16,0,0" CornerRadius="10" Padding="20,16"
+        <!-- 发布说明正文: 结构化排版展示（支持【推荐更新】导语、✦ 分组小标题与 • 要点高亮） -->
+        <Border Grid.Row="1" Margin="0,16,0,0" CornerRadius="12" Padding="20,16"
                 Background="{DynamicResource CardBackgroundBrush}"
                 BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
             <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
-                <TextBlock x:Name="NotesText" TextWrapping="Wrap" FontSize="13" LineHeight="22"
+                <TextBlock x:Name="NotesText" TextWrapping="Wrap" FontSize="13" LineHeight="23"
                            Foreground="{DynamicResource TextPrimaryBrush}" />
             </ScrollViewer>
         </Border>

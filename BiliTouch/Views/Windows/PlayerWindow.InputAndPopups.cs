@@ -49,6 +49,19 @@ public partial class PlayerWindow
         HideVolumePopupSoon();
     }
 
+    private void OnAudioBadgeClick(object sender, MouseButtonEventArgs e)
+    {
+        if (_closing || VolumePopup == null) return;
+        e.Handled = true;
+        if (VolumePopup.IsOpen && _volumePinned)
+        {
+            CloseVolumePopup();
+            return;
+        }
+        _volumePinned = true;
+        ShowVolumePopup();
+    }
+
     private void OnVolumeHoverEnter(object sender, MouseEventArgs e)
     {
         if (TouchSupport.IsTouchMouse(e)) return;   // 触屏由点击处理, 忽略合成鼠标事件
@@ -70,7 +83,10 @@ public partial class PlayerWindow
         VolumePopup.PlacementTarget = BtnVolume;
         VolumePopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Top;
         if (VolumePopupText != null) VolumePopupText.Text = _volumeCache + "%";
+        var wasOpen = VolumePopup.IsOpen;
         VolumePopup.IsOpen = true;
+        if (!wasOpen)
+            HyperMotion.AnimatePopupEntrance(VolumePopup.Child, startScale: 0.90, offsetY: 10, origin: new Point(0.5, 1.0));
         // 正在操作就别让自动隐藏把控制栏(连带弹层)收走
         _controlsHideTimer?.Stop();
     }
@@ -93,6 +109,7 @@ public partial class PlayerWindow
     {
         _volumeCloseTimer?.Stop();
         if (_closing || _volumeHover || _volumePinned || BtnVolume.IsMouseOver ||
+            BtnAudioBadge?.IsMouseOver == true ||
             VolumePopup.Child is { IsMouseOver: true } or { IsMouseCaptureWithin: true }) return;
         VolumePopup.IsOpen = false;
     }
@@ -157,7 +174,9 @@ public partial class PlayerWindow
 
         if (!IsTouchControl(e.OriginalSource as DependencyObject) && HandleWebVideoWheel(e.Delta)) { e.Handled = true; return; }
         var wheelSource = e.OriginalSource as DependencyObject;
-        if (IsInPopup(wheelSource, SpeedPopup) || IsInPopup(wheelSource, QualityPopup) || IsInPopup(wheelSource, DanmakuAreaPopup))
+        if (IsInPopup(wheelSource, SpeedPopup) || IsInPopup(wheelSource, QualityPopup) ||
+            IsInPopup(wheelSource, SubtitlePopup) || IsInPopup(wheelSource, DanmakuAreaPopup) ||
+            IsInPopup(wheelSource, VolumePopup))
             return;
         // 反向滚动时先清掉上次攒的余量, 否则要先"抵消"掉才动
         if (Math.Sign(e.Delta) != Math.Sign(_wheelAccum)) _wheelAccum = 0;
@@ -284,45 +303,22 @@ public partial class PlayerWindow
         _speedOsdTimer?.Stop();
         _speedOsdTimer = null;
 
-        // 每次都从"当前透明度"补到 1(同 ShowVolumeHint 的理由:
-        // 上一次的淡出可能还没跑完, 从当前值补最稳, 不会出现"提示淡到一半卡住")
-        SpeedOsd.Visibility = Visibility.Visible;
-        SpeedOsd.BeginAnimation(OpacityProperty, null);
-        // ★★★ 淡入动画**绝不能写 FillBehavior=Stop**(2026-10-14 修"缓存中长按 2x,
-        //   缓存结束后倍速提示消失"): XAML 里 SpeedOsd 的基准值是 `Opacity="0"`,
-        //   而 Stop 语义是"播完动画把属性还原成**基准值**" —— 于是 120ms 淡入一结束,
-        //   Opacity 立刻掉回 0, 提示虽然 Visibility=Visible 却整块透明。
-        //   探针 bd-probe-speedosd 实测: 第一次显示 +180ms 后 Opacity=0.00。
-        //   ★ 这解释了为什么"第二次显示是好的": 上一次淡出的 Completed 里写了
-        //     `Opacity = 1`, 把基准值改成了 1, 之后所有淡入的 Stop 都还原到 1。
-        //     ⇒ 只有**每个进程的第一次显示**中招, 与"缓存期间长按"完全对得上
-        //       (缓存期间恰好是打开视频后的第一次长按)。
-        //   ★ 与 ShowVolumeHint 保持一致: 它的淡入也没写 FillBehavior(默认 Hold)。
-        SpeedOsd.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(Math.Min(1.0, SpeedOsd.Opacity), 1, TimeSpan.FromMilliseconds(120)));
+        HyperMotion.AnimateCapsuleIn(SpeedOsd, fromY: -10, fromScale: 0.90, origin: new Point(0.5, 0.0));
 
         if (hold) return;   // 长按期间: 挂着等松手
 
-        // 松手了: 亮一下"已恢复"再淡出
+        // 松手了: 亮一下"已恢复"再柔顺收起
         _speedOsdTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(650) };
         _speedOsdTimer.Tick += (_, _) =>
         {
             _speedOsdTimer?.Stop();
             _speedOsdTimer = null;
             if (_closing) return;
-            var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(240))
-            { FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop };
-            fade.Completed += (_, _) =>
+            HyperMotion.AnimateCapsuleOut(SpeedOsd, toY: -8, toScale: 0.94, onComplete: () =>
             {
-                // 淡出期间用户可能又按住了(ShowSpeedHint 已重开): 那时不能藏
                 if (_closing || _speedOsdTimer != null) return;
-                // ★ 摘动画 + 归位(2026-10-13 清理动画 bug 时的同款问题):
-                //   DoubleAnimation 默认 Hold 会把 Opacity 钉在 0, 下次常显就整块透明。
-                SpeedOsd.BeginAnimation(OpacityProperty, null);
-                SpeedOsd.Opacity = 1;
                 SpeedOsd.Visibility = Visibility.Collapsed;
-            };
-            SpeedOsd.BeginAnimation(OpacityProperty, fade);
+            });
         };
         _speedOsdTimer.Start();
     }
@@ -335,14 +331,7 @@ public partial class PlayerWindow
         // 0 用静音图标, 其余用喇叭: 一眼就能看出"是没声还是声音小"
         VolumeOsdIcon.Text = volume == 0 ? "\uE74F" : "\uE767";
 
-        // 每次都从"当前透明度"补到 1。
-        // 不要在"已经 Visible 就跳过"上做判断 —— 淡出动画还没跑完时(计时器已被置空)
-        // 用户再滚一下, 浮层仍是 Visible 于是不重播, 结果它继续淡到 0 卡住,
-        // 用户反而看不到任何音量反馈。从当前值补到 1 在这两种情况下都正确:
-        // 已经在 1 上就是原地不动(连滚不闪), 淡出中途则接着淡回来。
-        VolumeOsd.Visibility = Visibility.Visible;
-        VolumeOsd.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(Math.Min(1.0, VolumeOsd.Opacity), 1, TimeSpan.FromMilliseconds(120)));
+        HyperMotion.AnimateCapsuleIn(VolumeOsd, fromY: -10, fromScale: 0.90, origin: new Point(0.5, 0.5));
 
         _volumeOsdTimer?.Stop();
         _volumeOsdTimer = new DispatcherTimer { Interval = VolumeOsdHold };
@@ -351,21 +340,11 @@ public partial class PlayerWindow
             _volumeOsdTimer?.Stop();
             _volumeOsdTimer = null;
             if (_closing) return;
-            var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(240))
-            { FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop };
-            fade.Completed += (_, _) =>
+            HyperMotion.AnimateCapsuleOut(VolumeOsd, toY: -8, toScale: 0.94, onComplete: () =>
             {
-                // 淡出期间用户又调了一次 -> ShowVolumeHint 已经重开计时器并重播淡入,
-                // 这时绝对不能把浮层藏掉(表现就是"滚轮调音量提示闪一下就不见了")
                 if (_closing || _volumeOsdTimer != null) return;
-                // ★ 摘动画 + 归位(2026-10-13 修): 原来这里是裸 Collapsed,
-                //   而 DoubleAnimation 默认 FillBehavior=Hold ⇒ Opacity 被钉死在 0,
-                //   下次滚轮时浮层虽 Visible 却整块透明 —— 提示像"消失"了一样。
-                VolumeOsd.BeginAnimation(OpacityProperty, null);
-                VolumeOsd.Opacity = 1;
                 VolumeOsd.Visibility = Visibility.Collapsed;
-            };
-            VolumeOsd.BeginAnimation(OpacityProperty, fade);
+            });
         };
         _volumeOsdTimer.Start();
     }
@@ -375,6 +354,7 @@ public partial class PlayerWindow
     {
         _volumeOsdTimer?.Stop();
         _volumeOsdTimer = null;
+        if (VolumeOsd != null) HyperMotion.Cancel(VolumeOsd);
     }
 
     /// <summary>隐藏倍速提示并停掉它的计时器(关闭流程用)</summary>
@@ -382,6 +362,7 @@ public partial class PlayerWindow
     {
         _speedOsdTimer?.Stop();
         _speedOsdTimer = null;
+        if (SpeedOsd != null) HyperMotion.Cancel(SpeedOsd);
     }
 
     /// <summary>允许的最低/最高倍速。范围写在这里一处, 输入夹取与预设列表都引用它。</summary>
@@ -554,6 +535,7 @@ public partial class PlayerWindow
         DanmakuAreaPopup.PlacementTarget = BtnDanmakuArea;
         RightAlignPopup(DanmakuAreaPopup, BtnDanmakuArea);
         DanmakuAreaPopup.IsOpen = true;
+        HyperMotion.AnimatePopupEntrance(DanmakuAreaPopup.Child, startScale: 0.91, offsetY: 10, origin: new Point(0.5, 1.0));
     }
 
     private void CloseDanmakuAreaPopup()
@@ -584,6 +566,7 @@ public partial class PlayerWindow
 
     private bool IsInAnyPlayerPopup(DependencyObject? source)
         => IsInPopup(source, DanmakuAreaPopup)
+           || IsInPopup(source, SubtitlePopup)
            || IsInPopup(source, SpeedPopup)
            || IsInPopup(source, QualityPopup)
            || IsInPopup(source, VolumePopup);
@@ -745,6 +728,20 @@ public partial class PlayerWindow
             e.Handled = true;
             return;
         }
+        if (SubtitlePopup?.IsOpen == true)
+        {
+            CloseSubtitlePopup();
+            _videoGestureActive = false;
+            e.Handled = true;
+            return;
+        }
+        if (QualityPopup?.IsOpen == true)
+        {
+            QualityPopup.IsOpen = false;
+            _videoGestureActive = false;
+            e.Handled = true;
+            return;
+        }
         // 跳过提示条上的点击(「撤回」按钮)同样不算视频区手势 ——
         // 它是覆盖层里除了控制栏之外唯一会吃掉左键的自绘元素, 不挡住就会"点撤回顺带切一次播放/暂停"。
         if (SkipNoticeBorder != null && SkipNoticeBorder.IsMouseOver) return;
@@ -891,6 +888,8 @@ public partial class PlayerWindow
         RestoreKeyboardFocus();
         if (SkipNoticeBorder != null && SkipNoticeBorder.IsMouseOver) return;
         if (DanmakuAreaPopup?.IsOpen == true) { CloseDanmakuAreaPopup(); _rightGestureActive = false; e.Handled = true; return; }
+        if (SubtitlePopup?.IsOpen == true) { CloseSubtitlePopup(); _rightGestureActive = false; e.Handled = true; return; }
+        if (QualityPopup?.IsOpen == true) { QualityPopup.IsOpen = false; _rightGestureActive = false; e.Handled = true; return; }
         // 弹层开着 ⇒ 这一下属于浮层, 不起步(地基, 见方法说明)
         if (AnyPlayerPopupOpen) { _rightGestureActive = false; return; }
         _rightGestureActive = true;
@@ -1136,6 +1135,11 @@ public partial class PlayerWindow
             SubtitlePopup.IsOpen = false;
             return;
         }
+        if (QualityPopup?.IsOpen == true)
+        {
+            QualityPopup.IsOpen = false;
+            return;
+        }
         if (_isFullscreen)
         {
             _isFullscreen = false;
@@ -1164,11 +1168,27 @@ public partial class PlayerWindow
     /// </summary>
     private void DismissDanmakuAreaIfOutside(DependencyObject? source)
     {
-        if (DanmakuAreaPopup?.IsOpen != true) return;
-        if (IsInPopup(source, DanmakuAreaPopup)) return;
-        if (IsDescendantOf(source, BtnDanmakuArea)) return;
-        if (IsDescendantOf(source, VideoAreaRoot) && !IsDescendantOf(source, ControlBar)) return;
-        CloseDanmakuAreaPopup();
+        if (DanmakuAreaPopup?.IsOpen == true
+            && !IsInPopup(source, DanmakuAreaPopup)
+            && !IsDescendantOf(source, BtnDanmakuArea)
+            && !(IsDescendantOf(source, VideoAreaRoot) && !IsDescendantOf(source, ControlBar)))
+        {
+            CloseDanmakuAreaPopup();
+        }
+        if (SubtitlePopup?.IsOpen == true
+            && !IsInPopup(source, SubtitlePopup)
+            && !IsDescendantOf(source, BtnSubtitle)
+            && !(IsDescendantOf(source, VideoAreaRoot) && !IsDescendantOf(source, ControlBar)))
+        {
+            CloseSubtitlePopup();
+        }
+        if (QualityPopup?.IsOpen == true
+            && !IsInPopup(source, QualityPopup)
+            && !IsDescendantOf(source, BtnQuality)
+            && !(IsDescendantOf(source, VideoAreaRoot) && !IsDescendantOf(source, ControlBar)))
+        {
+            QualityPopup.IsOpen = false;
+        }
     }
 
     private void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
@@ -1784,31 +1804,19 @@ public partial class PlayerWindow
     {
         if (_closing) return;
         LocalToastText.Text = msg;
-        LocalToastBorder.Visibility = Visibility.Visible;
-        // ★ 淡入前必须先摘掉上一次的动画 + 归位: 连发两条 Toast 时(投币成功又来一条提示),
-        //   上一次的淡出动画可能还挂着。不摘的话新淡入的起点读到的是"动画当前值"
-        //   (可能已经是 0), 于是这条 Toast 是从 0 淡到 0.95 —— **等于看不见**。
-        LocalToastBorder.BeginAnimation(OpacityProperty, null);
-        LocalToastBorder.Opacity = 0.95;
-        LocalToastBorder.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(0.95, 1, TimeSpan.FromMilliseconds(160))
-            { FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop });
+        HyperMotion.AnimateCapsuleIn(LocalToastBorder, fromY: -10, fromScale: 0.90, origin: new Point(1.0, 0.0));
         _localToastTimer?.Stop();
         _localToastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.4) };
         _localToastTimer.Tick += (_, _) =>
         {
             _localToastTimer.Stop();
-            var a = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(280))
-            { FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop };
-            a.Completed += (_, _) =>
+            _localToastTimer = null;
+            if (_closing) return;
+            HyperMotion.AnimateCapsuleOut(LocalToastBorder, toY: -8, toScale: 0.94, onComplete: () =>
             {
-                // ★ 淡出结束后把动画摘掉并归位: 不摘的话 Opacity 被动画钉在 0,
-                //   下一条 Toast 即使 Visible 也完全不显示(整块透明)。
-                LocalToastBorder.BeginAnimation(OpacityProperty, null);
-                LocalToastBorder.Opacity = 0.95;
+                if (_closing || _localToastTimer != null) return;
                 LocalToastBorder.Visibility = Visibility.Collapsed;
-            };
-            LocalToastBorder.BeginAnimation(OpacityProperty, a);
+            });
         };
         _localToastTimer.Start();
     }));

@@ -676,15 +676,14 @@ public partial class PlayerWindow
                 return;
             }
 
-            // During active shared-element entry (~250ms), keep network/decode pipeline running at full speed
-            // while deferring heavy right-rail visual tree binds until the entry surface lands.
+            // 立即应用视频宽高元数据（不推迟到一镜到底之后），使「竖屏优化」能在展开中途或起始帧即精准落入竖屏视频列。
             var pageDim = detail.Pages.FirstOrDefault(p => p.Cid == _currentCid);
             var detailW = pageDim is { VideoWidth: > 0, VideoHeight: > 0 } ? pageDim.VideoWidth : detail.VideoWidth;
             var detailH = pageDim is { VideoWidth: > 0, VideoHeight: > 0 } ? pageDim.VideoHeight : detail.VideoHeight;
+            if (detailW > 0 && detailH > 0) UpdateDetectedVideoSize(detailW, detailH, fromMetadata: true);
             RunOrDeferAfterSeamlessEntry(() =>
             {
                 if (_closing || gen != _loadGen) return;
-                if (detailW > 0 && detailH > 0) UpdateDetectedVideoSize(detailW, detailH, fromMetadata: true);
                 UpdateUiFromDetail(detail);
                 ApplySeason(detail.Season);
                 ApplyPages(detail.Pages);
@@ -1490,6 +1489,16 @@ public partial class PlayerWindow
         _loadingGen++;
         LoadingText.Text = message;
 
+        if (_seamless.EntryWindow != null)
+        {
+            // 一镜到底入场舞台覆盖在最顶层期间，底层播放器直接静态就位、不播淡入 Storyboard，
+            // 避免被遮挡窗口每帧触发多余 Present() 拖慢入场帧率。
+            LoadingOverlay.BeginAnimation(OpacityProperty, null);
+            LoadingOverlay.Opacity = 1;
+            LoadingOverlay.Visibility = Visibility.Visible;
+            return;
+        }
+
         if (LoadingOverlay.Visibility != Visibility.Visible)
         {
             // 首次显示: 基准值设 0, 再淡到 1 —— 别"啪"地糊一层黑上来
@@ -1528,6 +1537,11 @@ public partial class PlayerWindow
 
         if (_closing || LoadingOverlay == null) return;
         if (LoadingOverlay.Visibility != Visibility.Visible) return;
+        if (_seamless.EntryWindow != null)
+        {
+            FinishHideLoading();
+            return;
+        }
 
         var gen = ++_loadingGen;
         var from = LoadingOverlay.Opacity;

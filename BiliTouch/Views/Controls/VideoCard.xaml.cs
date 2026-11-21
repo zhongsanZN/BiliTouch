@@ -181,7 +181,7 @@ public partial class VideoCard : UserControl
             _pressAt = e.GetPosition(this);
             _pressed = true;
             _dragCanceled = false;
-            AnimateCoverScale(0.97, 110);
+            AnimateCoverScale(0.958, isPress: true);
         };
         PreviewMouseMove += (_, e) =>
         {
@@ -190,13 +190,13 @@ public partial class VideoCard : UserControl
             if (Math.Abs(p.X - _pressAt.X) > ClickSlop || Math.Abs(p.Y - _pressAt.Y) > ClickSlop)
             {
                 _dragCanceled = true;
-                AnimateCoverScale(IsMouseOver ? 1.04 : 1.0);
+                AnimateCoverScale(IsMouseOver ? 1.04 : 1.0, isRelease: true);
             }
         };
         PreviewMouseLeftButtonUp += (_, _) =>
         {
             _pressed = false;
-            AnimateCoverScale(IsMouseOver ? 1.04 : 1.0);
+            AnimateCoverScale(IsMouseOver ? 1.04 : 1.0, isRelease: true);
         };
         // ★ 触摸兜底(2026-11-04): 只靠 MouseLeftButtonUp 不够 —— 手指落在卡片上时,
         //   外层 ScrollViewer 的平移逻辑可能把手势接走, 提升出来的鼠标 up 就到不了卡片,
@@ -209,13 +209,17 @@ public partial class VideoCard : UserControl
             _touchPressed = true;
             _touchDragCanceled = false;
             _touchDevice = e.TouchDevice;
+            AnimateCoverScale(0.958, isPress: true);
         };
         PreviewTouchMove += (_, e) =>
         {
             if (!_touchPressed || !ReferenceEquals(_touchDevice, e.TouchDevice)) return;
             var p = e.GetTouchPoint(this).Position;
             if (Math.Abs(p.X - _touchPressAt.X) > ClickSlop || Math.Abs(p.Y - _touchPressAt.Y) > ClickSlop)
+            {
                 _touchDragCanceled = true;
+                AnimateCoverScale(1.0, isRelease: true);
+            }
         };
         PreviewTouchUp += (_, e) =>
         {
@@ -224,10 +228,15 @@ public partial class VideoCard : UserControl
             _touchPressed = false;
             _touchDevice = null;
             _touchDragCanceled = false;
+            AnimateCoverScale(1.0, isRelease: true);
             if (wasDrag) return;
             // 抑制随后提升的 MouseUp / TouchSupport 重复触发（避免编辑模式单点被翻转两次）
             e.Handled = true;
             OpenVideo();
+        };
+        Unloaded += (_, _) =>
+        {
+            if (_coverScale != null) HyperMotion.Cancel(_coverScale);
         };
         DataContextChanged += (_, _) =>
         {
@@ -238,6 +247,7 @@ public partial class VideoCard : UserControl
             _ignoreTapUntil = 0;
             if (_coverScale != null)
             {
+                HyperMotion.Cancel(_coverScale);
                 _coverScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
                 _coverScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
                 _coverScale.ScaleX = 1;
@@ -293,18 +303,25 @@ public partial class VideoCard : UserControl
 
     private void OnMouseEnter(object sender, MouseEventArgs e) => AnimateCoverScale(1.04);
 
-    private void OnMouseLeave(object sender, MouseEventArgs e) => AnimateCoverScale(1);
+    private void OnMouseLeave(object sender, MouseEventArgs e)
+    {
+        _pressed = false;
+        AnimateCoverScale(1.0);
+    }
 
-    /// <summary>悬停放大/按压微缩(作用在封面卡片上, 用户要求"放大效果不要删")</summary>
-    private void AnimateCoverScale(double zoom, int durationMs = 180)
+    /// <summary>悬停微浮 / 澎湃 OS 物理按压下陷与弹性回弹（作用在封面卡片上）</summary>
+    private void AnimateCoverScale(double zoom, bool isPress = false, bool isRelease = false)
     {
         if (_coverScale == null) return;
-        var ease = new QuarticEase { EasingMode = EasingMode.EaseOut };
-        var ms = TimeSpan.FromMilliseconds(durationMs);
-        _coverScale.BeginAnimation(ScaleTransform.ScaleXProperty,
-            new DoubleAnimation(_coverScale.ScaleX, zoom, ms) { EasingFunction = ease });
-        _coverScale.BeginAnimation(ScaleTransform.ScaleYProperty,
-            new DoubleAnimation(_coverScale.ScaleY, zoom, ms) { EasingFunction = ease });
+        var spec = isPress
+            ? HyperMotion.TactilePress
+            : (isRelease ? HyperMotion.TactileRelease : HyperMotion.HoverLift);
+        HyperMotion.SpringTo(_coverScale, "Scale", _coverScale.ScaleX, zoom, spec, v =>
+        {
+            var s = Math.Max(0.5, v);
+            _coverScale.ScaleX = s;
+            _coverScale.ScaleY = s;
+        });
     }
 
     /// <summary>
@@ -313,7 +330,7 @@ public partial class VideoCard : UserControl
     ///   由页面在内容区那一层做命中测试后直接调它(见 HomePage.Swipe 的说明)。
     /// </summary>
     private long _ignoreTapUntil;
-    internal void CancelGestureTap() { _touchPressed=false; _touchDragCanceled=true; _dragCanceled=true; _ignoreTapUntil=Environment.TickCount64+700; }
+    internal void CancelGestureTap() { _touchPressed=false; _touchDragCanceled=true; _dragCanceled=true; _ignoreTapUntil=Environment.TickCount64+700; AnimateCoverScale(1.0, isRelease: true); }
 
     internal void FinishGestureTap() { _ignoreTapUntil=Environment.TickCount64+100; }
 
@@ -337,7 +354,7 @@ public partial class VideoCard : UserControl
             return;
         }
 
-        SeamlessTransitionDirector.Capture(CoverCard, v.Bvid, 8.0, CoverBox);
+        SeamlessTransitionDirector.Capture(CoverCard, v.Bvid, 8.0, CoverBox, v.VideoWidth, v.VideoHeight);
         Svc.Player.PlayVideo(v.Bvid, v.Title);
     }
 

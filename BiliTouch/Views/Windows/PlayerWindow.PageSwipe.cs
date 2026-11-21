@@ -236,8 +236,6 @@ public partial class PlayerWindow
         var width = Math.Max(1, PageHost.ActualWidth);
         var c = TransformOf(current);
         var o = TransformOf(other);
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        var dur = TimeSpan.FromMilliseconds(switchPage ? 180 : 150);
         _infoPageAnimating = true;
 
         var done = false;
@@ -249,6 +247,8 @@ public partial class PlayerWindow
             _infoActiveSettle = null;
             _cancelInfoSettle = null;
             _infoSettleTarget = -1;
+            BiliTouch.Helpers.HyperMotion.Cancel(current, "InfoSwipeX");
+            BiliTouch.Helpers.HyperMotion.Cancel(other, "InfoSwipeX");
             c.BeginAnimation(TranslateTransform.XProperty, null);
             o.BeginAnimation(TranslateTransform.XProperty, null);
             c.X = 0;
@@ -288,6 +288,8 @@ public partial class PlayerWindow
             done = true;
             _infoActiveSettle = _cancelInfoSettle = null;
             _infoSettleTarget = -1;
+            BiliTouch.Helpers.HyperMotion.Cancel(current, "InfoSwipeX");
+            BiliTouch.Helpers.HyperMotion.Cancel(other, "InfoSwipeX");
             c.BeginAnimation(TranslateTransform.XProperty, null);
             o.BeginAnimation(TranslateTransform.XProperty, null);
             c.X = cx; o.X = ox;
@@ -295,38 +297,32 @@ public partial class PlayerWindow
             RestoreInfoScrollPanning();
         };
 
+        var swipeSpec = new BiliTouch.Helpers.HyperMotion.SpringSpec(21.0, 0.94, 0.35, 1.5);
         if (switchPage)
         {
             var outX = target > PageIndex ? -width : width;
-            var moveOut = new DoubleAnimation(c.X, outX, dur) { EasingFunction = ease };
-            var moveIn = new DoubleAnimation(o.X, 0, dur) { EasingFunction = ease };
-            moveIn.Completed += (_, _) => Complete();
-            c.BeginAnimation(TranslateTransform.XProperty, moveOut);
-            o.BeginAnimation(TranslateTransform.XProperty, moveIn);
+            BiliTouch.Helpers.HyperMotion.SpringTo(current, "InfoSwipeX", c.X, outX, swipeSpec, x => c.X = x, inheritIfRunning: false);
+            BiliTouch.Helpers.HyperMotion.SpringTo(other, "InfoSwipeX", o.X, 0, swipeSpec, x => o.X = x, Complete, inheritIfRunning: false);
         }
         else
         {
-            var back = new DoubleAnimation(c.X, 0, dur) { EasingFunction = ease };
-            var backSide = new DoubleAnimation(o.X, o.X < 0 ? -width : width, dur) { EasingFunction = ease };
-            back.Completed += (_, _) => Complete();
-            c.BeginAnimation(TranslateTransform.XProperty, back);
-            o.BeginAnimation(TranslateTransform.XProperty, backSide);
+            BiliTouch.Helpers.HyperMotion.SpringTo(current, "InfoSwipeX", c.X, 0, swipeSpec, x => c.X = x, Complete, inheritIfRunning: false);
+            BiliTouch.Helpers.HyperMotion.SpringTo(other, "InfoSwipeX", o.X, o.X < 0 ? -width : width, swipeSpec, x => o.X = x, inheritIfRunning: false);
         }
     }
 
-    /// <summary>Tab 点击的入场动画: 从一侧 44px 滑入 + 淡入, 不再是硬切。</summary>
+    /// <summary>Tab 点击的澎湃 OS 物理弹簧入场: 从一侧 38px 丝滑滑入 + 淡入。</summary>
     private void AnimatePageEntrance(FrameworkElement panel, bool fromRight)
     {
         if (_infoPageSwitching || _infoPageAnimating || panel == null) return;
         var t = TransformOf(panel);
         t.BeginAnimation(TranslateTransform.XProperty, null);
         panel.BeginAnimation(OpacityProperty, null);
-        t.X = fromRight ? 44 : -44;
-        panel.Opacity = 0.55;
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        t.BeginAnimation(TranslateTransform.XProperty,
-            new DoubleAnimation(0, TimeSpan.FromMilliseconds(200)) { EasingFunction = ease });
-        panel.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(180)));
+        var fromX = fromRight ? 38.0 : -38.0;
+        BiliTouch.Helpers.HyperMotion.SpringTo(panel, "InfoSwipeX", fromX, 0.0,
+            BiliTouch.Helpers.HyperMotion.SheetSlide, x => t.X = x, inheritIfRunning: false);
+        BiliTouch.Helpers.HyperMotion.SpringTo(panel, "InfoOpacity", 0.38, 1.0,
+            BiliTouch.Helpers.HyperMotion.SmoothFade, op => panel.Opacity = Math.Clamp(op, 0, 1), inheritIfRunning: false);
     }
 
     private RadioButton SecondaryPageButton() => UsesDetachedCommentsLayout ? TabRecommended : TabComments;

@@ -201,8 +201,17 @@
                        而不是紧贴 logo 下方、把大半个侧边栏空着。
                      2026-09-26 用户改版: 收藏/历史从侧栏撤下(入口收进「我的」页),
                      新增「我的」; 左下角的头像账户区也一并撤掉。 -->
-                <StackPanel Grid.Row="1" HorizontalAlignment="Stretch" Margin="10,18,10,0"
-                            VerticalAlignment="Center">
+                <Grid x:Name="NavRailHost" Grid.Row="1" Margin="10,18,10,0" VerticalAlignment="Center">
+                <!-- 澎湃 OS 侧栏弹性滑动选中指示胶囊（纯 RenderTransform，零布局重排） -->
+                <Border x:Name="NavRailIndicator" Width="3.5" Height="22" CornerRadius="2"
+                        HorizontalAlignment="Left" VerticalAlignment="Top" Margin="1,0,0,0"
+                        Background="{DynamicResource AccentBrush}" Opacity="0" IsHitTestVisible="False"
+                        Panel.ZIndex="2">
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="NavRailIndicatorTrans" Y="0" />
+                    </Border.RenderTransform>
+                </Border>
+                <StackPanel HorizontalAlignment="Stretch">
                     <StackPanel.Resources>
                         <!--
                             导航项的图标和文字都要跟随选中色(悬停浅色 / 选中粉色)。
@@ -282,6 +291,7 @@
                         </StackPanel>
                     </RadioButton>
                 </StackPanel>
+                </Grid>
                 <StackPanel x:Name="SidebarActions" Grid.Row="2" HorizontalAlignment="Center" Margin="0,10,0,16">
                     <Button x:Name="SidebarMessages" Width="44" Height="44" Style="{StaticResource IconButtonStyle}" Click="OnSidebarMessages" ToolTip="消息" AutomationProperties.Name="消息">
                         <Grid Width="30" Height="30">
@@ -466,9 +476,17 @@
                 Background="{DynamicResource SideBarBackgroundBrush}"
                 BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0"
                 SnapsToDevicePixels="True" UseLayoutRounding="True">
-            <Grid>
+            <Grid x:Name="BottomNavHost">
                 <helpers:SkinSurface Kind="Rail" />
-                <UniformGrid Columns="4" Margin="12,4">
+                <Border x:Name="BottomNavIndicator" Width="24" Height="3" CornerRadius="1.5"
+                        HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,2,0,0"
+                        Background="{DynamicResource AccentBrush}" Opacity="0" IsHitTestVisible="False"
+                        Panel.ZIndex="2">
+                    <Border.RenderTransform>
+                        <TranslateTransform x:Name="BottomNavIndicatorTrans" X="0" />
+                    </Border.RenderTransform>
+                </Border>
+                <UniformGrid x:Name="BottomNavGrid" Columns="4" Margin="12,4">
                     <UniformGrid.Resources>
                         <Style TargetType="TextBlock" BasedOn="{x:Null}">
                             <Setter Property="Foreground"
@@ -529,6 +547,11 @@
             </Grid>
         </Border>
 
+        <!-- 澎湃 OS「一镜到底」背景景深压暗层（纯主窗口 GPU 合成层，零分层窗口回读开销） -->
+        <Border x:Name="SeamlessDepthScrim" Grid.Row="0" Grid.RowSpan="2" Grid.ColumnSpan="2"
+                Panel.ZIndex="28" Background="#FF06080C" Opacity="0"
+                Visibility="Collapsed" IsHitTestVisible="False" />
+
         <!-- ============ 平板模式单窗口内嵌播放舞台（盖住底部导航与内容区，实色不透底） ============ -->
         <Grid x:Name="EmbeddedPlayerHost" Grid.Row="0" Grid.RowSpan="2" Grid.ColumnSpan="2"
               Panel.ZIndex="30" Visibility="Collapsed"
@@ -562,7 +585,10 @@
                 <DropShadowEffect BlurRadius="24" ShadowDepth="6" Opacity="0.28" />
             </Border.Effect>
             <Border.RenderTransform>
-                <ScaleTransform x:Name="PartitionScale" ScaleX="1" ScaleY="1" />
+                <TransformGroup>
+                    <ScaleTransform x:Name="PartitionScale" ScaleX="1" ScaleY="1" />
+                    <TranslateTransform x:Name="PartitionTranslate" Y="0" />
+                </TransformGroup>
             </Border.RenderTransform>
             <Grid>
                 <Grid.RowDefinitions>

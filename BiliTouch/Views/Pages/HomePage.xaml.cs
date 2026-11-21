@@ -84,6 +84,8 @@ public partial class HomePage : UserControl
         {
             StopHomePreparation();
             Responsive.PostureChanged -= OnHomePostureChanged;
+            HyperMotion.Cancel(TabIndicator);
+            HyperMotion.Cancel(BtnTop);
         };
         // 屏蔽把一屏内容筛空后要补下一页, 否则底部会留一大片空白(刷新不会触发滚动事件)
         FilterService.Instance.Changed += OnFilterApplied;
@@ -396,18 +398,15 @@ public partial class HomePage : UserControl
         //   先读则拿到的是"上一次动画的当前值", 正是我们要的连续起点。
         var from = TabIndicatorTrans.X;
         ClearIndicatorAnimations();
-        TabIndicatorTrans.BeginAnimation(TranslateTransform.XProperty,
-            new DoubleAnimation(from, left, TimeSpan.FromMilliseconds(TabIndicatorMs))
-            {
-                // ★ EaseOut: 起步快、收尾缓。位移动画用缓出比线性"更有质感" ——
-                //   线性看起来像生硬地平移, 缓出像是滑过去停在目标上。
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-            });
+        HyperMotion.SpringTo(TabIndicator, "X", from, left, HyperMotion.TabIndicator, x => TabIndicatorTrans.X = x);
     }
 
     /// <summary>清掉下划线上残留的位移动画</summary>
     private void ClearIndicatorAnimations()
-        => TabIndicatorTrans.BeginAnimation(TranslateTransform.XProperty, null);
+    {
+        HyperMotion.Cancel(TabIndicator);
+        TabIndicatorTrans.BeginAnimation(TranslateTransform.XProperty, null);
+    }
 
     /// <summary>当前 VM 认为选中的 tab(显隐由它驱动, 这里只做"读"用途)</summary>
     private HomeTabKind? CurrentTabFromVm()
@@ -600,11 +599,19 @@ public partial class HomePage : UserControl
         // 只切按钮自己的 Opacity 与命中测试 —— 它在工具列最上面, 用 Visibility 的话
         // 下面四个按钮每滚过一次阈值就会上下跳一下。
         BtnTop.IsHitTestVisible = show;
-        BtnTop.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(BtnTop.Opacity, show ? 1 : 0, TimeSpan.FromMilliseconds(160))
+        BtnTop.BeginAnimation(OpacityProperty, null);
+        var (scale, trans) = HyperMotion.EnsureScaleTranslate(BtnTop, new Point(0.5, 0.5));
+        HyperMotion.SpringTo(BtnTop, "Opacity", BtnTop.Opacity, show ? 1.0 : 0.0,
+            HyperMotion.SmoothFade, v => BtnTop.Opacity = Math.Clamp(v, 0, 1));
+        HyperMotion.SpringTo(BtnTop, "Scale", show ? (scale.ScaleX < 0.99 ? scale.ScaleX : 0.84) : scale.ScaleX,
+            show ? 1.0 : 0.84, show ? HyperMotion.PopupScale : HyperMotion.SheetDismiss, v =>
             {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                var s = Math.Max(0.2, v);
+                scale.ScaleX = s;
+                scale.ScaleY = s;
             });
+        HyperMotion.SpringTo(BtnTop, "Y", show ? (Math.Abs(trans.Y) > 0.5 ? trans.Y : 12.0) : trans.Y,
+            show ? 0.0 : 12.0, show ? HyperMotion.SheetSlide : HyperMotion.SheetDismiss, v => trans.Y = v);
     }
 
     /// <summary>

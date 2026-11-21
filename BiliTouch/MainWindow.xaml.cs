@@ -48,7 +48,7 @@ public partial class MainWindow : FluentWindow
         Svc.Theme.ThemeChanged+=RefreshSidebarTheme;
         Svc.Settings.LayoutChanged+=OnMainLayoutSettingsChanged;
         Responsive.PostureChanged+=OnPostureChanged;
-        Closed+=(_,_)=> { _idleTrimTimer?.Stop(); _toastTimer?.Stop(); _precisionTouchpad?.Dispose(); FinishHorizontalWheel(false); Svc.Theme.ThemeChanged-=RefreshSidebarTheme; Svc.Settings.LayoutChanged-=OnMainLayoutSettingsChanged; Responsive.PostureChanged-=OnPostureChanged; Svc.Toast.Shown-=ShowToast; _vm.PageChanged -= OnPageChanged; };
+        Closed+=(_,_)=> { _idleTrimTimer?.Stop(); _toastTimer?.Stop(); _precisionTouchpad?.Dispose(); FinishHorizontalWheel(false); ResetSeamlessDepthRecess(animate: false); HyperMotion.Cancel(this); HyperMotion.Cancel(NavRailIndicator); HyperMotion.Cancel(BottomNavIndicator); HyperMotion.Cancel(Toast); HyperMotion.Cancel(PartitionPanel); HyperMotion.Cancel(EmbeddedContent); Svc.Theme.ThemeChanged-=RefreshSidebarTheme; Svc.Settings.LayoutChanged-=OnMainLayoutSettingsChanged; Responsive.PostureChanged-=OnPostureChanged; Svc.Toast.Shown-=ShowToast; _vm.PageChanged -= OnPageChanged; };
         Deactivated += OnDeactivatedTrim;
         Activated += (_, _) => _idleTrimTimer?.Stop();
         SourceInitialized += (_, _) =>
@@ -72,6 +72,10 @@ public partial class MainWindow : FluentWindow
         PartitionCol2.ItemsSource = PartitionCatalog.Columns[2];
 
         Loaded += OnLoaded;
+        SizeChanged += (_, _) =>
+        {
+            if (IsLoaded) MoveNavIndicators(_vm.Current, animate: false);
+        };
         // The artwork does not depend on cursor coordinates. Preserve enter/leave
         // recovery without rebuilding its gradients for every mouse movement.
         PreviewMouseMove+=(_,e)=>{var p=e.GetPosition(SharedHeaderSurface);bool inside=p.Y>=0 && p.Y<=SharedHeaderSurface.ActualHeight && p.X>=0 && p.X<=SharedHeaderSurface.ActualWidth;if(inside != _headerPointerInside)RepaintHeader();_headerPointerInside=inside;};
@@ -289,6 +293,7 @@ public partial class MainWindow : FluentWindow
                 if (WindowState == WindowState.Maximized)
                     SyncMaximizedLayoutAfterShellChange();
                 CardWall.RefreshAll();
+                MoveNavIndicators(_vm.Current, animate: false);
             }));
         }
     }
@@ -368,6 +373,160 @@ public partial class MainWindow : FluentWindow
         SyncTabletWindowConstraints();
         ApplyTabletShellLayout(Responsive.GetPosture(RootGrid));
         RefreshSurfaceTabletHint();
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            if (IsLoaded) MoveNavIndicators(_vm.Current, animate: false);
+        }));
+    }
+
+    // ------------------------------------------------------------ 澎湃 OS 导航弹性指示条 & 一镜到底背景景深
+
+    private bool _navRailIndicatorPlaced;
+    private bool _bottomNavIndicatorPlaced;
+    private double _seamlessDepthAmount;
+
+    /// <summary>
+    /// 驱动主窗口在「一镜到底」展开/收拢期间的背景景深退让（主内容微缩 1.0 → 0.968 + 柔和暗幕），
+    /// 运行在主窗口自身 GPU 合成层上，零分层窗口回读开销且不偏移 RootGrid 坐标系。
+    /// </summary>
+    internal void SetSeamlessDepthRecess(double amount)
+    {
+        if (MainContentGrid == null || SeamlessDepthScrim == null) return;
+        HyperMotion.Cancel(this, "SeamlessDepth");
+        ApplySeamlessDepthRecess(Math.Clamp(amount, 0.0, 1.0));
+    }
+
+    /// <summary>复位或弹簧回弹主窗口背景景深。</summary>
+    internal void ResetSeamlessDepthRecess(bool animate = false)
+    {
+        if (MainContentGrid == null || SeamlessDepthScrim == null) return;
+        if (!animate || _seamlessDepthAmount <= 0.001)
+        {
+            HyperMotion.Cancel(this, "SeamlessDepth");
+            ApplySeamlessDepthRecess(0.0);
+            return;
+        }
+        HyperMotion.SpringTo(
+            this,
+            "SeamlessDepth",
+            _seamlessDepthAmount,
+            0.0,
+            HyperMotion.SheetSlide,
+            ApplySeamlessDepthRecess,
+            inheritIfRunning: true);
+    }
+
+    private void ApplySeamlessDepthRecess(double amount)
+    {
+        _seamlessDepthAmount = Math.Clamp(amount, 0.0, 1.0);
+        if (_seamlessDepthAmount <= 0.001)
+        {
+            if (MainContentGrid.RenderTransform is ScaleTransform st)
+            {
+                st.ScaleX = 1.0;
+                st.ScaleY = 1.0;
+            }
+            SeamlessDepthScrim.Opacity = 0;
+            SeamlessDepthScrim.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        if (MainContentGrid.RenderTransform is not ScaleTransform scale || scale.IsFrozen)
+        {
+            scale = new ScaleTransform(1.0, 1.0);
+            MainContentGrid.RenderTransform = scale;
+            MainContentGrid.RenderTransformOrigin = new Point(0.5, 0.5);
+        }
+        var s = 1.0 - _seamlessDepthAmount * 0.032;
+        scale.ScaleX = s;
+        scale.ScaleY = s;
+        SeamlessDepthScrim.Visibility = Visibility.Visible;
+        SeamlessDepthScrim.Opacity = _seamlessDepthAmount * 0.34;
+    }
+
+    private RadioButton? RailButtonOf(PageKey key) => key switch
+    {
+        PageKey.Home => NavHome,
+        PageKey.Follow => NavFollow,
+        PageKey.Mine or PageKey.History or PageKey.Favorites or PageKey.WatchLater or PageKey.Cache => NavMine,
+        PageKey.Settings => NavSettings,
+        _ => null
+    };
+
+    private RadioButton? BottomNavButtonOf(PageKey key) => key switch
+    {
+        PageKey.Home => BottomNavHome,
+        PageKey.Follow => BottomNavFollow,
+        PageKey.Mine or PageKey.History or PageKey.Favorites or PageKey.WatchLater or PageKey.Cache => BottomNavMine,
+        PageKey.Settings => BottomNavSettings,
+        _ => null
+    };
+
+    private void MoveNavIndicators(PageKey key, bool animate)
+    {
+        // 1. 左侧导航栏竖向滑动指示胶囊
+        if (NavRailIndicator != null && NavRailHost != null && NavRail?.Visibility == Visibility.Visible && NavRailHost.ActualHeight > 0)
+        {
+            var btn = RailButtonOf(key);
+            if (btn != null && btn.ActualHeight > 0)
+            {
+                var top = btn.TransformToAncestor(NavRailHost).Transform(new Point(0, 0)).Y;
+                var targetY = top + (btn.ActualHeight - NavRailIndicator.Height) * 0.5;
+                if (!animate || !_navRailIndicatorPlaced)
+                {
+                    HyperMotion.Cancel(NavRailIndicator);
+                    NavRailIndicatorTrans.Y = targetY;
+                    NavRailIndicator.Opacity = 1;
+                    _navRailIndicatorPlaced = true;
+                }
+                else
+                {
+                    HyperMotion.SpringTo(NavRailIndicator, "Y", NavRailIndicatorTrans.Y, targetY,
+                        HyperMotion.TabIndicator, y => NavRailIndicatorTrans.Y = y);
+                    HyperMotion.SpringTo(NavRailIndicator, "Opacity", NavRailIndicator.Opacity, 1.0,
+                        HyperMotion.SmoothFade, op => NavRailIndicator.Opacity = Math.Clamp(op, 0, 1));
+                    if (btn.Content is FrameworkElement iconHost)
+                        HyperMotion.AnimateUniformScale(iconHost, 1.0, HyperMotion.TactileRelease, startScale: 0.90);
+                }
+            }
+            else
+            {
+                HyperMotion.SpringTo(NavRailIndicator, "Opacity", NavRailIndicator.Opacity, 0.0,
+                    HyperMotion.SmoothFade, op => NavRailIndicator.Opacity = Math.Clamp(op, 0, 1));
+            }
+        }
+
+        // 2. 平板竖屏底栏横向滑动指示胶囊
+        if (BottomNavIndicator != null && BottomNavHost != null && BottomNavBar?.Visibility == Visibility.Visible && BottomNavHost.ActualWidth > 0)
+        {
+            var btn = BottomNavButtonOf(key);
+            if (btn != null && btn.ActualWidth > 0)
+            {
+                var left = btn.TransformToAncestor(BottomNavHost).Transform(new Point(0, 0)).X;
+                var targetX = left + (btn.ActualWidth - BottomNavIndicator.Width) * 0.5;
+                if (!animate || !_bottomNavIndicatorPlaced)
+                {
+                    HyperMotion.Cancel(BottomNavIndicator);
+                    BottomNavIndicatorTrans.X = targetX;
+                    BottomNavIndicator.Opacity = 1;
+                    _bottomNavIndicatorPlaced = true;
+                }
+                else
+                {
+                    HyperMotion.SpringTo(BottomNavIndicator, "X", BottomNavIndicatorTrans.X, targetX,
+                        HyperMotion.TabIndicator, x => BottomNavIndicatorTrans.X = x);
+                    HyperMotion.SpringTo(BottomNavIndicator, "Opacity", BottomNavIndicator.Opacity, 1.0,
+                        HyperMotion.SmoothFade, op => BottomNavIndicator.Opacity = Math.Clamp(op, 0, 1));
+                    if (btn.Content is FrameworkElement iconHost)
+                        HyperMotion.AnimateUniformScale(iconHost, 1.0, HyperMotion.TactileRelease, startScale: 0.90);
+                }
+            }
+            else
+            {
+                HyperMotion.SpringTo(BottomNavIndicator, "Opacity", BottomNavIndicator.Opacity, 0.0,
+                    HyperMotion.SmoothFade, op => BottomNavIndicator.Opacity = Math.Clamp(op, 0, 1));
+            }
+        }
     }
 
     /// <summary>
@@ -426,6 +585,7 @@ public partial class MainWindow : FluentWindow
         HideEmbedded();
         HidePartition();
         ShowPage(_vm.Current, animate: true);
+        MoveNavIndicators(_vm.Current, animate: true);
     }
 
     /// <summary>
@@ -470,15 +630,8 @@ public partial class MainWindow : FluentWindow
         PageHost.Visibility = Visibility.Collapsed;
         EmbeddedHost.Visibility = Visibility.Visible;
 
-        // 详情页立即可见。位移只作用在宿主上，保留页面本身的变换和返回状态。
-        var slide = new TranslateTransform();
-        EmbeddedContent.RenderTransform = slide;
-        slide.BeginAnimation(TranslateTransform.YProperty,
-            new DoubleAnimation(8, 0, TimeSpan.FromMilliseconds(160))
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-                FillBehavior = FillBehavior.Stop
-            });
+        // 澎湃 OS 空间侧推入场：只作用在宿主变换层，保留页面自身状态且零重排。
+        HyperMotion.AnimateSheetIn(EmbeddedContent, fromX: 42, fromY: 0, fromScale: 0.986, animateOpacity: false);
 
         // 触发源可能在别的窗口上(例如在播放器里点了 UP 主头像)。
         // 那样页面虽然已经内嵌到主窗口, 用户却看不到 —— 所以这里主动把主窗口提到前面。
@@ -511,6 +664,7 @@ public partial class MainWindow : FluentWindow
             EmbeddedContent.Content=null;
             EmbeddedTitle.Text=previous.title;
             EmbeddedContent.Content=previous.page;
+            HyperMotion.AnimateSheetIn(EmbeddedContent, fromX: -28, fromY: 0, fromScale: 0.992, animateOpacity: false);
         }
         else HideEmbedded();
     }
@@ -730,39 +884,52 @@ public partial class MainWindow : FluentWindow
         PartitionScrim.Visibility = Visibility.Visible;
         PartitionPanel.Visibility = Visibility.Visible;
 
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        PartitionScrim.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)) { EasingFunction = ease });
-        PartitionPanel.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200)) { EasingFunction = ease });
-        PartitionScale.BeginAnimation(ScaleTransform.ScaleXProperty,
-            new DoubleAnimation(0.86, 1, TimeSpan.FromMilliseconds(240)) { EasingFunction = ease });
-        PartitionScale.BeginAnimation(ScaleTransform.ScaleYProperty,
-            new DoubleAnimation(0.86, 1, TimeSpan.FromMilliseconds(240)) { EasingFunction = ease });
+        PartitionScrim.BeginAnimation(OpacityProperty, null);
+        PartitionPanel.BeginAnimation(OpacityProperty, null);
+        PartitionScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        PartitionScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+
+        HyperMotion.SpringTo(PartitionScrim, "Opacity", PartitionScrim.Opacity, 1.0,
+            HyperMotion.SmoothFade, v => PartitionScrim.Opacity = Math.Clamp(v, 0, 1));
+        HyperMotion.SpringTo(PartitionPanel, "Opacity", PartitionPanel.Opacity, 1.0,
+            HyperMotion.SmoothFade, v => PartitionPanel.Opacity = Math.Clamp(v, 0, 1));
+        HyperMotion.SpringTo(PartitionPanel, "Scale", 0.88, 1.0,
+            HyperMotion.PopupScale, v =>
+            {
+                var s = Math.Max(0.1, v);
+                PartitionScale.ScaleX = s;
+                PartitionScale.ScaleY = s;
+            }, inheritIfRunning: true);
+        HyperMotion.SpringTo(PartitionPanel, "Y", -10.0, 0.0,
+            HyperMotion.SheetSlide, v => PartitionTranslate.Y = v, inheritIfRunning: true);
     }
 
-    /// <summary>收起分区面板(带缩放回缩 + 淡出动画)</summary>
+    /// <summary>收起分区面板(澎湃 OS 物理回弹收缩 + 柔顺淡出)</summary>
     private void ClosePartition()
     {
         if (!_partitionOpen) return;
         _partitionOpen = false;
         var gen = ++_partitionGen;
 
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease };
-        fade.Completed += (_, _) =>
-        {
-            if (gen != _partitionGen || _partitionOpen) return;
-            PartitionScrim.Visibility = Visibility.Collapsed;
-            PartitionPanel.Visibility = Visibility.Collapsed;
-        };
-        PartitionScrim.BeginAnimation(OpacityProperty, fade);
-        PartitionPanel.BeginAnimation(OpacityProperty,
-            new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(140)) { EasingFunction = ease });
-        PartitionScale.BeginAnimation(ScaleTransform.ScaleXProperty,
-            new DoubleAnimation(1, 0.9, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease });
-        PartitionScale.BeginAnimation(ScaleTransform.ScaleYProperty,
-            new DoubleAnimation(1, 0.9, TimeSpan.FromMilliseconds(160)) { EasingFunction = ease });
+        HyperMotion.SpringTo(PartitionScrim, "Opacity", PartitionScrim.Opacity, 0.0,
+            HyperMotion.SmoothFade, v => PartitionScrim.Opacity = Math.Clamp(v, 0, 1),
+            onComplete: () =>
+            {
+                if (gen != _partitionGen || _partitionOpen) return;
+                PartitionScrim.Visibility = Visibility.Collapsed;
+                PartitionPanel.Visibility = Visibility.Collapsed;
+            });
+        HyperMotion.SpringTo(PartitionPanel, "Opacity", PartitionPanel.Opacity, 0.0,
+            HyperMotion.SmoothFade, v => PartitionPanel.Opacity = Math.Clamp(v, 0, 1));
+        HyperMotion.SpringTo(PartitionPanel, "Scale", PartitionScale.ScaleX, 0.90,
+            HyperMotion.SheetDismiss, v =>
+            {
+                var s = Math.Max(0.1, v);
+                PartitionScale.ScaleX = s;
+                PartitionScale.ScaleY = s;
+            });
+        HyperMotion.SpringTo(PartitionPanel, "Y", PartitionTranslate.Y, -8.0,
+            HyperMotion.SheetDismiss, v => PartitionTranslate.Y = v);
     }
 
     /// <summary>立刻收起、不播动画 —— 导航切页 / 鼠标侧键返回这类"打断"场景用</summary>
@@ -772,6 +939,8 @@ public partial class MainWindow : FluentWindow
         _partitionOpen = false;
         _partitionGen++;
 
+        HyperMotion.Cancel(PartitionScrim);
+        HyperMotion.Cancel(PartitionPanel);
         PartitionScrim.BeginAnimation(OpacityProperty, null);
         PartitionPanel.BeginAnimation(OpacityProperty, null);
         PartitionScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
@@ -782,6 +951,7 @@ public partial class MainWindow : FluentWindow
         PartitionPanel.Visibility = Visibility.Collapsed;
         PartitionScale.ScaleX = 1;
         PartitionScale.ScaleY = 1;
+        PartitionTranslate.Y = 0;
     }
 
     private void OnPartitionScrimClick(object sender, MouseButtonEventArgs e)
@@ -804,22 +974,8 @@ public partial class MainWindow : FluentWindow
     private void ShowToast(string message)
     {
         var gen = ++_toastGen;
-        var appearing = Toast.Visibility != Visibility.Visible;
-        Toast.BeginAnimation(OpacityProperty, null);   // 撤掉可能还没跑完的淡出
         ToastText.Text = message;
-        Toast.Visibility = Visibility.Visible;
-
-        if (appearing)
-        {
-            Toast.Opacity = 1;
-            Toast.BeginAnimation(OpacityProperty,
-                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(220))
-                { FillBehavior = FillBehavior.Stop });
-        }
-        else
-        {
-            Toast.Opacity = 1;
-        }
+        HyperMotion.AnimateCapsuleIn(Toast, fromY: -12, fromScale: 0.90, origin: new Point(1.0, 0.0));
 
         if (_toastTimer == null)
         {
@@ -835,15 +991,10 @@ public partial class MainWindow : FluentWindow
     {
         _toastTimer?.Stop();
         var gen = ++_toastGen;
-        Toast.BeginAnimation(OpacityProperty, null);
-        Toast.Opacity = 0;
-        var a = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(280))
-        { FillBehavior = FillBehavior.Stop };
-        a.Completed += (_, _) =>
+        HyperMotion.AnimateCapsuleOut(Toast, toY: -10, toScale: 0.94, onComplete: () =>
         {
             if (gen != _toastGen) return;
             Toast.Visibility = Visibility.Collapsed;
-        };
-        Toast.BeginAnimation(OpacityProperty, a);
+        });
     }
 }

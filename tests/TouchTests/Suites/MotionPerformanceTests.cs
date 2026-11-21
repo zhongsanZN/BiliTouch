@@ -44,6 +44,76 @@ internal static class MotionPerformanceTests
         TestDenseDanmaku(check);
         TestThemeClockCleanup(check);
         TestSeamlessContinuousMorph(check);
+        TestHyperOsMotionSystem(check);
+    }
+
+    private static void TestHyperOsMotionSystem(Action<bool, string> check)
+    {
+        // 1. Generalized underdamped HyperOS spring (ζ = 0.78) is refresh-rate independent across 30/60/120/144/240Hz.
+        (double p, double v) SampleDamped(int hz, double zeta)
+        {
+            double p = 0, v = 0;
+            for (int i = 0; i < hz / 2; i++) (p, v) = SpringMotion.AdvanceDamped(p, v, 1.0, 1.0 / hz, 23.0, zeta);
+            return (p, v);
+        }
+        var refUnder = SampleDamped(60, 0.78);
+        foreach (var hz in new[] { 30, 120, 144, 240 })
+        {
+            var s = SampleDamped(hz, 0.78);
+            check(Math.Abs(refUnder.p - s.p) < 1e-10 && Math.Abs(refUnder.v - s.v) < 1e-10,
+                $"HyperOS underdamped spring is invariant at {hz}Hz vs 60Hz");
+        }
+
+        // Verify subtle HyperOS tactile overshoot (>1.005 and <1.06) and clean convergence.
+        double peak = 0;
+        double pos = 0, vel = 0;
+        for (int i = 0; i < 60; i++)
+        {
+            (pos, vel) = SpringMotion.AdvanceDamped(pos, vel, 1.0, 1.0 / 60.0, 23.0, 0.78);
+            if (pos > peak) peak = pos;
+        }
+        check(peak > 1.005 && peak < 1.06 && Math.Abs(pos - 1.0) < 0.001,
+            $"HyperOS underdamped micro-spring produces subtle elastic breath without wobble (peak={peak:F4}, end={pos:F4})");
+
+        // 2. Aspect-preserving inner artwork scale keeps uniform visual scaling across non-16:9 container morphs.
+        var (artSx, artSy) = SpringMotion.ComputeAspectPreservingInnerScale(0.32, 0.18);
+        check(Math.Abs(0.32 * artSx - 0.18 * artSy) < 1e-9 && Math.Abs(0.32 * artSx - 0.32) < 1e-9,
+            $"aspect-preserving morph compensation maintains isotropic cover scaling ({artSx:F3}, {artSy:F3})");
+
+        // 3. Container morph timing sits in lush HyperOS ~480ms band (not abrupt 140ms snap).
+        var p60 = SpringMotion.Advance(0, 0, 1, 0.06, SpringMotion.HyperOmegaContainer).Position;
+        var p260 = SpringMotion.Advance(0, 0, 1, 0.26, SpringMotion.HyperOmegaContainer).Position;
+        check(p60 > 0.15 && p60 < 0.35 && p260 > 0.85 && p260 < 0.96,
+            $"HyperOS container spring delivers silky weighted deceleration (60ms={p60:F3}, 260ms={p260:F3})");
+
+        // 4. HyperMotion unified scheduler supports velocity-inheriting interruption and releases static clock on settle.
+        HyperMotion.CancelAll();
+        try
+        {
+            var token = new object();
+            double latest = 0;
+            bool completed = false;
+            HyperMotion.SpringTo(token, "X", 0.0, 100.0, HyperMotion.TabIndicator, v => latest = v, () => completed = true);
+            check(HyperMotion.ActiveTrackCount == 1 && HyperMotion.IsClockAttached,
+                "HyperMotion attaches shared composition clock when spring starts");
+
+            for (int i = 0; i < 6; i++) HyperMotion.StepAll(1.0 / 60.0);
+            var mid = latest;
+            // Retarget mid-flight: position must not jump back to 0.
+            HyperMotion.SpringTo(token, "X", 0.0, 200.0, HyperMotion.TabIndicator, v => latest = v, () => completed = true, inheritIfRunning: true);
+            check(Math.Abs(latest - mid) < 0.01 && mid > 10.0,
+                $"HyperMotion retargeting inherits live position without snapping (mid={mid:F1}, after={latest:F1})");
+
+            for (int i = 0; i < 120 && HyperMotion.ActiveTrackCount > 0; i++)
+                HyperMotion.StepAll(1.0 / 60.0);
+
+            check(completed && Math.Abs(latest - 200.0) < 0.01 && HyperMotion.ActiveTrackCount == 0 && !HyperMotion.IsClockAttached,
+                "HyperMotion settles cleanly at target and detaches static Rendering clock when idle");
+        }
+        finally
+        {
+            HyperMotion.CancelAll();
+        }
     }
 
     private static void TestSeamlessContinuousMorph(Action<bool, string> check)

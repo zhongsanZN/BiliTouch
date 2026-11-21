@@ -54,6 +54,9 @@ public class VideoItem : System.ComponentModel.INotifyPropertyChanged
     /// </summary>
     public long RoomId { get; set; }
 
+    public int VideoWidth { get; set; }
+    public int VideoHeight { get; set; }
+
     public bool IsLive => RoomId > 0;
 
     private bool _isSelected;
@@ -912,6 +915,7 @@ public class CommentItem : System.ComponentModel.INotifyPropertyChanged
             Raise(nameof(ReplyCount));
             Raise(nameof(HasReplies));
             Raise(nameof(HasMoreReplies));
+            Raise(nameof(HasUnshownPreviewReplies));
             Raise(nameof(ReplyMoreText));
             Raise(nameof(ReplyBoxText));
         }
@@ -932,8 +936,11 @@ public class CommentItem : System.ComponentModel.INotifyPropertyChanged
 
     // ------------------------------------------------------------ 楼中楼预览方框
 
-    /// <summary>方框底部那行提示文字(点整框进详情页)</summary>
-    public string ReplyBoxText => ReplyCount > 0 ? $"共 {ReplyCount} 条回复" : "";
+    /// <summary>预览框里是否还有未展示完的回复（全部 1~3 条回复已完整露出时不再多余显示「共 N 条回复」）</summary>
+    public bool HasUnshownPreviewReplies => ReplyCount > PreviewReplies.Count;
+
+    /// <summary>方框底部那行提示文字(仅当存在未完整展示的回复时显示，点整框进详情页)</summary>
+    public string ReplyBoxText => HasUnshownPreviewReplies ? $"共 {ReplyCount} 条回复" : "";
 
     /// <summary>
     /// 方框/详情页里一条回复的**前缀**(用户名那一截)。
@@ -1001,6 +1008,7 @@ public class CommentItem : System.ComponentModel.INotifyPropertyChanged
     public void NotifyRepliesChanged()
     {
         Raise(nameof(HasMoreReplies));
+        Raise(nameof(HasUnshownPreviewReplies));
         Raise(nameof(ReplyMoreText));
         // 展开后"共 N 条回复"可能跟着变(用实际条数收口时), 一并通知
         Raise(nameof(ReplyBoxText));
@@ -1015,6 +1023,8 @@ public class CommentItem : System.ComponentModel.INotifyPropertyChanged
     {
         PreviewReplies.Clear();
         foreach (var r in Replies.Take(max)) PreviewReplies.Add(r);
+        Raise(nameof(HasUnshownPreviewReplies));
+        Raise(nameof(ReplyBoxText));
     }
 
     /// <summary>

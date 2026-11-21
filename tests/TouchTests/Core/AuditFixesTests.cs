@@ -48,6 +48,7 @@ internal static class AuditFixesTests
         TestOfflineOnlineCommentsAndDanmakuContract(check);
         TestAudioQualityBitrateAndFreezeFixes(check);
         TestSeekAudioSubtitlesAndRightKeyFixes(check);
+        TestSeamlessPortraitAndEnhancementInQualityPopup(check);
         TestMacroArchitectureAndRuntimeHealth(check);
     }
 
@@ -665,6 +666,9 @@ internal static class AuditFixesTests
             var badge = (Border)player.FindName("BtnAudioBadge");
             var badgeText = (TextBlock)player.FindName("AudioBadgeText");
             var qualityList = (ListBox)player.FindName("QualityList");
+            var audioList = (ListBox)player.FindName("AudioQualityList");
+            var audioInfo = (TextBlock)player.FindName("AudioQualityInfoText");
+            var audioSection = (StackPanel)player.FindName("VolumeAudioSection");
 
             tracksField.SetValue(player, new List<AudioTrack>
             {
@@ -675,22 +679,63 @@ internal static class AuditFixesTests
             fillMenu.Invoke(player, new object[] { 80 });
 
             check(badge.Visibility == Visibility.Visible && badgeText.Text == "192 kbps",
-                $"non-HiRes/Dolby audio displays current bitrate badge (visible={badge.Visibility}, text={badgeText.Text})");
-            var clickableAudioItems = qualityList.Items.OfType<ListBoxItem>().Where(i => i.Tag is AudioTrack).ToList();
-            check(clickableAudioItems.Count == 2
+                $"non-HiRes/Dolby audio displays current bitrate badge under volume (visible={badge.Visibility}, text={badgeText.Text})");
+            check(qualityList.Items.OfType<ListBoxItem>().All(i => i.Tag is not AudioTrack),
+                "QualityList contains pure video qualities (audio options moved to VolumePopup)");
+            var clickableAudioItems = audioList.Items.OfType<ListBoxItem>().Where(i => i.Tag is AudioTrack).ToList();
+            check(audioSection.Visibility == Visibility.Visible && audioList.Visibility == Visibility.Visible
+                  && clickableAudioItems.Count == 2
                   && clickableAudioItems.Any(i => ((AudioTrack)i.Tag).Quality == AudioQuality.High)
                   && clickableAudioItems.Any(i => ((AudioTrack)i.Tag).Quality == AudioQuality.Dolby),
-                $"QualityList exposes optional Dolby alongside stereo AAC (clickable={clickableAudioItems.Count})");
+                $"VolumePopup AudioQualityList exposes optional Dolby alongside stereo AAC (clickable={clickableAudioItems.Count})");
 
-            // 纯普通 AAC（无杜比/无 Hi-Res）同样显示码率角标与菜单信息
+            // 纯普通 AAC（无杜比/无 Hi-Res）同样在音量面板中显示音质信息与码率角标
             tracksField.SetValue(player, new List<AudioTrack>
             {
                 new() { Quality = AudioQuality.High, TrackId = 30232, Label = "较高音质", Bandwidth = 132000, Url = "https://example.invalid/132.m4s" },
             });
             actualAudioField.SetValue(player, AudioQuality.High);
             fillMenu.Invoke(player, new object[] { 80 });
-            check(badge.Visibility == Visibility.Visible && badgeText.Text == "132 kbps",
-                $"pure AAC video still displays bitrate badge (text={badgeText.Text})");
+            check(badge.Visibility == Visibility.Visible && badgeText.Text == "132 kbps"
+                  && audioSection.Visibility == Visibility.Visible && audioInfo.Visibility == Visibility.Visible
+                  && audioInfo.Text.Contains("132 kbps"),
+                $"pure AAC video displays bitrate badge and VolumePopup audio info (text={badgeText.Text}, info={audioInfo.Text})");
+
+            // 字幕弹层使用非模态 StaysOpen=True 且纳入 IsInAnyPlayerPopup，杜绝点击闪退
+            var subPopup = (System.Windows.Controls.Primitives.Popup)player.FindName("SubtitlePopup");
+            var isInAny = typeof(PlayerWindow).GetMethod("IsInAnyPlayerPopup", AnyPrivate)!;
+            check(subPopup.StaysOpen && (bool)isInAny.Invoke(player, new object[] { subPopup.Child })!,
+                "SubtitlePopup uses StaysOpen=True and is protected by IsInAnyPlayerPopup");
+
+            // 评论区预览框：1~2 条已全部展示的回复不再多余显示「共 N 条回复」，存在未展示回复时才显示
+            var c1 = new CommentItem { ReplyCount = 2 };
+            c1.Replies.Add(new CommentItem { Content = "r1" });
+            c1.Replies.Add(new CommentItem { Content = "r2" });
+            c1.SyncPreviewReplies();
+            check(!c1.HasUnshownPreviewReplies && c1.ReplyBoxText == "",
+                "comment with all 2 replies already previewed hides redundant '共 2 条回复'");
+            var c2 = new CommentItem { ReplyCount = 5 };
+            for (int i = 0; i < 3; i++) c2.Replies.Add(new CommentItem { Content = "r" + i });
+            c2.SyncPreviewReplies();
+            check(c2.HasUnshownPreviewReplies && c2.ReplyBoxText == "共 5 条回复",
+                $"comment with 5 replies (3 previewed) displays '{c2.ReplyBoxText}'");
+
+            // 多图预览双指左右横滑切图契约
+            var preview = new BiliTouch.Views.Windows.ImagePreviewWindow { Width = 800, Height = 600 };
+            try
+            {
+                _ = preview.LoadGalleryAsync(new[] { "https://example.invalid/1.jpg", "https://example.invalid/2.jpg", "https://example.invalid/3.jpg" }, 0);
+                preview.PreviewGallerySwipe(0.6);
+                preview.SettleGallerySwipe(commit: true);
+                check(preview.GalleryIndexValue == 1, $"ImagePreviewWindow horizontal swipe advances to next photo (idx={preview.GalleryIndexValue})");
+                preview.PreviewGallerySwipe(-0.6);
+                preview.SettleGallerySwipe(commit: true);
+                check(preview.GalleryIndexValue == 0, $"ImagePreviewWindow horizontal swipe returns to previous photo (idx={preview.GalleryIndexValue})");
+            }
+            finally
+            {
+                preview.Close();
+            }
 
             // 4. VmemVideoView 看门狗与 GpuVideoPresenter front-buffer 重绑契约检查
             check(typeof(VmemVideoView).GetField("_gpuWatchdogTimer", AnyPrivate) != null,
@@ -818,6 +863,134 @@ internal static class AuditFixesTests
         }
         finally
         {
+            player.Close();
+        }
+    }
+
+    private static void TestSeamlessPortraitAndEnhancementInQualityPopup(Action<bool, string> check)
+    {
+        var prevPortrait = Svc.Settings.PortraitVideoOptimization;
+        var prevWeb = Svc.Settings.UseWebPlayerLayout;
+        var prevExperimental = Svc.Settings.ExperimentalVideoEnhancement;
+        var prevActive = Svc.Settings.VideoEnhancementActive;
+        var player = new PlayerWindow { Width = 1400, Height = 860, ShowActivated = false };
+        try
+        {
+            // 1. 画质增强开关已移入清晰度选择面板底部，不再占用控制栏
+            var qualityPopup = player.FindName("QualityPopup") as System.Windows.Controls.Primitives.Popup;
+            var enhanceSection = player.FindName("QualityEnhancementSection") as FrameworkElement;
+            var enhanceBtn = player.FindName("BtnEnhancement") as Button;
+            check(qualityPopup != null && enhanceSection != null && enhanceBtn != null,
+                "PlayerWindow exposes QualityPopup, QualityEnhancementSection, and BtnEnhancement");
+
+            bool hostedInQualityPopup = false;
+            DependencyObject? cur = enhanceBtn;
+            while (cur != null)
+            {
+                if (ReferenceEquals(cur, qualityPopup!.Child)) { hostedInQualityPopup = true; break; }
+                cur = LogicalTreeHelper.GetParent(cur) ?? System.Windows.Media.VisualTreeHelper.GetParent(cur);
+            }
+            check(hostedInQualityPopup,
+                "BtnEnhancement is hosted inside QualityPopup bottom instead of the player control bar");
+
+            Svc.Settings.UpdateVideoEnhancement(experimental: true, active: false);
+            typeof(PlayerWindow).GetMethod("UpdateEnhancementButton", AnyPrivate)!.Invoke(player, null);
+            check(enhanceSection!.Visibility == Visibility.Visible && enhanceBtn!.Visibility == Visibility.Visible,
+                "QualityEnhancementSection and BtnEnhancement reveal inside QualityPopup when experimental enhancement is enabled");
+
+            Svc.Settings.UpdateVideoEnhancement(experimental: false, active: false);
+            typeof(PlayerWindow).GetMethod("UpdateEnhancementButton", AnyPrivate)!.Invoke(player, null);
+            check(enhanceSection!.Visibility == Visibility.Collapsed && enhanceBtn!.Visibility == Visibility.Collapsed,
+                "QualityEnhancementSection and BtnEnhancement hide when experimental enhancement is disabled");
+
+            // 2. 一镜到底适配「竖屏优化」：横屏目标宽 > 高，竖屏优化目标高 > 宽且位于左侧竖列
+            Svc.Settings.SetWebPlayerLayout(true);
+            Svc.Settings.SetPortraitVideoOptimization(true);
+            player.Show();
+            player.UpdateLayout();
+
+            player.UpdateDetectedVideoSize(1920, 1080, fromMetadata: true);
+            player.UpdateLayout();
+            var landscapeRect = player.ResolveVideoStageTargetRect();
+
+            player.UpdateDetectedVideoSize(1080, 1920, fromMetadata: true);
+            player.UpdateLayout();
+            var portraitRect = player.ResolveVideoStageTargetRect();
+
+            check(portraitRect.Height > portraitRect.Width && portraitRect.Width < landscapeRect.Width * 0.75,
+                $"Seamless target rect adapts to PortraitVideoOptimization (landscape={landscapeRect.Width:0}x{landscapeRect.Height:0}, portrait={portraitRect.Width:0}x{portraitRect.Height:0})");
+            check(portraitRect.Height > landscapeRect.Height * 1.15,
+                $"Portrait seamless target rect fills full vertical stage height ({portraitRect.Height:0} > {landscapeRect.Height:0})");
+
+            // 3. 飞行途中元数据到达触发竖屏优化时，平滑改道至竖屏视频列且不产生瞬时跳变
+            player.UpdateDetectedVideoSize(1920, 1080, fromMetadata: true);
+            player.UpdateLayout();
+            var started = player.StartSeamlessMorph(new Rect(200, 320, 320, 180), landscapeRect, 8, 0, reverse: false);
+            player.StepSeamlessMorph(0.06);
+            var rectBeforeRetarget = player.SeamlessCurrentRect;
+            player.UpdateDetectedVideoSize(1080, 1920, fromMetadata: true);
+            var rectAfterRetarget = player.SeamlessCurrentRect;
+            var seamlessState = typeof(PlayerWindow).GetField("_seamless", AnyPrivate)!.GetValue(player)!;
+            var newEndRect = (Rect)seamlessState.GetType().GetField("EndRect", AnyPrivate)!.GetValue(seamlessState)!;
+            check(started
+                && Math.Abs(rectAfterRetarget.X - rectBeforeRetarget.X) < 1.0
+                && Math.Abs(rectAfterRetarget.Width - rectBeforeRetarget.Width) < 1.0
+                && newEndRect.Height > newEndRect.Width,
+                $"Mid-flight portrait metadata smoothly retargets seamless morph without jumping (before={rectBeforeRetarget.Width:0}x{rectBeforeRetarget.Height:0}, after={rectAfterRetarget.Width:0}x{rectAfterRetarget.Height:0}, end={newEndRect.Width:0}x{newEndRect.Height:0})");
+            player.StopSeamlessMorph();
+
+            // 4. 虚拟化封面加载防丢图：
+            //    a) 0 字节或损坏的小于 64B 磁盘缓存文件会被自动识别并清理；
+            //    b) ViewportImageQueue 在容器换源/回收时取消旧等待项并创建新等待项；
+            //    c) Cover.EnsureLoaded 可对未在加载且 Background 为空的卡片触发自愈重填。
+            var corruptFile = Path.Combine(Path.GetTempPath(), $"bilitouch-corrupt-{Guid.NewGuid():N}.jpg");
+            File.WriteAllBytes(corruptFile, new byte[] { 1, 2, 3 });
+            var hasValidMethod = typeof(CoverLoader).GetMethod("HasValidCacheFile", AnyPrivate)!;
+            var validResult = (bool)hasValidMethod.Invoke(null, new object[] { corruptFile })!;
+            check(!validResult && !File.Exists(corruptFile),
+                "CoverLoader.HasValidCacheFile detects and purges truncated/0-byte cache files (<64B)");
+
+            var testBorder = new Border { Width = 240, Height = 135 };
+            Cover.SetSource(testBorder, "https://example.invalid/old-recycled-cover.jpg");
+            ViewportImageQueue.Cancel(testBorder);
+            var genProp = (DependencyProperty)typeof(Cover).GetField("LoadGenerationProperty", AnyPrivate)!.GetValue(null)!;
+            var genAfterfirst = (int)testBorder.GetValue(genProp);
+            Cover.SetSource(testBorder, "https://example.invalid/new-recycled-cover.jpg");
+            var genAfterSecond = (int)testBorder.GetValue(genProp);
+            check(genAfterSecond > genAfterfirst,
+                $"Cover.OnSourceChanged increments LoadGeneration and cancels stale ViewportImageQueue entry ({genAfterfirst} -> {genAfterSecond})");
+
+            // 5. 更新提示弹窗：「推荐更新」徽标识别与发布说明结构化清洗排版（剔除裸下载链接、截图链接与 Markdown 符号）
+            var sampleNotes = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../docs/release-notes/v0.3.12.md"));
+            var updateWin = new BiliTouch.Views.Windows.UpdatePromptWindow(new UpdateInfo
+            {
+                Version = new Version(0, 3, 12),
+                Title = "BiliTouch 0.3.12 · 推荐更新",
+                Notes = "[下载安装包（x64）](https://example.invalid/a.exe)\n# BiliTouch 0.3.12\n" + sampleNotes + "\n![截图](https://example.invalid/s.png)"
+            });
+            try
+            {
+                var badge = (FrameworkElement)updateWin.FindName("RecommendedBadge")!;
+                var notesBlock = (TextBlock)updateWin.FindName("NotesText")!;
+                var renderedText = string.Concat(notesBlock.Inlines.OfType<System.Windows.Documents.Run>().Select(r => r.Text));
+                check(badge.Visibility == Visibility.Visible,
+                    "UpdatePromptWindow displays RecommendedBadge when release title/notes mark 推荐更新");
+                check(renderedText.Contains("【推荐更新】")
+                    && renderedText.Contains("✦ 澎湃 OS 流体动效")
+                    && !renderedText.Contains("https://example.invalid")
+                    && !renderedText.Contains("![截图]"),
+                    "UpdatePromptWindow formats structured release notes and strips raw Markdown download/image URLs");
+            }
+            finally
+            {
+                updateWin.Close();
+            }
+        }
+        finally
+        {
+            Svc.Settings.SetPortraitVideoOptimization(prevPortrait);
+            Svc.Settings.SetWebPlayerLayout(prevWeb);
+            Svc.Settings.UpdateVideoEnhancement(experimental: prevExperimental, active: prevActive);
             player.Close();
         }
     }

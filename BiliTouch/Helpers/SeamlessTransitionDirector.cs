@@ -25,6 +25,8 @@ internal static class SeamlessTransitionDirector
         public ImageSource? CoverImage { get; init; }
         public Brush? FallbackBrush { get; init; }
         public Brush? SourceWindowBackdrop { get; set; }
+        public int VideoWidth { get; init; }
+        public int VideoHeight { get; init; }
         public WeakReference<FrameworkElement>? SourceElement { get; init; }
         public WeakReference<Window>? SourceWindow { get; init; }
         public required long CapturedAtTick { get; init; }
@@ -49,7 +51,9 @@ internal static class SeamlessTransitionDirector
         FrameworkElement? coverVisual,
         string? bvid,
         double cornerRadius = 8.0,
-        FrameworkElement? imageCarrier = null)
+        FrameworkElement? imageCarrier = null,
+        int videoWidth = 0,
+        int videoHeight = 0)
     {
         if (coverVisual == null || string.IsNullOrWhiteSpace(bvid)) return null;
         var visualTarget = FindCoverElement(imageCarrier ?? coverVisual) ?? coverVisual;
@@ -90,6 +94,8 @@ internal static class SeamlessTransitionDirector
                 CoverImage = img,
                 FallbackBrush = fallback,
                 SourceWindowBackdrop = null,
+                VideoWidth = videoWidth,
+                VideoHeight = videoHeight,
                 SourceElement = new WeakReference<FrameworkElement>(visualTarget),
                 SourceWindow = win != null ? new WeakReference<Window>(win) : null,
                 CapturedAtTick = Environment.TickCount64,
@@ -116,8 +122,11 @@ internal static class SeamlessTransitionDirector
             var width = content?.ActualWidth ?? win.ActualWidth;
             var height = content?.ActualHeight ?? win.ActualHeight;
             var dpi = VisualTreeHelper.GetDpi(target);
-            int w = Math.Clamp((int)Math.Ceiling(width * dpi.DpiScaleX), 64, 4096);
-            int h = Math.Clamp((int)Math.Ceiling(height * dpi.DpiScaleY), 64, 4096);
+            // 限宽 960px 以内：高 DPI 屏单帧捕获耗时压到 ~2~3ms、显存占用仅 ~2.5MB，
+            // 且作为静态背景层绝不外包第二层 BitmapCache，保证一镜到底满帧 60~120Hz。
+            double scale = Math.Min(dpi.DpiScaleX, 960.0 / Math.Max(1.0, width));
+            int w = Math.Clamp((int)Math.Ceiling(width * scale), 64, 960);
+            int h = Math.Clamp((int)Math.Ceiling(height * scale), 64, 720);
             var rtb = new RenderTargetBitmap(w, h, 96.0 * w / width, 96.0 * h / height, PixelFormats.Pbgra32);
             var visual = new DrawingVisual();
             {
@@ -292,7 +301,7 @@ internal static class SeamlessTransitionDirector
     }
 
     /// <summary>
-    /// 当从详情页退回主界面时，触发源卡片的「逆向一镜到底」回弹落位微动效。
+    /// 当从详情页退回主界面时，触发源卡片的「逆向一镜到底」澎湃 OS 欠阻尼弹性落位微动效。
     /// </summary>
     internal static bool PlayReturnToSourceCard(string? bvid = null)
     {
@@ -306,22 +315,12 @@ internal static class SeamlessTransitionDirector
 
         try
         {
-            ScaleTransform scale;
-            if (element.RenderTransform is ScaleTransform existing && !existing.IsFrozen)
-            {
-                scale = existing;
-            }
-            else
-            {
-                scale = new ScaleTransform(1, 1);
-                element.RenderTransform = scale;
-                element.RenderTransformOrigin = new Point(0.5, 0.5);
-            }
-
-            var ease = new QuarticEase { EasingMode = EasingMode.EaseOut };
-            var dur = TimeSpan.FromMilliseconds(260);
-            scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.96, 1.0, dur) { EasingFunction = ease });
-            scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(0.96, 1.0, dur) { EasingFunction = ease });
+            HyperMotion.AnimateUniformScale(
+                element,
+                targetScale: 1.0,
+                HyperMotion.TactileRelease,
+                startScale: 0.955,
+                origin: new Point(0.5, 0.5));
             return true;
         }
         catch
@@ -339,6 +338,7 @@ internal static class SeamlessTransitionDirector
 
     private static Grid? _returnOverlay;
     private static Panel? _returnHost;
+    private static MainWindow? _returnMainWindow;
     private static EventHandler? _returnTick;
 
     internal static void StopReturnMorph()
@@ -352,13 +352,16 @@ internal static class SeamlessTransitionDirector
         {
             _returnHost.Children.Remove(_returnOverlay);
         }
+        _returnMainWindow?.ResetSeamlessDepthRecess(animate: false);
+        _returnMainWindow = null;
         _returnOverlay = null;
         _returnHost = null;
     }
 
     /// <summary>
-    /// 在宿主窗口（如主窗口）GPU 合成层上执行关闭视频页时的逆向「一镜到底」落位动画：
-    /// 播放器窗口立即隐藏露出实时宿主窗口，无需截取全屏位图快照，零闪烁、零重排。
+    /// 在宿主窗口（如主窗口）GPU 合成层上执行关闭视频页时的澎湃 OS 逆向「一镜到底」落位动画：
+    /// 播放器窗口立即隐藏露出实时宿主窗口，同步驱动主窗口景深回弹、等比视频封面收拢、
+    /// 悬浮阴影消散与源卡片落位回弹，全程零截图、零重排、零闪烁。
     /// </summary>
     internal static bool PlayReturnMorph(
         Window targetWindow,
@@ -377,6 +380,10 @@ internal static class SeamlessTransitionDirector
 
         try
         {
+            var mainWin = targetWindow as MainWindow;
+            // 先确保主内容未处于残留景深缩放态再量取真实目标卡片矩形，保证落点坐标 100% 精确
+            mainWin?.ResetSeamlessDepthRecess(animate: false);
+
             var sTl = rootPanel.PointFromScreen(startScreenRect.TopLeft);
             var sBr = rootPanel.PointFromScreen(startScreenRect.BottomRight);
             var startRect = new Rect(
@@ -424,30 +431,87 @@ internal static class SeamlessTransitionDirector
 
             var baseW = Math.Max(1, Math.Max(startRect.Width, endRect.Width));
             var baseH = Math.Max(1, Math.Max(startRect.Height, endRect.Height));
+            var dpi = VisualTreeHelper.GetDpi(rootPanel);
+            var dpiScale = Math.Max(1.0, Math.Max(dpi.DpiScaleX, dpi.DpiScaleY));
+            var heroCacheScale = Math.Clamp(640.0 / (Math.Max(baseW, baseH) * dpiScale), 0.25, 0.75);
 
             var scale = new ScaleTransform(1, 1);
             var translate = new TranslateTransform(0, 0);
             var group = new TransformGroup();
             group.Children.Add(scale);
             group.Children.Add(translate);
+
+            var artScale = new ScaleTransform(1, 1);
             var clip = new RectangleGeometry(new Rect(0, 0, baseW, baseH));
 
+            var shellW = Math.Max(1, rootW);
+            var shellH = Math.Max(1, rootH);
+            var shellStartRect = new Rect(0, 0, shellW, shellH);
+            var shellScale = new ScaleTransform(1, 1);
+            var shellTranslate = new TranslateTransform(0, 0);
+            var shellGroup = new TransformGroup();
+            shellGroup.Children.Add(shellScale);
+            shellGroup.Children.Add(shellTranslate);
+
+            var shellColor = (Application.Current?.TryFindResource("AppBackgroundBrush") as SolidColorBrush)?.Color
+                ?? Color.FromRgb(0x14, 0x16, 0x1A);
+            var shellBgBrush = new SolidColorBrush(Color.FromArgb(0xEC, shellColor.R, shellColor.G, shellColor.B));
+            var shellBorderColor = (Application.Current?.TryFindResource("DividerBrush") as SolidColorBrush)?.Color
+                ?? Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF);
+            var shellBorderBrush = new SolidColorBrush(shellBorderColor);
+
+            // 轻量级详情页容器壳体（无 BitmapCache、无每帧 Clip、无 PushOpacity 离屏缓冲）：从满窗平滑收拢回卡片
+            var shell = new Border
+            {
+                Width = shellW,
+                Height = shellH,
+                CornerRadius = new CornerRadius(10),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Background = shellBgBrush,
+                BorderBrush = shellBorderBrush,
+                BorderThickness = new Thickness(1),
+                RenderTransformOrigin = new Point(0, 0),
+                RenderTransform = shellGroup,
+                UseLayoutRounding = false,
+                SnapsToDevicePixels = false,
+            };
+
+            // 内层英雄封面：小尺寸静态 BitmapCache + 等比 UniformToFill 补偿，
+            // 竖屏优化(9:16) 收回横屏卡片(16:9) 时零拉伸变形、零缓存击穿。
             var hero = new Border
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Background = heroBrush ?? Brushes.Black,
+                RenderTransformOrigin = new Point(0.5, 0.5),
+                RenderTransform = artScale,
+                UseLayoutRounding = false,
+                SnapsToDevicePixels = false,
+                CacheMode = new BitmapCache(heroCacheScale) { EnableClearType = false, SnapsToDevicePixels = false },
+            };
+            RenderOptions.SetBitmapScalingMode(hero, BitmapScalingMode.Linear);
+
+            // 外层非缓存宿主承载矩阵变换与圆角裁剪，避免裁剪变化每帧重建内层 BitmapCache
+            var heroHost = new Grid
             {
                 Width = baseW,
                 Height = baseH,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Background = heroBrush ?? Brushes.Black,
+                ClipToBounds = true,
                 RenderTransformOrigin = new Point(0, 0),
                 RenderTransform = group,
                 Clip = clip,
+                UseLayoutRounding = false,
+                SnapsToDevicePixels = false,
             };
-            RenderOptions.SetBitmapScalingMode(hero, BitmapScalingMode.Linear);
+            heroHost.Children.Add(hero);
 
+            var backdropBrush = new SolidColorBrush(Color.FromArgb(0x46, 0x06, 0x08, 0x0C));
             var backdrop = new Border
             {
-                Background = new SolidColorBrush(Color.FromArgb(0x52, 0x0A, 0x0C, 0x10)),
+                Background = backdropBrush,
                 Opacity = 1.0,
             };
 
@@ -455,6 +519,8 @@ internal static class SeamlessTransitionDirector
             {
                 ClipToBounds = true,
                 IsHitTestVisible = false,
+                UseLayoutRounding = false,
+                SnapsToDevicePixels = false,
             };
             Panel.SetZIndex(overlay, 9999);
             if (rootPanel is Grid grid)
@@ -463,11 +529,13 @@ internal static class SeamlessTransitionDirector
                 Grid.SetColumnSpan(overlay, Math.Max(1, grid.ColumnDefinitions.Count));
             }
             overlay.Children.Add(backdrop);
-            overlay.Children.Add(hero);
+            overlay.Children.Add(shell);
+            overlay.Children.Add(heroHost);
             rootPanel.Children.Add(overlay);
 
             _returnOverlay = overlay;
             _returnHost = rootPanel;
+            _returnMainWindow = mainWin;
 
             double progress = 0;
             double velocity = 0;
@@ -484,12 +552,27 @@ internal static class SeamlessTransitionDirector
                 translate.X = rect.X;
                 translate.Y = rect.Y;
 
+                var (artSx, artSy) = SpringMotion.ComputeAspectPreservingInnerScale(sx, sy);
+                artScale.ScaleX = artSx;
+                artScale.ScaleY = artSy;
+
                 var radius = SpringMotion.InterpolateRadius(startRadius, endRadius, p);
                 var invScale = Math.Max(0.05, Math.Min(sx, sy));
-                clip.RadiusX = clip.RadiusY = radius / invScale;
+                var nextRadius = radius / invScale;
+                if (Math.Abs(clip.RadiusX - nextRadius) > 0.05)
+                    clip.RadiusX = clip.RadiusY = nextRadius;
 
-                backdrop.Opacity = 1.0 - SpringMotion.StageProgress(p, 0.0, 0.85);
-                hero.Opacity = 1.0 - SpringMotion.StageProgress(p, 0.86, 1.0) * 0.25;
+                var sRect = SpringMotion.InterpolateRect(shellStartRect, endRect, p);
+                shellScale.ScaleX = sRect.Width / shellW;
+                shellScale.ScaleY = sRect.Height / shellH;
+                shellTranslate.X = sRect.X;
+                shellTranslate.Y = sRect.Y;
+                var shellRemain = 1.0 - SpringMotion.SmoothStep(SpringMotion.StageProgress(p, 0.14, 0.78));
+                shellBgBrush.Color = Color.FromArgb((byte)(shellRemain * 236), shellColor.R, shellColor.G, shellColor.B);
+                shellBorderBrush.Color = Color.FromArgb((byte)(shellRemain * shellBorderColor.A), shellBorderColor.R, shellBorderColor.G, shellBorderColor.B);
+
+                var dimRemain = 1.0 - SpringMotion.SmoothStep(SpringMotion.StageProgress(p, 0.0, 0.76));
+                backdropBrush.Color = Color.FromArgb((byte)(dimRemain * 70), 6, 8, 12);
             }
 
             ApplyFrame(0);
@@ -513,7 +596,7 @@ internal static class SeamlessTransitionDirector
                 (progress, velocity) = SpringMotion.Advance(progress, velocity, 1.0, dt, SpringMotion.HyperOmegaInterrupt);
                 ApplyFrame(progress);
 
-                if (Math.Abs(progress - 1.0) < 0.008 && Math.Abs(velocity) < 0.12)
+                if (Math.Abs(progress - 1.0) < 0.006 && Math.Abs(velocity) < 0.09)
                 {
                     StopReturnMorph();
                     PlayReturnToSourceCard(bvid);

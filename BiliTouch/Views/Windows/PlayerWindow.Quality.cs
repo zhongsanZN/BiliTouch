@@ -30,7 +30,9 @@ public partial class PlayerWindow
 {
     // ------------------------------------------------------------ 清晰度
 
-    /// <summary>填充清晰度菜单并高亮当前项(以 B 站实际返回的清晰度为准)</summary>
+    private bool _fillingAudioMenu;
+
+    /// <summary>填充清晰度菜单并同步刷新音量面板中的音质详情/可选音轨(以 B 站实际返回为准)</summary>
     private void FillQualityMenu(int actualQn)
     {
         if (QualityList == null) return;
@@ -41,62 +43,8 @@ public partial class PlayerWindow
             foreach (var (qn, label) in _qualities)
                 QualityList.Items.Add(new ListBoxItem { Tag = qn, Content = label });
 
-            // ---- 音质分区（杜比采用可选方案；普通 AAC 同样展示当前码率）----
-            //   ① 存在杜比音轨时：将「默认最高音质（Hi-Res 或最高立体声 AAC）」与「杜比全景声」
-            //      同时列为可选项，默认不强选杜比，让用户按需切换；
-            //   ② 无杜比音轨时：纯信息展示当前在播音轨与码率（如 Hi-Res 1400 kbps / 高品质 192 kbps）。
             var activeTrack = ResolveActiveAudioTrack();
-            if (_audioTracks.Count > 0)
-            {
-                var hiResTrack = _audioTracks.FirstOrDefault(a => a.Quality == Models.AudioQuality.HiRes);
-                var dolbyTrack = _audioTracks.FirstOrDefault(a => a.Quality == Models.AudioQuality.Dolby);
-                var bestAacTrack = _audioTracks
-                    .Where(a => a.Quality is Models.AudioQuality.High or Models.AudioQuality.Standard)
-                    .OrderByDescending(a => a.Bandwidth)
-                    .ThenByDescending(a => a.TrackId)
-                    .FirstOrDefault();
-
-                QualityList.Items.Add(new ListBoxItem
-                {
-                    Content = "── 音质 ──",
-                    IsEnabled = false,
-                    Focusable = false,
-                    Padding = new Thickness(6, 6, 6, 3),
-                });
-
-                if (dolbyTrack != null)
-                {
-                    var nonDolbyPrimary = hiResTrack ?? bestAacTrack;
-                    if (nonDolbyPrimary != null)
-                    {
-                        var isSelected = _actualAudio != Models.AudioQuality.Dolby
-                            && (nonDolbyPrimary.Quality == _actualAudio
-                                || (nonDolbyPrimary.Quality is Models.AudioQuality.High or Models.AudioQuality.Standard
-                                    && _actualAudio is Models.AudioQuality.High or Models.AudioQuality.Standard));
-                        QualityList.Items.Add(new ListBoxItem
-                        {
-                            Tag = nonDolbyPrimary,
-                            Content = (isSelected ? "✓ " : "") + nonDolbyPrimary.DisplayLabel,
-                        });
-                    }
-                    QualityList.Items.Add(new ListBoxItem
-                    {
-                        Tag = dolbyTrack,
-                        Content = (_actualAudio == Models.AudioQuality.Dolby ? "✓ " : "") + dolbyTrack.DisplayLabel,
-                    });
-                }
-                else
-                {
-                    var cur = activeTrack ?? hiResTrack ?? bestAacTrack ?? _audioTracks[0];
-                    QualityList.Items.Add(new ListBoxItem
-                    {
-                        Content = "正在使用：" + cur.DisplayLabel,
-                        IsEnabled = false,
-                        Focusable = false,
-                        Padding = new Thickness(10, 6, 10, 6),
-                    });
-                }
-            }
+            FillVolumeAudioPanel(activeTrack);
             if (actualQn > 0) _currentQn = actualQn;
             // ★★★ 按钮上的文字必须按"**接口实际给的**档位"或"用户的偏好"来取,
             //   **绝不能**对 _currentQn 直接调 QnToLabel(2026-10-04 修):
@@ -110,7 +58,7 @@ public partial class PlayerWindow
                 : QualityPreference.LabelOf(Svc.Settings.PreferredQualityQn);
             if (QualityText != null) QualityText.Text = label2;
 
-            // ★ 音质角标：Hi-Res / 杜比显示专属标识，其余在线 DASH 音轨显示当前码率（如 192 kbps）
+            // ★ 音质角标（位于音量按钮下方）：Hi-Res / 杜比显示专属标识，其余在线 DASH 音轨显示当前码率（如 192 kbps）
             if (BtnAudioBadge != null && AudioBadgeText != null)
             {
                 var isPremium = _actualAudio is Models.AudioQuality.HiRes or Models.AudioQuality.Dolby;
@@ -143,7 +91,7 @@ public partial class PlayerWindow
                         Models.AudioQuality.HiRes =>
                             $"已选择 Hi-Res 音轨{bitrateSuffix}。无声时可右键选择音频兼容重试（仅本次）。",
                         _ => _audioTracks.Any(a => a.Quality == Models.AudioQuality.Dolby)
-                            ? $"当前音轨：{activeTrack?.DisplayLabel ?? badge}（清晰度菜单中可按需切换杜比音轨）"
+                            ? $"当前音轨：{activeTrack?.DisplayLabel ?? badge}（音量面板中可按需切换杜比音轨）"
                             : $"当前音轨：{activeTrack?.DisplayLabel ?? badge}",
                     };
                     BtnAudioBadge.Visibility = Visibility.Visible;
@@ -167,6 +115,91 @@ public partial class PlayerWindow
         finally
         {
             _fillingQualityMenu = false;
+        }
+    }
+
+    /// <summary>
+    /// 填充音量弹层中的音质详情与可选音轨方案（从清晰度面板迁入）：
+    /// ① 存在杜比音轨时：将「默认最高音质（Hi-Res 或最高立体声 AAC）」与「杜比全景声」列为可选项；
+    /// ② 无杜比音轨时：清晰展示当前在播音轨详情与码率（如 Hi-Res 无损 1400 kbps / 高品质 192 kbps）。
+    /// </summary>
+    private void FillVolumeAudioPanel(Models.AudioTrack? activeTrack)
+    {
+        if (VolumeAudioSection == null) return;
+        _fillingAudioMenu = true;
+        try
+        {
+            AudioQualityList?.Items.Clear();
+            if (_isLive || _isLocalPlayback || _audioTracks.Count == 0)
+            {
+                VolumeAudioSection.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            var hiResTrack = _audioTracks.FirstOrDefault(a => a.Quality == Models.AudioQuality.HiRes);
+            var dolbyTrack = _audioTracks.FirstOrDefault(a => a.Quality == Models.AudioQuality.Dolby);
+            var bestAacTrack = _audioTracks
+                .Where(a => a.Quality is Models.AudioQuality.High or Models.AudioQuality.Standard)
+                .OrderByDescending(a => a.Bandwidth)
+                .ThenByDescending(a => a.TrackId)
+                .FirstOrDefault();
+
+            var cur = activeTrack ?? hiResTrack ?? bestAacTrack ?? _audioTracks[0];
+            if (VolumeAudioSummaryText != null)
+            {
+                VolumeAudioSummaryText.Text = _actualAudio switch
+                {
+                    Models.AudioQuality.HiRes => "Hi-Res 无损",
+                    Models.AudioQuality.Dolby => "杜比音轨",
+                    _ => cur.BitrateBadgeText.Length > 0 ? cur.BitrateBadgeText : 音质名(_actualAudio)
+                };
+            }
+
+            if (dolbyTrack != null && AudioQualityList != null)
+            {
+                var nonDolbyPrimary = hiResTrack ?? bestAacTrack;
+                ListBoxItem? selectedItem = null;
+                if (nonDolbyPrimary != null)
+                {
+                    var isSelected = _actualAudio != Models.AudioQuality.Dolby
+                        && (nonDolbyPrimary.Quality == _actualAudio
+                            || (nonDolbyPrimary.Quality is Models.AudioQuality.High or Models.AudioQuality.Standard
+                                && _actualAudio is Models.AudioQuality.High or Models.AudioQuality.Standard));
+                    var item = new ListBoxItem
+                    {
+                        Tag = nonDolbyPrimary,
+                        Content = (isSelected ? "✓ " : "") + nonDolbyPrimary.DisplayLabel,
+                    };
+                    AudioQualityList.Items.Add(item);
+                    if (isSelected) selectedItem = item;
+                }
+                var dolbySelected = _actualAudio == Models.AudioQuality.Dolby;
+                var dolbyItem = new ListBoxItem
+                {
+                    Tag = dolbyTrack,
+                    Content = (dolbySelected ? "✓ " : "") + dolbyTrack.DisplayLabel,
+                };
+                AudioQualityList.Items.Add(dolbyItem);
+                if (dolbySelected) selectedItem = dolbyItem;
+                AudioQualityList.SelectedItem = selectedItem;
+                AudioQualityList.Visibility = Visibility.Visible;
+                if (AudioQualityInfoText != null) AudioQualityInfoText.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                if (AudioQualityList != null) AudioQualityList.Visibility = Visibility.Collapsed;
+                if (AudioQualityInfoText != null)
+                {
+                    AudioQualityInfoText.Text = "正在使用：" + cur.DisplayLabel;
+                    AudioQualityInfoText.Visibility = Visibility.Visible;
+                }
+            }
+
+            VolumeAudioSection.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            _fillingAudioMenu = false;
         }
     }
 
@@ -232,7 +265,12 @@ public partial class PlayerWindow
             typeof(System.Windows.Controls.Primitives.Popup));
         EventHandler onIsOpenChanged = (_, _) =>
         {
-            if (popup.IsOpen) return;
+            if (popup.IsOpen)
+            {
+                HyperMotion.AnimatePopupEntrance(popup.Child, startScale: 0.91, offsetY: 10, origin: new Point(0.5, 1.0));
+                return;
+            }
+            if (popup.Child != null) HyperMotion.Cancel(popup.Child);
             if (IsCursorOverElement(trigger)) _popupClosedTicks[popup] = Environment.TickCount64;
         };
         descriptor.AddValueChanged(popup, onIsOpenChanged);
@@ -312,22 +350,22 @@ public partial class PlayerWindow
         return null;
     }
 
+    private void OnAudioQualitySelected(object sender, SelectionChangedEventArgs e)
+    {
+        if (_fillingAudioMenu || AudioQualityList == null) return;
+        if (AudioQualityList.SelectedItem is not ListBoxItem { Tag: Models.AudioTrack track }) return;
+        CloseVolumePopup();
+        if (_switchingQuality) return;
+        var targetQuality = track.Quality is Models.AudioQuality.High or Models.AudioQuality.Standard
+            ? Models.AudioQuality.Auto
+            : track.Quality;
+        _ = SwitchAudioQualityAsync(targetQuality);
+    }
+
     private void OnQualitySelected(object sender, SelectionChangedEventArgs e)
     {
         if (_fillingQualityMenu || QualityPopup == null) return;
         if (QualityList.SelectedItem is not ListBoxItem li) return;
-        // 音质项: Tag 是 AudioTrack
-        if (li.Tag is Models.AudioTrack track)
-        {
-            QualityPopup.IsOpen = false;
-            if (_switchingQuality) return;
-            // 从杜比切回普通立体声 AAC 时，偏好落回 Auto（保留未来视频自动选 Hi-Res 的能力，同时不默认选杜比）
-            var targetQuality = track.Quality is Models.AudioQuality.High or Models.AudioQuality.Standard
-                ? Models.AudioQuality.Auto
-                : track.Quality;
-            _ = SwitchAudioQualityAsync(targetQuality);
-            return;
-        }
         if (li.Tag is not int qn) return;
         QualityPopup.IsOpen = false;
         if (qn == _currentQn || _switchingQuality) return;
