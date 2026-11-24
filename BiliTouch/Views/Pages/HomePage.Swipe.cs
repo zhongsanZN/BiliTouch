@@ -32,7 +32,7 @@ public partial class HomePage : Helpers.IHorizontalSwipeHost
     private double _touchContactDx, _touchCommittedShift;
     private double _wheelContactDx;
     private bool _wheelPreviewActive;
-    private bool _contactActive, _ownsTouchCapture;
+    private bool _contactActive, _ownsTouchCapture, _ownsStylusCapture;
     private StylusDevice? _pendingSwipeStylus;
     internal static Action<string>? InputTrace;
     private void TraceInput(string route) => InputTrace?.Invoke($"{Environment.TickCount64} {route} tab={CurrentTabIndex} x={TabTrans.X:F2} armed={_swipeArmed} horizontal={_swipeHorizontal}");
@@ -91,7 +91,10 @@ public partial class HomePage : Helpers.IHorizontalSwipeHost
         TabHost.AddHandler(PreviewStylusDownEvent, new StylusDownEventHandler(OnSwipeStylusDown), true);
         TabHost.AddHandler(PreviewStylusMoveEvent, new StylusEventHandler(OnSwipeStylusMove), true);
         TabHost.AddHandler(PreviewStylusUpEvent, new StylusEventHandler(OnSwipeStylusUp), true);
+        TabHost.LostStylusCapture += OnSwipeLostStylusCapture;
         TabHost.PreviewMouseLeftButtonUp += OnSwipeMouseUp;
+        TabHost.Unloaded += (_, _) => CancelActiveContact();
+        TabHost.IsVisibleChanged += (_, _) => { if (!TabHost.IsVisible) CancelActiveContact(); };
     }
 
     private static HomeTabKind KindOfIndex(int index) => index switch
@@ -218,6 +221,7 @@ public partial class HomePage : Helpers.IHorizontalSwipeHost
         var d = source;
         while (d != null && d != TabHost)
         {
+            if (d is ButtonBase) return null;
             if (d is VideoCard card) return card;
             d = d is ContentElement content
                 ? ContentOperations.GetParent(content) ?? (content as FrameworkContentElement)?.Parent
@@ -251,7 +255,10 @@ public partial class HomePage : Helpers.IHorizontalSwipeHost
                 _ownsTouchCapture = ReferenceEquals(_pendingSwipeTouch.Captured, TabHost);
             }
             else if (_pendingSwipeStylus != null)
-                _pendingSwipeStylus.Capture(TabHost);
+            {
+                try { _pendingSwipeStylus.Capture(TabHost); } catch { }
+                _ownsStylusCapture = ReferenceEquals(_pendingSwipeStylus.Captured, TabHost);
+            }
             Helpers.TouchSupport.CancelPendingTap();
         }
         if (!_swipeHorizontal || _swipeConsumed) return false;
@@ -549,8 +556,23 @@ public partial class HomePage : Helpers.IHorizontalSwipeHost
     }
 
 
+    private static bool IsTouchStylus(StylusEventArgs e) =>
+        e.StylusDevice?.TabletDevice?.Type == TabletDeviceType.Touch;
+
+    private void ClearStaleContactIfNeeded()
+    {
+        if (!_contactActive) return;
+        if ((_pendingSwipeTouch != null && !_pendingSwipeTouch.IsActive) ||
+            (_pendingSwipeStylus != null && _pendingSwipeStylus.InAir))
+        {
+            CancelActiveContact();
+        }
+    }
+
     private void OnSwipeTouchDown(object? sender, TouchEventArgs e)
     {
+        ClearStaleContactIfNeeded();
+        if (_contactActive) return;
         _pendingSwipeTouch = e.TouchDevice;
         BeginContact(RootPoint(e), e.OriginalSource as DependencyObject);
         TraceInput("touch.down");
@@ -558,53 +580,44 @@ public partial class HomePage : Helpers.IHorizontalSwipeHost
 
     private Point RootPoint(TouchEventArgs e) => e.GetTouchPoint(null).Position;
 
-    private Point RootPoint(StylusEventArgs e)
-    {
-        try
-        {
-            var pts = e.GetStylusPoints(null);
-            if (pts != null && pts.Count > 0) return pts[pts.Count - 1].ToPoint();
-        }
-        catch { /* 取不到就退回下面 */ }
-        return e.GetPosition(null);
-    }
+    // 禁止使用 e.GetStylusPoints(null)：WPF 开启 WM_POINTER（EnablePointerSupport=true）后，
+    // GetStylusPoints 读取未做屏幕旋转/原点修正的原始 HID 数据（GetRawPointerDeviceData），
+    // 平板竖屏或面板轴向与显示方向不同会导致 X/Y 互换或与 GetTouchPoint 跨坐标系错位。
+    // e.GetPosition(null) 与 GetTouchPoint(null).Position 同源，均走系统已变换的 ptPixelLocationRaw。
+    private Point RootPoint(StylusEventArgs e) => e.GetPosition(null);
 
     private void OnSwipeTouchMove(object? sender, TouchEventArgs e)
     {
+        if (!ReferenceEquals(e.TouchDevice, _pendingSwipeTouch)) return;
         if (SwipeMove(RootPoint(e))) e.Handled = true;
         TraceInput("touch.move");
     }
 
     private void OnSwipeTouchUp(object? sender, TouchEventArgs e)
     {
+        if (!ReferenceEquals(e.TouchDevice, _pendingSwipeTouch)) return;
         TraceInput("touch.up");
         if (EndContact()) e.Handled = true;
     }
 
     private void OnSwipeLostTouchCapture(object? sender, TouchEventArgs e)
     {
+        if (!ReferenceEquals(e.TouchDevice, _pendingSwipeTouch)) return;
         // A child losing capture to this host bubbles through the same event route.
         if (ReferenceEquals(e.TouchDevice.Captured, TabHost)) return;
         TraceInput("touch.lost");
         // ScrollViewer captures on down before a horizontal drag belongs to us.
         // Its child-to-child transfer must not cancel the page's pending contact.
         if (!_ownsTouchCapture) return;
-        _ownsTouchCapture = false;
-        _contactActive = false;
-        _swipeArmed = false;
-        if (_swipeHorizontal && !_swipeConsumed)
-        {
-            _swipeConsumed = true;
-            AnimateSnap(false, CurrentTabIndex, Math.Max(1, TabHost.ActualWidth));
-        }
-        UnfreezeVertical();
-        _swipeDirKnown = false;
-        _swipeHorizontal = false;
-        _pendingSwipeTouch = null;
+        CancelActiveContact();
     }
 
     private void OnSwipeStylusDown(object? sender, StylusEventArgs e)
     {
+        // 手指触屏由 PreviewTouch* 独立处理；跳过触屏提升前的 Stylus 路由，避免双路由串扰与重复采样。
+        if (IsTouchStylus(e)) return;
+        ClearStaleContactIfNeeded();
+        if (_contactActive) return;
         _pendingSwipeStylus = e.StylusDevice;
         BeginContact(RootPoint(e), e.OriginalSource as DependencyObject);
         TraceInput("stylus.down");
@@ -612,33 +625,64 @@ public partial class HomePage : Helpers.IHorizontalSwipeHost
 
     private void OnSwipeStylusMove(object? sender, StylusEventArgs e)
     {
+        if (IsTouchStylus(e) || !ReferenceEquals(e.StylusDevice, _pendingSwipeStylus)) return;
         if (SwipeMove(RootPoint(e))) e.Handled = true;
         TraceInput("stylus.move");
     }
 
     private void OnSwipeStylusUp(object? sender, StylusEventArgs e)
     {
+        if (IsTouchStylus(e) || !ReferenceEquals(e.StylusDevice, _pendingSwipeStylus)) return;
         TraceInput("stylus.up");
         if (EndContact()) e.Handled = true;
     }
 
+    private void OnSwipeLostStylusCapture(object? sender, StylusEventArgs e)
+    {
+        if (IsTouchStylus(e) || !ReferenceEquals(e.StylusDevice, _pendingSwipeStylus)) return;
+        if (ReferenceEquals(e.StylusDevice.Captured, TabHost)) return;
+        TraceInput("stylus.lost");
+        if (!_ownsStylusCapture) return;
+        CancelActiveContact();
+    }
+
+    private void CancelActiveContact()
+    {
+        var snapBack = _swipeHorizontal && !_swipeConsumed;
+        _ownsTouchCapture = false;
+        _ownsStylusCapture = false;
+        _contactActive = false;
+        _swipeArmed = false;
+        if (snapBack)
+        {
+            _swipeConsumed = true;
+            AnimateSnap(false, CurrentTabIndex, Math.Max(1, TabHost.ActualWidth));
+        }
+        UnfreezeVertical();
+        _swipeDirKnown = false;
+        _swipeHorizontal = false;
+        _tapCard = null;
+        _pendingSwipeTouch = null;
+        _pendingSwipeStylus = null;
+    }
+
     private void BeginContact(Point point, DependencyObject? source)
     {
-        // A physical finger can produce both stylus and touch down. They are
-        // two routes for one contact, not a new baseline midway through a drag.
         if (_contactActive) return;
         _contactActive = true;
         _ownsTouchCapture = false;
+        _ownsStylusCapture = false;
         SwipeDown(point, source);
     }
 
     private bool EndContact()
     {
-        if (!_contactActive) return _swipeMoved;
+        if (!_contactActive) return false;
         _contactActive = false;
         var moved = _swipeMoved;
         var consumed = SwipeUp();
         _ownsTouchCapture = false;
+        _ownsStylusCapture = false;
         var touch = _pendingSwipeTouch;
         var stylus = _pendingSwipeStylus;
         _pendingSwipeTouch = null;
@@ -649,7 +693,9 @@ public partial class HomePage : Helpers.IHorizontalSwipeHost
         _tapCard = null;
         _swipeDirKnown = false;
         _swipeHorizontal = false;
-        return consumed || moved;
+        // 仅在真正消费了横向切页时吞掉 Up；普通竖向滚动必须放行 PreviewTouchUp，
+        // 否则 WPF 会跳过 TouchUp/Manipulation 收尾，导致惯性与下拉刷新收尾异常。
+        return consumed;
     }
 
     private void OnSwipeMouseUp(object? sender, MouseButtonEventArgs e)

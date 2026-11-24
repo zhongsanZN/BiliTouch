@@ -90,7 +90,7 @@ BiliTouch 的改进重点，是触摸屏、触控板和日常浏览的操作体�
 
 前往 [GitHub 最新发行](https://github.com/zhongsanZN/BiliTouch/releases/latest) 下载，旧版本见 [版本归档](https://github.com/zhongsanZN/BiliTouch/releases)。
 
-0.3.14 修复部分 Windows 设备上触屏手势退化成鼠标输入的问题。详见 [0.3.14 更新说明](docs/release-notes/v0.3.14.md)。
+0.3.15 修复 v0.3.14 在 Surface Pro X 等触屏设备上首页上下滑动被误判为左右切页、左右滑动锁定推荐页的问题。详见 [0.3.15 更新说明](docs/release-notes/v0.3.15.md)。
 
 | 发行包 | 适合的设备与使用方式 |
 | :--- | :--- |

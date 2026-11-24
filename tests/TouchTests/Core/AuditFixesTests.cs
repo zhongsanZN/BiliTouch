@@ -10,7 +10,10 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Threading;
 using BiliTouch;
 using BiliTouch.Helpers;
 using BiliTouch.Models;
@@ -45,6 +48,7 @@ internal static class AuditFixesTests
         TestHorizontalSwipeHostContract(check);
         TestPrecisionTouchpadContactMotion(check);
         TestNativeTouchFeedbackFollowsWindowSource(check);
+        TestHomePageTouchSwipePointerIsolation(check);
         TestDashRemuxerCttsLeadingZeros(check);
         TestDynamicLikeIconStability(check);
         TestVideoTailEndingAndElstPatch(check);
@@ -106,6 +110,188 @@ internal static class AuditFixesTests
             bool configured = GetWindowFeedbackSetting(hwnd, touchContactFeedback, 0, ref size, out var actual);
             check(configured && actual == expected, message);
         }
+    }
+
+    private static void TestHomePageTouchSwipePointerIsolation(Action<bool, string> check)
+    {
+        // 1. 静态与 IL 契约：WM_POINTER 下 GetStylusPoints 读取未旋转原始 HID 坐标，
+        //    HomePage.RootPoint(StylusEventArgs) 必须走 GetPosition(null) 且不得调用 GetStylusPoints。
+        var stylusRootPoint = typeof(HomePage).GetMethod(
+            "RootPoint",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            types: new[] { typeof(StylusEventArgs) },
+            modifiers: null);
+        check(stylusRootPoint != null, "HomePage.RootPoint(StylusEventArgs) exists");
+        if (stylusRootPoint != null)
+        {
+            var il = stylusRootPoint.GetMethodBody()!.GetILAsByteArray()!;
+            var calledMethods = new List<string>();
+            var module = stylusRootPoint.Module;
+            for (int i = 0; i <= il.Length - 5; i++)
+            {
+                if (il[i] is 0x28 or 0x6F) // call / callvirt
+                {
+                    int token = BitConverter.ToInt32(il, i + 1);
+                    try
+                    {
+                        if (module.ResolveMember(token) is MethodBase mb)
+                            calledMethods.Add(mb.Name);
+                    }
+                    catch { }
+                }
+            }
+            check(!calledMethods.Contains("GetStylusPoints") && calledMethods.Contains("GetPosition"),
+                $"HomePage.RootPoint(StylusEventArgs) uses GetPosition instead of raw GetStylusPoints (calls={string.Join(",", calledMethods)})");
+        }
+
+        var isTouchStylus = typeof(HomePage).GetMethod("IsTouchStylus", BindingFlags.Static | BindingFlags.NonPublic);
+        check(isTouchStylus != null, "HomePage filters TabletDeviceType.Touch out of PreviewStylus* handlers");
+
+        // 2. 真实窗口路由验证：竖滑不切页且不吞 PreviewTouchUp、横滑正常切页不锁推荐、二指防串扰、脱靶自愈。
+        var home = new HomePage { DataContext = new HomeViewModel() };
+        var win = new FluentWindow
+        {
+            Content = home,
+            Width = 960,
+            Height = 720,
+            ShowInTaskbar = false,
+            ShowActivated = false
+        };
+        void Pump(int ms)
+        {
+            var frame = new DispatcherFrame();
+            var timer = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(ms) };
+            timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
+            timer.Start();
+            Dispatcher.PushFrame(frame);
+        }
+        void Until(Func<bool> ready, int timeoutMs = 1500)
+        {
+            var start = Environment.TickCount64;
+            while (!ready() && Environment.TickCount64 - start < timeoutMs) Pump(20);
+        }
+        try
+        {
+            win.Show();
+            Pump(120);
+            var popular = (RadioButton)home.FindName("PopularTab")!;
+            var host = (FrameworkElement)home.FindName("TabHost")!;
+            var popularScroll = (ScrollViewer)home.FindName("PopularScroll")!;
+            popular.IsChecked = true;
+            Pump(100);
+            check(home.CurrentTabIndex == 1, "HomePage test fixture starts on Popular tab (index 1)");
+
+            bool? lastTouchUpHandled = null;
+            host.AddHandler(UIElement.PreviewTouchUpEvent, new EventHandler<TouchEventArgs>((_, e) => lastTouchUpHandled = e.Handled), true);
+            var tabTransField = typeof(HomePage).GetField("_tabTrans", AnyPrivate)!;
+            double CurrentX() => (tabTransField.GetValue(home) as TranslateTransform)?.X ?? 0;
+
+            // 2a. 竖向滑动（手指上划浏览列表，dy < 0 不触发下拉刷新）：不进入横滑、不冻结滚动、抬手不吞 PreviewTouchUp
+            var fVert = new SyntheticTouchFinger(host);
+            fVert.Down(host.ActualWidth * 0.5, 320);
+            fVert.Move(host.ActualWidth * 0.5 + 4, 140);
+            Pump(20);
+            check(Math.Abs(CurrentX()) < 0.5 && home.CurrentTabIndex == 1 && popularScroll.PanningMode != PanningMode.None,
+                $"vertical touch swipe keeps vertical scroll intact (x={CurrentX():F1}, tab={home.CurrentTabIndex}, pan={popularScroll.PanningMode})");
+            lastTouchUpHandled = null;
+            fVert.Up(host.ActualWidth * 0.5 + 4, 120);
+            Pump(60);
+            check(lastTouchUpHandled == false && home.CurrentTabIndex == 1,
+                $"vertical touch release leaves PreviewTouchUp unhandled for ScrollViewer/ModuleGestures (handled={lastTouchUpHandled}, tab={home.CurrentTabIndex})");
+
+            // 2b. 横向滑动：从热门左滑到排行榜（而非锁死推荐），抬手正确消费并切页，再右滑回热门
+            var fHoriz = new SyntheticTouchFinger(host);
+            fHoriz.Down(host.ActualWidth * 0.85, 160);
+            fHoriz.Move(host.ActualWidth * 0.20, 164);
+            Pump(20);
+            check(CurrentX() < -host.ActualWidth * 0.4,
+                $"horizontal left swipe tracks finger displacement (x={CurrentX():F1})");
+            lastTouchUpHandled = null;
+            fHoriz.Up(host.ActualWidth * 0.20, 164);
+            Until(() => home.CurrentTabIndex == 2 && Math.Abs(CurrentX()) < 1);
+            check(lastTouchUpHandled == true && home.CurrentTabIndex == 2,
+                $"horizontal left swipe commits to Ranking tab without locking Recommend (handled={lastTouchUpHandled}, tab={home.CurrentTabIndex})");
+
+            var fBack = new SyntheticTouchFinger(host);
+            fBack.Down(host.ActualWidth * 0.15, 160);
+            fBack.Move(host.ActualWidth * 0.80, 162);
+            Pump(20);
+            fBack.Up(host.ActualWidth * 0.80, 162);
+            Until(() => home.CurrentTabIndex == 1 && Math.Abs(CurrentX()) < 1);
+            check(home.CurrentTabIndex == 1,
+                $"horizontal right swipe returns cleanly to Popular tab (tab={home.CurrentTabIndex})");
+
+            // 2c. 双指/掌根防串扰：主指竖滑期间第二指横滑不会劫持或跳页
+            var fPrimary = new SyntheticTouchFinger(host);
+            var fPalm = new SyntheticTouchFinger(host);
+            fPrimary.Down(host.ActualWidth * 0.35, 320);
+            fPrimary.Move(host.ActualWidth * 0.35, 200);
+            fPalm.Down(host.ActualWidth * 0.90, 200);
+            fPalm.Move(host.ActualWidth * 0.10, 200);
+            fPalm.Up(host.ActualWidth * 0.10, 200);
+            Pump(30);
+            check(Math.Abs(CurrentX()) < 0.5 && home.CurrentTabIndex == 1,
+                $"secondary touch contact cannot hijack primary vertical gesture (x={CurrentX():F1}, tab={home.CurrentTabIndex})");
+            fPrimary.Up(host.ActualWidth * 0.35, 180);
+            Pump(60);
+
+            // 2d. 脱靶自愈：模拟父级 ModuleGestures 捕获下拉刷新导致 TabHost 收不到 PreviewTouchUp，下一次新触摸仍以新起点起算
+            var fPull = new SyntheticTouchFinger(host);
+            fPull.Down(host.ActualWidth * 0.85, 120);
+            home.CaptureTouch(fPull); // 后续 Move/Up 路由到父级 HomePage，不再进入 TabHost
+            fPull.Up(host.ActualWidth * 0.85, 260);
+            Pump(40);
+
+            var fNext = new SyntheticTouchFinger(host);
+            fNext.Down(host.ActualWidth * 0.15, 320);
+            fNext.Move(host.ActualWidth * 0.15, 160);
+            Pump(20);
+            check(Math.Abs(CurrentX()) < 0.5 && home.CurrentTabIndex == 1,
+                $"new touch after off-host capture self-heals instead of diffing stale origin (x={CurrentX():F1}, tab={home.CurrentTabIndex})");
+            fNext.Up(host.ActualWidth * 0.15, 160);
+            Pump(40);
+        }
+        finally
+        {
+            win.Close();
+        }
+    }
+
+    private sealed class SyntheticTouchFinger : TouchDevice
+    {
+        private static int _nextId = 19000;
+        private readonly FrameworkElement _target;
+        private readonly Visual _root;
+        private Point _point;
+        private TouchAction _action;
+
+        public SyntheticTouchFinger(FrameworkElement target) : base(++_nextId)
+        {
+            _target = target;
+            var source = PresentationSource.FromVisual(target)!;
+            _root = source.RootVisual;
+            SetActiveSource(source);
+        }
+
+        public override TouchPoint GetTouchPoint(IInputElement? relativeTo)
+        {
+            var p = relativeTo is Visual v ? _root.TransformToDescendant(v).Transform(_point) : _point;
+            return new TouchPoint(this, p, new Rect(p, new Size(4, 4)), _action);
+        }
+
+        public override TouchPointCollection GetIntermediateTouchPoints(IInputElement? relativeTo) =>
+            new() { GetTouchPoint(relativeTo) };
+
+        private void At(double x, double y, TouchAction action)
+        {
+            _point = _target.TranslatePoint(new Point(x, y), (UIElement)_root);
+            _action = action;
+        }
+
+        public void Down(double x, double y) { At(x, y, TouchAction.Down); Activate(); ReportDown(); }
+        public void Move(double x, double y) { At(x, y, TouchAction.Move); ReportMove(); }
+        public void Up(double x, double y) { At(x, y, TouchAction.Up); ReportUp(); Deactivate(); }
     }
 
     [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW")]
